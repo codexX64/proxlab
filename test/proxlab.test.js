@@ -321,6 +321,9 @@ test('console : passe à usage unique liée à la session, origine contrôlée, 
   // Sans session, pas de console même avec une passe.
   const p4 = await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '101' });
   assert.equal((await ouvrirWs(s.client(), p4.json.passe)).code, 401);
+  const refus = s.db.prepare("SELECT details FROM socle_journal WHERE action = 'console.refusee'").all();
+  assert.ok(refus.length >= 1, 'les refus de console sont au journal');
+  assert.ok(!refus.some(r => [p.json.passe, p2.json.passe, p3.json.passe, p4.json.passe].some(x => String(r.details).includes(x))), 'jamais la passe au journal');
 });
 
 test('surveillance : une machine tombée est un événement et un ticket signé ; un arrêt depuis ProxLab ne sonne pas', async () => {

@@ -84,12 +84,14 @@ export async function demarrer(env = process.env, { log = CONSOLE } = {}) {
       if (!debit.prendre(adresseClient(req, socle.portail.proxys))) return refuser(socket, 429, 'Too Many Requests');
       if (url.pathname !== '/ws/console') return refuser(socket, 404, 'Not Found');
       const origines = [origineDe(req, socle.portail.proxys), ...socle.portail.originesEnPlus].filter(Boolean);
-      const v = verifierUpgrade(req, { origines });
-      if (!v.ok) return refuser(socket, v.code, v.erreur);
       const ctx = socle.portail.contexte(req, null);
-      try { socle.portail.exiger(ctx, { role: 'membre' }); } catch { return refuser(socket, 401, 'Unauthorized'); }
+      // Un refus de console est une tentative : au journal, sans la passe.
+      const refus = (code, texte, motif) => { socle.journal.rare(`console:${ctx.ip}`, { acteur: ctx.session?.compte || null, action: 'console.refusee', ip: ctx.ip, resultat: 'refus', details: { motif } }); return refuser(socket, code, texte); };
+      const v = verifierUpgrade(req, { origines });
+      if (!v.ok) return refus(v.code, v.erreur, 'origine ou poignée');
+      try { socle.portail.exiger(ctx, { role: 'membre' }); } catch { return refus(401, 'Unauthorized', 'session'); }
       const cible = api.prendrePasse(url.searchParams.get('passe'), ctx.session.id);
-      if (!cible) return refuser(socket, 403, 'Forbidden');
+      if (!cible) return refus(403, 'Forbidden', 'passe');
       if (ouvertes.size >= CONSOLES_MAX) return refuser(socket, 503, 'Service Unavailable');
       const ws = accepter(req, socket);
       ouvertes.add(ws);
