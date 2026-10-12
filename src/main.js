@@ -85,8 +85,9 @@ export async function demarrer(env = process.env, { log = CONSOLE } = {}) {
       if (url.pathname !== '/ws/console') return refuser(socket, 404, 'Not Found');
       const origines = [origineDe(req, socle.portail.proxys), ...socle.portail.originesEnPlus].filter(Boolean);
       const ctx = socle.portail.contexte(req, null);
-      // Un refus de console est une tentative : au journal, sans la passe.
-      const refus = (code, texte, motif) => { socle.journal.rare(`console:${ctx.ip}`, { acteur: ctx.session?.compte || null, action: 'console.refusee', ip: ctx.ip, resultat: 'refus', details: { motif } }); return refuser(socket, code, texte); };
+      // Un refus de console est une tentative : au journal, sans la passe (une
+      // ligne par adresse, par motif et par minute : une rafale ne noie pas le reste).
+      const refus = (code, texte, motif) => { socle.journal.rare(`console:${ctx.ip}:${motif}`, { acteur: ctx.session?.compte || null, action: 'console.refusee', ip: ctx.ip, resultat: 'refus', details: { raison: motif } }); return refuser(socket, code, texte); };
       const v = verifierUpgrade(req, { origines });
       if (!v.ok) return refus(v.code, v.erreur, 'origine ou poignée');
       try { socle.portail.exiger(ctx, { role: 'membre' }); } catch { return refus(401, 'Unauthorized', 'session'); }
