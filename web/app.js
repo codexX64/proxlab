@@ -767,8 +767,9 @@ async function pageReglages() {
     h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Réglages' }), h('p', { class: 'lede', text: 'Liaison à la grappe et envoi des alertes. Chaque enregistrement demande un renfort récent.' }))),
     carteLiaison(liaison), carteAlertes(alertes));
 }
+let champs = 0;
 function champ(lbl, el, aide = null) {
-  if (aide) { el.id ||= `aide-${Math.random().toString(36).slice(2, 9)}`; el.setAttribute('aria-describedby', el.id + '-aide'); }
+  if (aide) { el.id ||= `champ-${++champs}`; el.setAttribute('aria-describedby', el.id + '-aide'); }
   return h('div', { class: 'lbl-champ' }, h('label', {}, h('span', { text: lbl }), el), aide ? h('small', { class: 'hint', id: el.id + '-aide', text: aide }) : null);
 }
 
