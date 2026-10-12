@@ -388,13 +388,16 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     const t = Date.now();
     for (const [k, v] of passes) if (v.expire < t) passes.delete(k);
     if (passes.size > 1000) throw new ErreurHttp(429, 'Trop de consoles en attente.');
-    passes.set(passe, { session: ctx.session.id, cible: { noeud: b.noeud, type: b.type, vmid: b.type === 'node' ? null : b.vmid }, expire: t + 60e3 });
+    // Gardée par son empreinte : la passe en clair n'existe que dans la réponse.
+    passes.set(empreintePasse(passe), { session: ctx.session.id, cible: { noeud: b.noeud, type: b.type, vmid: b.type === 'node' ? null : b.vmid }, expire: t + 60e3 });
     return { passe };
   }, { role: 'membre' });
 
+  const empreintePasse = p => crypto.createHash('sha256').update('console:' + String(p || '')).digest('hex');
   function prendrePasse(passe, sessionId) {
-    const p = passes.get(String(passe || ''));
-    passes.delete(String(passe || ''));
+    const k = empreintePasse(passe);
+    const p = passes.get(k);
+    passes.delete(k);
     if (!p || p.expire < Date.now() || p.session !== sessionId) return null;
     return p.cible;
   }
