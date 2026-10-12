@@ -143,6 +143,22 @@ test('autorisation : chaque route refuse l\'anonyme, la lecture et le membre sel
   assert.ok(n >= 25, `routes balayées : ${n}`);
 });
 
+test('requêtes : écriture sans jeton anti-CSRF ni bonne origine refusée, corps bornés et en JSON, configuration invalide refusée au démarrage', async () => {
+  const { lireConfigProxlab } = await import('../src/config.js');
+  assert.equal((await membre.post(machine() + '/alimentation', { action: 'start' }, { sansCsrf: true })).status, 403, 'sans jeton anti-CSRF');
+  assert.equal((await membre.post(machine() + '/alimentation', { action: 'start' }, { origine: 'https://evil.example' })).status, 403, 'autre origine');
+  assert.equal((await membre.req('POST', machine() + '/alimentation', undefined, { brut: 'action=start', entetes: { 'content-type': 'application/x-www-form-urlencoded' } })).status, 415, 'JSON seulement');
+  assert.equal((await membre.post(machine() + '/instantanes', { nom: 'gros', description: 'x'.repeat(70 * 1024) })).status, 413, 'corps borné');
+  assert.equal((await membre.post(machine() + '/alimentation', { action: 'start', en_trop: 1 })).status, 400, 'champ inconnu refusé');
+  for (const [k, v] of [['PROXLAB_HUB_TOKEN', 'court'], ['PROXLAB_INTERVAL', '5'], ['PROXLAB_EVENTS_DAYS', '0'], ['PORT', 'quatre-vingt']]) {
+    assert.throws(() => lireConfigProxlab({ [k]: v }), new RegExp(k), `${k}=${v}`);
+  }
+  const vide = path.join(base, 'cle-vide');
+  fs.writeFileSync(vide, '');
+  assert.throws(() => lireConfigProxlab({ SOCLE_CLE_FILE: vide }), /est vide/);
+  fs.rmSync(vide);
+});
+
 test('liaison : sonde, empreinte épinglée, essai en direct, secrets scellés, jamais rendus', async () => {
   const avant = await admin.get('/api/etat');
   assert.equal(avant.json.relie, false);
@@ -401,6 +417,13 @@ test('Hub : jeton de service, état et événements en lecture, seulement trois 
   assert.equal((await hub('POST', '/api/hub/machines/pve-b/qemu/130/alimentation', { action: 'start' })).status, 200);
   assert.ok((await lecteur.get('/api/evenements?limite=3')).json.some(x => x.by === 'Hub'));
   assert.equal((await hub('GET', '/api/hub/etat', undefined, 'faux-jeton-de-service-0000000000000')).status, 401);
+  // Chaque jeton faux compte pour l'adresse : dix échecs bloquent, même le bon jeton.
+  const codes = [];
+  for (let i = 0; i < 11; i++) codes.push((await hub('GET', '/api/hub/etat', undefined, `faux-jeton-de-service-${String(i).padStart(14, '0')}`)).status);
+  assert.ok(codes.includes(429), codes.join(' '));
+  assert.equal((await hub('GET', '/api/hub/etat')).status, 429, 'adresse bloquée');
+  s.db.prepare("DELETE FROM socle_essais WHERE cle LIKE 'ip:machine:%'").run();
+  assert.equal((await hub('GET', '/api/hub/etat')).status, 200);
   assert.equal((await new Client(s.port).req('GET', '/api/hub/etat', undefined, { origine: null })).status, 401);
   assert.ok(s.db.prepare("SELECT count(*) n FROM socle_journal WHERE action = 'connexion.jeton' AND resultat = 'refus'").get().n >= 1);
 });
