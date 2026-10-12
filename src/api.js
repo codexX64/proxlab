@@ -128,7 +128,6 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     return { noeuds, machines, stockages };
   }
 
-  // ---- lecture ----
   r.get('/api/health', () => ({ ok: true }), { public: true });
 
   r.get('/api/etat', async ctx => {
@@ -253,7 +252,6 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     return { relie, actives: surveillance.actives(), sauvegardes: { jours, recentes }, disponibilite: { debut: new Date(debut).toISOString(), heures } };
   }, { role: 'lecture' });
 
-  // ---- gestes ----
   r.post('/api/machines/:noeud/:type/:vmid/alimentation', async ctx => {
     session(ctx, { role: 'membre' });
     const m = machine(ctx.params);
@@ -402,7 +400,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     return p.cible;
   }
 
-  // ---- liaison à Proxmox ----
+  // Liaison à Proxmox : administrateur sous renfort, secrets scellés.
   const liaisonPublique = () => {
     const l = reglages.lire('liaison');
     return l ? { hote: l.hote, port: l.port, confiance: l.confiance, fp: l.fp || '', jetonId: l.jeton_id || '', aSecret: !!l.jeton_scelle, utilisateur: l.utilisateur || '', aMotDePasse: !!l.mdp_scelle, verifie: l.verifie || 0 } : null;
@@ -467,7 +465,6 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     return { ok: true };
   }, { role: 'admin' });
 
-  // ---- alertes ----
   const alertesPubliques = () => {
     const a = reglages.lire('alertes');
     return a ? { actif: !!a.actif, url: a.url, format: a.format, entete: a.entete, aCle: !!a.cle_scellee, aSecret: !!a.secret_scelle, service: a.service, lien: a.lien, cpu: a.cpu, memoire: a.memoire, stockage: a.stockage } : null;
@@ -512,7 +509,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     return { ref: out.ref };
   }, { role: 'admin' });
 
-  // ---- Hub (jeton de service) ----
+  // Routes du Hub : son jeton de service, jamais une session.
   r.get('/api/hub/etat', async ctx => {
     hub(ctx);
     const aTraiter = surveillance.actives().length;

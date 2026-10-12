@@ -43,7 +43,6 @@ ajouterPictos({
   pause: '<path d="M8 5v14M16 5v14"/>',
 });
 
-// ---------- mise en forme ----------
 const nf = (v, d = 0) => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: d }).format(v);
 function octets(v) {
   const u = ['o', 'Kio', 'Mio', 'Gio', 'Tio', 'Pio'];
@@ -95,7 +94,6 @@ function barre(valeur, { alerte = 90, attention = 75 } = {}) {
 const erreur = e => h('div', { class: 'page' }, h('div', { class: 'card' }, h('p', { class: 'vide', text: e.message || String(e) })));
 const sur = fn => async e => { e?.stopPropagation?.(); try { await fn(); } catch (x) { toast(x.message, true); } };
 
-// ---------- coque ----------
 const stage = h('div', { class: 'stage' });
 const navs = {};
 const PAGES = {
@@ -178,7 +176,6 @@ function compteur(k, n, alerte = false) {
   c.classList.toggle('alerte', alerte);
 }
 
-// ---------- non relié ----------
 function nonRelie() {
   return h('div', { class: 'card vide-grand' },
     h('div', { class: 'itile' }, icone('lien', 18)),
@@ -189,7 +186,6 @@ function nonRelie() {
     admin ? h('button', { class: 'btn solid mt14', type: 'button', onclick: () => aller('reglages') }, icone('reglages', 15), 'Relier Proxmox') : null);
 }
 
-// ---------- vue d'ensemble ----------
 async function pageVue() {
   const page = h('div', { class: 'page' });
   const peindre = () => page.replaceChildren(...contenuVue());
@@ -358,7 +354,6 @@ function calendrierDispo({ heures, debut }) {
   return calendrier({ cellules, colonnes: 24, lignes, libelle: 'Disponibilité heure par heure sur sept jours', cote: 11, ecart: 3 });
 }
 
-// ---------- machines ----------
 async function pageMachines() {
   const filtres = [['toutes', 'Toutes'], ['marche', 'En marche'], ['arretees', 'Arrêtées'], ['modeles', 'Modèles']];
   const choix = h('div', { class: 'views' });
@@ -401,7 +396,6 @@ function ligneMachine(m) {
   return tr;
 }
 
-// ---------- fiche d'une machine ----------
 async function pageFiche(noeud, type, vmid) {
   const base = `/api/machines/${encodeURIComponent(noeud)}/${type}/${vmid}`;
   let f = await api.get(base);
@@ -590,7 +584,6 @@ async function migrer(f, base) {
   if (ok) toast('Migration lancée : suis-la dans les tâches.');
 }
 
-// ---------- console ----------
 function consoleMachine(cible, garder) {
   const hote = h('div', { class: 'console-hote' });
   const etat = h('span', { class: 'note', text: 'fermée' });
@@ -614,7 +607,6 @@ function consoleMachine(cible, garder) {
   return h('div', { class: 'card' }, h('header', {}, h('h2', { text: cible.type === 'node' ? `Shell de ${cible.noeud}` : 'Console' }), etat, bouton), hote);
 }
 
-// ---------- nœuds ----------
 async function pageNoeuds() {
   const page = h('div', { class: 'page' });
   let shell = { term: null, ws: null };
@@ -645,7 +637,6 @@ async function pageNoeuds() {
   return page;
 }
 
-// ---------- stockage ----------
 async function pageStockage() {
   const page = h('div', { class: 'page' });
   const peindre = () => {
@@ -690,7 +681,6 @@ async function contenuStockage(s) {
   await dialogue({ titre: `${s.storage} sur ${s.node}`, large: true, contenu: [choix, liste], boutons: [{ texte: 'Fermer', valeur: null }] });
 }
 
-// ---------- tâches ----------
 async function pageTaches() {
   const page = h('div', { class: 'page' });
   const peindre = async () => {
@@ -739,7 +729,6 @@ async function journalTache(t) {
   clearTimeout(minuterie);
 }
 
-// ---------- événements ----------
 async function pageEvenements() {
   const corps = h('div', {});
   const plus = h('button', { class: 'btn sm flat', type: 'button', text: 'Plus anciens' });
@@ -760,7 +749,6 @@ async function pageEvenements() {
     h('div', { class: 'card' }, corps, h('div', { class: 'pad centre' }, plus)));
 }
 
-// ---------- réglages ----------
 async function pageReglages() {
   const [{ liaison }, { alertes }] = await Promise.all([api.get('/api/liaison'), api.get('/api/alertes')]);
   return h('div', { class: 'page' },
@@ -863,7 +851,6 @@ function carteAlertes(a) {
       h('div', { class: 'rowline mt14' }, h('button', { class: 'btn solid', type: 'button', onclick: enregistrerA }, 'Enregistrer'), h('button', { class: 'btn', type: 'button', onclick: essai }, 'Envoyer un essai'))));
 }
 
-// ---------- démarrage ----------
 await rafraichir({ synthese: true });
 let tours = 0;
 setInterval(() => { tours++; rafraichir({ synthese: tours % 3 === 0 }); }, 20000);
