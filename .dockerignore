@@ -1,0 +1,14 @@
+.git
+.github
+node_modules
+test
+outils
+deploy
+socle/essai
+socle/test
+*.md
+hub.json
+.env
+.env.*
+secrets
+data
