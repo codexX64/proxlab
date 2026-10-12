@@ -1,0 +1,135 @@
+/* ProxLab — ce qui s'ajoute à SOMA : vue d'ensemble de la grappe, fiche d'une
+   machine, terminal. Aucun style en ligne (la politique de contenu l'interdit) :
+   ce qui est vraiment dynamique (largeur d'une barre, couleur 256 d'un
+   terminal) est posé en CSSOM. Plus la place manque, moins on en montre, et
+   rien ne se recouvre. */
+.mt9{margin-top:9px}.mt10{margin-top:10px}.mt11{margin-top:11px}.mt14{margin-top:14px}.mt16{margin-top:16px}
+.mb12{margin-bottom:12px}.mb16{margin-bottom:16px}.pt12{padding-top:12px}
+.grow1{min-width:0;flex:1}.pousse{margin-left:auto}.centre{text-align:center}
+.rowline{display:flex;gap:12px;align-items:center;flex-wrap:wrap;min-width:0}
+.rowline9{display:flex;gap:9px 16px;flex-wrap:wrap}
+.fld-sm{max-width:280px;min-width:0;flex:1 1 180px}
+.fw5{font-weight:500}.fs11{font-size:11px}.fs12{font-size:12px}.fs13{font-size:13px;font-weight:600}
+.bloc{display:block;margin-top:2px}
+.chk{display:flex;gap:8px;align-items:center;font-size:13px}
+.cliquable{cursor:pointer}
+.cliquable:hover td{background:var(--hair-soft)}
+.cliquable:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.grille{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:16px}
+.cardbody{padding:2px 18px 14px}
+.kv{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:7px 0;border-bottom:1px solid var(--hair-soft);font-size:13px;min-width:0}
+.kv:last-child{border-bottom:none}
+.kv>span:first-child{color:var(--muted);flex:none}
+.kv b{text-align:right;min-width:0;overflow-wrap:anywhere;font-weight:500}
+.kv .jaugette{flex:0 1 180px}
+.card>header .compte{font-family:var(--mono);font-size:11px;font-weight:400;color:var(--muted);margin-left:8px}
+.nav .cnt.alerte{color:var(--alarm)}
+
+/* Jauge en ligne (processeur, mémoire, occupation). */
+.jaugette{display:flex;align-items:center;gap:8px;min-width:96px}
+.jaugette .rail2{flex:1;height:4px;border-radius:4px;background:var(--well);overflow:hidden;min-width:36px}
+.jaugette .rail2 i{display:block;height:100%;background:var(--ok);border-radius:4px}
+.jaugette.warn .rail2 i{background:var(--warn)}
+.jaugette.held .rail2 i{background:var(--alarm)}
+.jaugette b{font-family:var(--mono);font-size:11.5px;font-weight:400;color:var(--ink-soft);min-width:4ch;text-align:right}
+
+/* Vue d'ensemble. */
+.vide-grand{display:flex;flex-direction:column;align-items:center;text-align:center;padding:42px 22px;gap:8px}
+.vide-grand .lede{max-width:52ch}
+.releve{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:12px;color:var(--muted);font-size:11.5px;min-width:0}
+.releve strong{font-size:26px;font-weight:500;letter-spacing:-.04em;color:var(--ink)}
+.releve .pousse{font-family:var(--mono);font-size:11px}
+.graphe-place{min-height:210px}
+.etat-grappe{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.etat-grappe .resume{flex:1 1 200px;min-width:0}
+.resume-ligne{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--hair-soft);font-size:12.5px;color:var(--ink-soft)}
+.resume-ligne:last-child{border-bottom:0}
+.resume-ligne b{font-family:var(--mono);font-weight:400;color:var(--ink)}
+.resume-ligne b.warn{color:var(--warn)}
+.obs{display:flex;align-items:center;gap:7px;font-size:12.5px;min-width:0}
+.obs .tronque{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sans-retour{white-space:nowrap}
+.obs .d{width:6px;height:6px;border-radius:50%;flex:none;background:var(--warn)}
+.obs.held .d{background:var(--alarm)}
+.journal{padding:0 18px 8px}
+.evenement{display:flex;align-items:flex-start;gap:11px;padding:11px 0;border-bottom:1px solid var(--hair-soft);min-width:0}
+.card>.evenement{padding-left:18px;padding-right:18px}
+.evenement:last-child{border-bottom:0}
+.ev-ic{width:22px;height:22px;display:flex;align-items:center;justify-content:center;color:var(--muted);flex:none;margin-top:1px}
+.evenement.critique .ev-ic{color:var(--alarm)}
+.evenement.avertissement .ev-ic{color:var(--warn)}
+.ev-txt{min-width:0;flex:1}
+.ev-txt b{display:block;font-weight:500;font-size:13px;overflow-wrap:anywhere}
+.ev-txt span{display:block;font-size:11.5px;color:var(--muted);margin-top:2px}
+.evenement time{font-family:var(--mono);font-size:11px;color:var(--faint);white-space:nowrap;flex:none;margin-top:2px}
+.noeud-ligne{display:grid;grid-template-columns:120px minmax(0,1fr) 92px;gap:16px;align-items:center;padding:13px 0;border-bottom:1px solid var(--hair-soft)}
+.noeud-ligne:last-of-type{border-bottom:0}
+.noeud-nom{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;align-items:center;text-align:left;background:none;border:0;padding:0;color:inherit;font:inherit;cursor:pointer;min-width:0}
+.noeud-nom .d{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.noeud-nom .d.held{background:var(--alarm)}
+.noeud-nom b{font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.noeud-nom small{grid-column:2;font-size:11px;color:var(--muted)}
+.noeud-nom:hover b{color:var(--accent)}
+.noeud-ratio{text-align:right;min-width:0}
+.noeud-ratio b{display:block;font-family:var(--mono);font-weight:400;font-size:12.5px}
+.noeud-ratio small{display:block;font-size:10.5px;color:var(--muted);margin-top:3px;white-space:nowrap}
+.legende-etats{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:11px;color:var(--muted)}
+.legende-etats span{display:inline-flex;align-items:center;gap:6px}
+.legende-etats i{width:8px;height:8px;border-radius:2px;background:var(--g)}
+.legende-etats i.g-ok{opacity:.55}
+.g-calendrier{max-width:520px}
+
+/* Fiche d'une machine. */
+.detailhead{display:flex;align-items:center;gap:14px;margin-bottom:18px;min-width:0;flex-wrap:wrap}
+.detailhead .big{width:46px;height:46px;border-radius:12px;background:var(--well);color:var(--ink-soft);display:flex;align-items:center;justify-content:center;flex:none}
+.detailhead h1{font-size:24px;letter-spacing:-.03em;overflow-wrap:anywhere}
+.detailhead .sub{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12.5px;margin-top:3px}
+.detailhead .actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.dtpane{animation:rise .25s var(--courbe)}
+.grille-graphes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.lbl-champ{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted);min-width:0}
+.lbl-champ>label{display:flex;flex-direction:column;gap:5px;min-width:0}
+.lbl-champ .field{width:100%}
+.lbl-champ .hint{margin-top:0}
+.formulaire{border-top:1px solid var(--hair-soft);padding-top:16px}
+.certificat:not(:empty){margin-top:10px;padding:10px 12px;border-radius:var(--r-ctl);background:var(--well)}
+.seuils{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.journal-tache{max-height:50vh;overflow:auto;background:var(--well);border-radius:var(--r-ctl);padding:12px;font-family:var(--mono);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px}
+.liste-contenu{max-height:50vh;overflow:auto;margin-top:10px}
+.liste-contenu .kv span.tronque{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}
+
+/* Terminal : fond sombre dans toutes les gammes. */
+.console-hote{position:relative;margin:0 18px 18px;min-height:120px}
+.terminal{height:min(62vh,560px);min-height:260px;overflow:hidden;background:#0D1014;color:#D7DCE3;border-radius:var(--r-ctl);padding:10px;font-family:var(--mono);font-size:13px;line-height:1.3;white-space:pre;outline:none}
+.terminal:focus-within,.terminal:focus{box-shadow:0 0 0 2px var(--accent)}
+.terminal-ligne{height:1.3em}
+.terminal-sonde{position:absolute;visibility:hidden;white-space:pre}
+.terminal-saisie{position:absolute;opacity:0;width:1px;height:1px;left:-9999px}
+.t-gras{font-weight:600}.t-pale{opacity:.7}
+.t-curseur{background:#D7DCE3;color:#0D1014}
+.t-inv{color:#0D1014}.t-bfond{background:#D7DCE3}
+.t-f0{color:#12161D}.t-f1{color:#E05252}.t-f2{color:#3FA66A}.t-f3{color:#C99A2E}.t-f4{color:#4D84FF}.t-f5{color:#A86EDD}.t-f6{color:#2FA3A3}.t-f7{color:#C3CAD6}
+.t-f8{color:#5B6472}.t-f9{color:#FF6B6B}.t-f10{color:#57C98A}.t-f11{color:#E5BE4D}.t-f12{color:#7AA2FF}.t-f13{color:#C59BF0}.t-f14{color:#4FC4C4}.t-f15{color:#F0F4FA}
+.t-b0{background:#12161D}.t-b1{background:#E05252}.t-b2{background:#3FA66A}.t-b3{background:#C99A2E}.t-b4{background:#4D84FF}.t-b5{background:#A86EDD}.t-b6{background:#2FA3A3}.t-b7{background:#C3CAD6}
+.t-b8{background:#5B6472}.t-b9{background:#FF6B6B}.t-b10{background:#57C98A}.t-b11{background:#E5BE4D}.t-b12{background:#7AA2FF}.t-b13{background:#C59BF0}.t-b14{background:#4FC4C4}.t-b15{background:#F0F4FA}
+
+@container stage (max-width:900px){
+  .grille-graphes{grid-template-columns:minmax(0,1fr)}
+}
+@container stage (max-width:760px){
+  .seuils{grid-template-columns:minmax(0,1fr)}
+  .noeud-ligne{grid-template-columns:96px minmax(0,1fr) 78px;gap:12px}
+  .console-hote{margin:0 14px 14px}
+  .cardbody{padding:2px 14px 12px}
+  .journal{padding:0 14px 6px}
+}
+@container stage (max-width:520px){
+  .noeud-ligne{grid-template-columns:minmax(0,1fr) auto}
+  .noeud-ligne .g-capacite{grid-column:1 / -1;grid-row:2}
+  .detailhead .big{display:none}
+  .detailhead .actions{margin-left:0;width:100%}
+  .releve strong{font-size:22px}
+  .terminal{font-size:11.5px}
+}
+.tw td.mono,.tw td.dim{white-space:nowrap}
+.rowline>.grow1.dim{white-space:nowrap;flex:1 0 auto}
