@@ -91,6 +91,13 @@ function barre(valeur, { alerte = 90, attention = 75 } = {}) {
   i.style.width = `${Math.max(0, Math.min(100, valeur))}%`;
   return h('div', { class: 'jaugette ' + (valeur >= alerte ? 'held' : valeur >= attention ? 'warn' : '') }, h('div', { class: 'rail2' }, i), h('b', { text: `${nf(valeur)} %` }));
 }
+// Une ligne de tableau qui s'ouvre au clic comme à la touche Entrée.
+function ouvrable(tr, ouvrir) {
+  tr.tabIndex = 0;
+  tr.addEventListener('click', ouvrir);
+  tr.addEventListener('keydown', e => { if (e.key === 'Enter') ouvrir(); });
+  return tr;
+}
 const erreur = e => h('div', { class: 'page' }, h('div', { class: 'card' }, h('p', { class: 'vide', text: e.message || String(e) })));
 const sur = fn => async e => { e?.stopPropagation?.(); try { await fn(); } catch (x) { toast(x.message, true); } };
 
@@ -299,7 +306,7 @@ function carteATraiter(actives) {
           h('td', { class: 'cache-m dim', text: a.node || '—' }),
           h('td', { class: 'principal' }, h('span', { class: 'obs ' + (a.severity === 'critique' ? 'held' : 'warn') }, h('i', { class: 'd' }), h('span', { class: 'tronque', text: a.title }))),
           h('td', { class: 'cache-s fin mono', text: age(a.since) }));
-        const f = vers(a); if (f) tr.addEventListener('click', f);
+        const f = vers(a); if (f) ouvrable(tr, f);
         return tr;
       }) : h('tr', {}, h('td', { colspan: 4, class: 'vide', text: 'Rien à traiter.' }))))));
 }
@@ -389,11 +396,7 @@ function ligneMachine(m) {
     h('td', { class: 'cache-l' }, marche ? barre(pct(m.mem, m.maxmem)) : h('span', { class: 'dim', text: octets(m.maxmem) })),
     h('td', { class: 'cache-s mono', text: marche ? duree(m.uptime) : '—' }),
     h('td', {}, tagMachine(m)));
-  const ouvrir = () => aller('fiche', [m.node, m.type, String(m.vmid)]);
-  tr.addEventListener('click', ouvrir);
-  tr.tabIndex = 0;
-  tr.addEventListener('keydown', e => { if (e.key === 'Enter') ouvrir(); });
-  return tr;
+  return ouvrable(tr, () => aller('fiche', [m.node, m.type, String(m.vmid)]));
 }
 
 async function pageFiche(noeud, type, vmid) {
@@ -647,16 +650,13 @@ async function pageStockage() {
     page.replaceChildren(tete, h('div', { class: 'card' }, h('div', { class: 'tw' }, h('table', {},
       h('thead', {}, h('tr', {}, h('th', { text: 'Stockage' }), h('th', { class: 'cache-m', text: 'Nœud' }), h('th', { class: 'cache-l', text: 'Contenu' }), h('th', { text: 'Occupation' }), h('th', { class: 'cache-s fin', text: 'Libre' }))),
       h('tbody', {}, liste.map(s => {
-        const tr = h('tr', { class: 'cliquable', tabIndex: 0 },
+        const tr = h('tr', { class: 'cliquable' },
           h('td', { class: 'principal' }, h('div', { class: 'who-cell' }, h('span', { class: 'itile' }, icone('disque')), h('div', {}, h('b', { text: s.storage }), h('small', { class: 'mono', text: `${s.plugintype}${s.shared ? ' · partagé' : ''}` })))),
           h('td', { class: 'cache-m dim', text: s.node }),
           h('td', { class: 'cache-l dim', text: s.content.split(',').join(', ') }),
           h('td', {}, barre(pct(s.disk, s.maxdisk), { alerte: 90, attention: 80 })),
           h('td', { class: 'cache-s fin mono', text: octets(s.maxdisk - s.disk) }));
-        const ouvrir = () => contenuStockage(s);
-        tr.addEventListener('click', ouvrir);
-        tr.addEventListener('keydown', e => { if (e.key === 'Enter') ouvrir(); });
-        return tr;
+        return ouvrable(tr, () => contenuStockage(s));
       }))))));
   };
   enregistrer(peindre);
@@ -691,16 +691,13 @@ async function pageTaches() {
       h('thead', {}, h('tr', {}, h('th', { text: 'Tâche' }), h('th', { class: 'cache-m', text: 'Nœud' }), h('th', { class: 'cache-l', text: 'Par' }), h('th', { class: 'cache-s', text: 'Début' }), h('th', { text: 'Statut' }))),
       h('tbody', {}, liste.length ? liste.map(t => {
         const enCours = !t.endtime, ok = t.status === 'OK';
-        const tr = h('tr', { class: 'cliquable', tabIndex: 0 },
+        const tr = h('tr', { class: 'cliquable' },
           h('td', { class: 'principal' }, h('b', { class: 'fw5', text: t.type }), h('small', { class: 'dim bloc mono', text: t.id || '—' })),
           h('td', { class: 'cache-m dim', text: t.node }),
           h('td', { class: 'cache-l dim mono fs12', text: t.user }),
           h('td', { class: 'cache-s mono', text: dateHeure(t.starttime) }),
           h('td', {}, h('span', { class: 'tag ' + (enCours ? 'warn' : ok ? '' : 'held') }, h('i', { class: 'd' }), enCours ? 'en cours' : ok ? 'réussie' : String(t.status).slice(0, 40))));
-        const ouvrir = () => journalTache(t);
-        tr.addEventListener('click', ouvrir);
-        tr.addEventListener('keydown', e => { if (e.key === 'Enter') ouvrir(); });
-        return tr;
+        return ouvrable(tr, () => journalTache(t));
       }) : h('tr', {}, h('td', { colspan: 5, class: 'vide', text: 'Aucune tâche récente.' })))))));
   };
   enregistrer(peindre);
