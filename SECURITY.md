@@ -1,0 +1,547 @@
+# Security compliance — ProxLab
+
+Standard: Project Baseline Requirements & Security Manual, Edition 2.0 (258 controls)
+Audited: 2026-10-12   ·   Owner: Codex64   ·   Status: NON-COMPLIANT
+
+## Summary
+| Part | Controls | Pass | Fail | N/A | Unknown |
+|---|---|---|---|---|---|
+| I — Baseline requirements | 68 | 54 | 12 | 2 | 0 |
+| II — Security controls | 190 | 91 | 28 | 71 | 0 |
+| Total | 258 | 145 | 40 | 73 | 0 |
+
+## Authentication posture
+Les opérateurs passent par le socle commun, embarqué avec ses essais : quatre facteurs cumulables sur chaque compte — mot de passe (Argon2id, 64 Mio, 3 passes, parallélisme 4, plancher 19 Mio / 2 / 1, rehachage transparent, liste de fuites locale, 12 à 1024 caractères), application TOTP (RFC 6238, secret généré côté serveur et scellé AES-256-GCM, QR code dessiné dans le navigateur, rejeu refusé), clés d’accès WebAuthn (résidentes, vérification de l’utilisateur exigée, jusqu’à vingt, nommées et révocables) et dix codes de secours de 100 bits hachés. Politique par facteur : mot de passe et TOTP facultatifs, clé requise pour les administrateurs, qui tiennent deux facteurs dont une clé (deux facteurs sans clé en mode HTTP dégradé, affiché partout). Un mot de passe seul n’ouvre qu’une session d’inscription. Le premier compte exige le jeton d’installation. Sessions serveur (jeton de 256 bits, empreinte seule en base), renouvelées à chaque changement de niveau, 12 heures au plus et 60 minutes d’inactivité, listées et révocables une à une ou toutes ; une console ouverte revérifie sa session chaque minute et meurt avec elle. Renfort de cinq minutes avec le facteur le plus fort avant tout changement de facteur, de rôle ou de politique, avant une suppression ou un export, et avant chaque geste de ProxLab qui coupe, efface ou change la grappe : arrêt forcé, réinitialisation, migration, configuration, retour ou suppression d’instantané, suppression de sauvegarde, arrêt de tâche, shell d’un nœud, liaison à Proxmox, alertes. Rôles : lecture (voit la grappe), membre (démarre, arrête proprement, redémarre, suspend, prend un instantané, lance une sauvegarde, ouvre la console d’une machine), administrateur (le reste, sous renfort, et les comptes). Le Hub présente un jeton de service (Bearer, 24 caractères au moins, comparé en temps constant, échecs plafonnés par adresse) qui n’ouvre que l’état résumé, les événements, les alertes et trois gestes d’alimentation. Limiteur persistant par adresse et par compte pour les humains, preuve de travail après trois échecs, paliers de verrouillage. La clé maîtresse et le poivre se tournent sans réinscription.
+
+
+## Findings (audit of 1.0, fixed in 2.0)
+ProxLab 1.0 relevé en lecture seule (archive reçue, sans historique), classé par gravité ; la 2.0 est réécrite sur le socle commun dans un dépôt neuf, et chaque constat y est corrigé par le commit indiqué, avec son essai quand un essai peut l’exprimer (« * » : relevé pendant la réécriture).
+
+| # | Gravité | Contrôles | Constat | Commits |
+|---|---|---|---|---|
+| C1 | CRITICAL | REQ-AUTH-001, REQ-AUTH-003, REQ-AUTH-004, REQ-AUTH-002, REQ-AUTH-013 | Aucune clé d’accès ni politique de facteurs : un compte unique, mot de passe et TOTP facultatif ; un administrateur pouvait n’avoir qu’un mot de passe. | c428b9e |
+| C2 | CRITICAL | REQ-CRYPT-001, REQ-CRYPT-004, REQ-AUTH-007 | Mots de passe en scrypt N=2^15, sous le plancher ; dix caractères sans liste de fuites ; huit codes de secours de 40 bits. | c428b9e |
+| C3 | CRITICAL | REQ-AUTH-010, SEC-AUTH-003 | Limiteur en mémoire, sans verrou par compte ni défi après échecs répétés. | c428b9e, bdf53bf |
+| C4 | CRITICAL | SEC-DB-007, SEC-AUTHZ-004 | Le premier compte revenait au premier visiteur : installation ouverte sans jeton. | c428b9e |
+| C5 | CRITICAL | REQ-WEB-006, SEC-API-004, SEC-AUTHZ-004 | État d’installation lisible sans session (hôte de Proxmox, identifiant du jeton, utilisateur, adresse des alertes) ; aucune validation par schéma. | bdf53bf |
+| C6 | CRITICAL | REQ-DATA-002, SEC-CSRF-004 | TLS vers Proxmox désactivé par défaut, console toujours sans vérification : identifiants de Proxmox exposés à une interception. | a0378a3, feb6449, d487ef1 |
+| C7 | HIGH | REQ-AUTH-008, REQ-CRYPT-006 | Secret TOTP et identifiants de session en clair dans le fichier d’état ; anti-rejeu par code identique seulement. | c428b9e, e230177 |
+| C8 | HIGH | REQ-AUTH-005, REQ-SESS-005 | TOTP désactivable avec le seul mot de passe ; aucun geste destructeur (arrêt forcé, retour d’instantané, suppression de sauvegarde, migration) sous renfort. | c428b9e, bdf53bf |
+| C9 | HIGH | REQ-SESS-001, REQ-SESS-002, REQ-SESS-003, REQ-SESS-006 | Session non renouvelée au changement de mot de passe, sans liste d’appareils, sans préfixe __Host-, sans délai d’inactivité. | c428b9e |
+| C10 | HIGH | REQ-WEB-005, SEC-CSRF-001, SEC-CSRF-002 | Écritures acceptées sans origine ni jeton anti-CSRF ; corps en formulaire acceptés. | c428b9e, 8875987 |
+| C11 | HIGH | SEC-API-004, SEC-XSS-006 | Configuration d’une machine rendue en entier (mots de passe cloud-init, clés SSH) ; messages d’erreur de Proxmox rendus tels quels. | bdf53bf |
+| C12 | HIGH | REQ-DATA-004, SEC-LOG-001 | Aucun journal de sécurité : connexions, refus et gestes absents. | c428b9e, bdf53bf, ecfc992 |
+| C13 | HIGH | REQ-WEB-008 | WebSocket sans borne de taille de trame : une trame épuisait la mémoire. | d487ef1 |
+| C14 | HIGH | REQ-CI-001, REQ-CI-002, REQ-CI-004, SEC-DEP-004 | CI réduite à un contrôle de syntaxe ; ni secrets, ni analyse statique, ni anonymat ; actions suivies par étiquette. | a93a9ae |
+| C15 | MEDIUM | REQ-WEB-002 | Politique de contenu sans nonce, styles en ligne permis. | bdf53bf, 1909f3c |
+| C16 | MEDIUM | REQ-AUTH-014, GOV-003 | Aucune notification de sécurité ; pas de security.txt. | c428b9e, bdf53bf |
+| C17 | MEDIUM | SEC-INFRA-004 | Image de base suivie par étiquette. | 1661454 |
+| C18 | MEDIUM | SEC-API-007 | * Socle : un 502 voulu (Proxmox injoignable, relais SMTP refusant) devenait un 500 opaque ; corrigé dans le socle puis embarqué. | c428b9e |
+| C19 | MEDIUM | REQ-DATA-001 | * La base naissait selon le masque du processus (0644). | e230177 |
+| C20 | LOW | REQ-ANON-005, REQ-ANON-007 | Pseudonyme en auteur du paquet ; exemples en adresses privées dans la configuration, la démonstration et l’interface. | 41740ca, 1661454, 1909f3c |
+| C21 | LOW | SEC-API-002 | Un seul débit global par adresse. | bdf53bf |
+| C22 | LOW | REQ-CRYPT-006 | * La passe de console était gardée en clair en mémoire. | 4721047 |
+| C23 | LOW | REQ-DATA-004 | * Les refus de console à la mise à niveau n’étaient pas au journal. | ecfc992 |
+
+## Control status
+| ID | Severity | Status | Evidence | Notes |
+|---|---|---|---|---|
+| REQ-AUTH-001 | CRITICAL | PASS | `socle/src/comptes.js:25` ; mot de passe, TOTP, clés et codes de secours cumulables : essai `socle/test/parcours.test.js:159` | socle embarqué, ses essais rejoués par la vérification de ProxLab (`.github/workflows/verification.yml:30`) ; QR code du TOTP dessiné dans le navigateur (`socle/web/qr.js:240`) |
+| REQ-AUTH-002 | CRITICAL | PASS | `socle/src/comptes.js:28` ; `socle/src/index.js:49` ; réglable sans déploiement : `socle/src/portail.js:466` | défaut : mot de passe et TOTP facultatifs, clé requise pour les administrateurs |
+| REQ-AUTH-003 | CRITICAL | PASS | `socle/src/webauthn.js:26` ; vingt clés nommées : `socle/src/comptes.js:36` ; renommer et retirer : `socle/src/portail.js:306` | liste avec dates de création et d’usage dans la page Sécurité |
+| REQ-AUTH-004 | CRITICAL | PASS | `socle/src/webauthn.js:46` ; origine `socle/src/webauthn.js:47` ; rpIdHash `socle/src/webauthn.js:103` | défi à usage unique lié à la session, UP et UV exigés, signature et compteur vérifiés |
+| REQ-AUTH-005 | CRITICAL | PASS | `socle/src/comptes.js:644` ; renfort et fermeture des autres sessions : `socle/src/comptes.js:660` | la notification part à l’adresse vérifiée quand un relais existe (voir REQ-AUTH-014) |
+| REQ-AUTH-006 | CRITICAL | PASS | `socle/src/comptes.js:905` ; jeton de 20 minutes, haché, unique : `socle/src/comptes.js:34` | essai `socle/test/parcours.test.js:242` ; rejoué par le runbook (`outils/exercice-incident.mjs:74`) |
+| REQ-AUTH-007 | HIGH | PASS | `socle/src/comptes.js:37` ; 100 bits, haché Argon2id, usage unique : `socle/src/comptes.js:444` | alerte « secours.utilise » (courriel si relais, voir REQ-AUTH-014) ; la 1.x en tirait huit de 40 bits, remplacés par ceux du socle |
+| REQ-AUTH-008 | HIGH | PASS | `socle/src/totp.js:35` ; rejeu refusé : `socle/src/comptes.js:536` | RFC 6238, 6 chiffres, 30 s, ±1 pas, secret scellé AES-256-GCM (la 1.x le gardait en clair : base neuve, rien n’est repris) |
+| REQ-AUTH-009 | CRITICAL | PASS | aucune voie SMS ni code par courriel : `grep -rniE "sms\|twilio" socle/src src` → 0 ; connexions possibles : `socle/src/comptes.js:377`, `socle/src/comptes.js:403`, `socle/src/comptes.js:425`, `socle/src/comptes.js:490` | un mot de passe seul n’ouvre qu’une session d’inscription ; le jeton du Hub n’ouvre jamais de session humaine |
+| REQ-AUTH-010 | CRITICAL | PASS | humains : `socle/src/limiteur.js:20` (SQLite, par adresse et par compte, paliers de verrou, preuve de travail après trois échecs) ; jeton du Hub : chaque échec compte pour l’adresse dans le même limiteur persistant, sous une clé à part (`src/api.js:102`, `src/api.js:108`) : dix échecs bloquent l’adresse, même pour le bon jeton | essai `test/proxlab.test.js:430` ; la passe de console n’est essayable qu’une fois (usage unique) et sous une session valide |
+| REQ-AUTH-011 | HIGH | PASS | vérification leurre : `socle/src/argon.js:110` ; message unique | essai `socle/test/parcours.test.js:81` |
+| REQ-AUTH-012 | HIGH | PASS | `socle/src/comptes.js:944` : l’adresse n’existe que dans le jeton haché tant qu’elle n’est pas vérifiée ; `socle/src/comptes.js:953` | l’adresse ne sert qu’aux alertes : ni identifiant, ni récupération, ni droit ; pas d’inscription libre (invitation seulement) |
+| REQ-AUTH-013 | HIGH | PASS | `socle/src/comptes.js:743` | le premier compte naît administrateur et doit inscrire une clé avant tout accès complet (en HTTPS) |
+| REQ-AUTH-014 | MEDIUM | FAIL | `socle/src/notifications.js:97` ; « ce n’était pas moi » : `socle/src/comptes.js:931` | implémenté et essayé (`socle/test/courriel.test.js:63`) ; ne part que si un relais SMTP est configuré → action H2 |
+| REQ-CRYPT-001 | CRITICAL | PASS | `socle/src/argon.js:15` ; 64 Mio, t=3, p=4 par défaut : `socle/src/index.js:42` | Argon2id natif de Node, sel de 16 octets par empreinte (la 1.x : scrypt N=2^15, abandonné avec sa base) |
+| REQ-CRYPT-002 | HIGH | PASS | `socle/src/argon.js:72` ; écrit dans la même requête : `socle/src/argon.js:129` | essai `socle/test/crypto.test.js:23` |
+| REQ-CRYPT-003 | MEDIUM | N/A | bcrypt absent : `grep -rniE "bcrypt" socle/src src` → 0 ; Argon2id seul |  |
+| REQ-CRYPT-004 | HIGH | PASS | `socle/src/motdepasse.js:12`, `socle/src/motdepasse.js:13`, liste de fuites locale `socle/src/motdepasse.js:18` | contrôlé côté serveur, sans règle de composition ni rotation forcée |
+| REQ-CRYPT-005 | HIGH | PASS | `socle/src/outils.js:16` ; passes de console de 192 bits : `src/api.js:382` ; références d’événements de 72 bits, non secrètes ; jeton du Hub comparé en temps constant : `src/api.js:107` ; `grep -rnE "Math\.random\|uuidv1" src web/app.js web/terminal.js` → 0 | le jeton du Hub est tiré par le Hub (32 octets aléatoires) ; aucune comparaison de secret en clair |
+| REQ-CRYPT-006 | MEDIUM | PASS | passes de console gardées par leur empreinte, en mémoire, une minute : `src/api.js:391` ; sessions : `socle/src/comptes.js:277` ; secrets que ProxLab doit pouvoir rejouer (jeton d’API et mot de passe de Proxmox, clé et secret du récepteur) scellés, jamais hachés : voir REQ-DATA-002 | essais `test/proxlab.test.js:199`, `test/proxlab.test.js:352` |
+| REQ-SESS-001 | CRITICAL | PASS | `socle/src/http.js:105` ; __Host- en HTTPS : `socle/src/portail.js:51` | aucune session dans le stockage du navigateur ; aucun cookie de ProxLab ne part vers Proxmox (la console présente le ticket de Proxmox, tiré par le serveur : `src/console.js:20`) |
+| REQ-SESS-002 | CRITICAL | PASS | `socle/src/comptes.js:287` à la connexion, au renfort et à chaque changement de facteur ou de rôle | pas de jeton de rafraîchissement : sessions serveur |
+| REQ-SESS-003 | HIGH | PASS | `socle/src/comptes.js:323` ; révocation : `socle/src/portail.js:316` et incident : `socle/src/portail.js:479` | appareil, adresse IP, première et dernière vue ; une console ouverte meurt avec sa session, revérifiée chaque minute (`src/main.js:102`) |
+| REQ-SESS-004 | HIGH | PASS | `socle/src/comptes.js:662` ; déconnexion serveur : `socle/src/portail.js:273` | la mise à niveau de console revérifie la session ; runbook : `outils/exercice-incident.mjs:56` |
+| REQ-SESS-005 | HIGH | PASS | `socle/src/comptes.js:339` ; routes de ProxLab sous renfort (`grep -c "session(ctx, { role: 'admin', renfort: true })" src/api.js` → 13) : liaison, sonde, alertes et essai, arrêt forcé et réinitialisation (`src/api.js:260`), migration, configuration, retour et suppression d’instantané, suppression de sauvegarde, arrêt de tâche, shell d’un nœud (`src/api.js:379`) | essais `test/proxlab.test.js:205`, `test/proxlab.test.js:246` |
+| REQ-SESS-006 | MEDIUM | PASS | 12 h absolues, 60 min d’inactivité : `socle/src/index.js:40` | pas de JWT ; passe de console : une minute, usage unique (`src/api.js:387`) |
+| REQ-ANON-001 | CRITICAL | PASS | `git log --all --format="%an <%ae>" \| sort -u` et `--format="%cn <%ce>"` → une ligne chacun, le pseudonyme ; posée dans le dépôt : `git config --local user.name` → 1 | dépôt neuf de la version 2, commits en UTC |
+| REQ-ANON-002 | CRITICAL | PASS | arbre : annexe B.1 → une seule correspondance, le nom `.env.local` dans `.gitignore:10` ; aucun terme de la liste d’anonymat propre à ce dépôt ; le motif « infrastructure personnelle » relève le nom de l’hyperviseur piloté, qui est l’objet du logiciel (annexe B ci-dessous) | l’historique de la 1.x n’est pas dans ce dépôt : il vit sur l’ancien dépôt publié, que seul l’exploitant peut supprimer → action H12 |
+| REQ-ANON-003 | CRITICAL | FAIL | liste et crochet global à poser sur le poste de développement ; contrôle CI par secret : `.github/workflows/verification.yml:78` | action H4 |
+| REQ-ANON-004 | CRITICAL | PASS | commande de REQ-ANON-004 sur tout l’historique (`git log --all --format=%B \| grep -niE "co-authored-by\|generated with\|assistant\|claude\|copilot\|cursor\|gpt\|🤖"`) → 0 | contrôlé en CI sur chaque nouveau commit : `.github/workflows/verification.yml:56` |
+| REQ-ANON-005 | HIGH | PASS | `package.json:6` sans champ auteur (la 1.x portait le pseudonyme en auteur) ; `LICENSE:1` | le README décrit le logiciel, jamais une machine ni une personne ; contact de sécurité : le signalement privé du dépôt (`src/main.js:22`) |
+| REQ-ANON-006 | HIGH | PASS | `git log --all --name-only --format= \| grep -iE "\.(png\|jpe?g\|pdf\|mp4\|gif\|webp\|ico)$" \| wc -l` → 0 : aucune image ni document binaire dans tout l’historique ; l’icône est un SVG sans métadonnées (`web/icone.svg:1`) | polices WOFF2 du socle : métadonnées de la fonderie seulement ; captures du parcours gardées hors dépôt (la 1.x publiait des PNG de logo, absents ici) |
+| REQ-ANON-007 | HIGH | PASS | comptes « ana », « bruno », « lea » ; nœuds « pve-a », « pve-b » ; machines « passerelle », « mandataire », « supervision » ; adresses de la plage de documentation (`test/faux-pve.js:113`) ; jeton d’essai fabriqué (`test/proxlab.test.js:18`) ; certificats d’essai tirés à la volée (`test/faux-pve.js:18`) | essais, outils et exemples relus (la 1.x montrait des adresses 192.168 dans ses exemples) ; les plages privées n’apparaissent que dans le classement des adresses, assemblées à l’exécution (`src/reseau.js:18`) |
+| REQ-ANON-008 | MEDIUM | PASS | `git log --all --format=%aI \| grep -v "+00:00$" \| wc -l` → 0 ; `git log --all --format=%cI \| grep -v "+00:00$" \| wc -l` → 0 | auteur et validateur en UTC sur tout l’historique |
+| REQ-ANON-009 | MEDIUM | FAIL | pages d’erreur sans chemin : `socle/src/http.js:171` ; une erreur de Proxmox perd ses chemins avant le client (`src/api.js:78`) ; domaine et WHOIS hors dépôt | action H13 |
+| REQ-ANON-010 | MEDIUM | PASS | identité stable et unique, dates réelles (TZ=UTC, jamais antidatées) | aucune politique de contribution externe |
+| REQ-CFG-001 | CRITICAL | PASS | gitleaks sur tout l’historique, toutes références comprises (`--log-opts=--all`), relancé à chaque génération de ce fichier → aucune fuite ; `git grep` de l’annexe B.2 → valeurs d’essai fabriquées ; `-----BEGIN … PRIVATE` → 0 (les certificats d’essai sont tirés par openssl à l’exécution) | détail dans l’annexe B ci-dessous |
+| REQ-CFG-002 | CRITICAL | PASS | secrets jamais rendus : `src/api.js:401` (« aSecret », « aMotDePasse »), `src/api.js:465` (« aCle », « aSecret ») ; le navigateur ne reçoit jamais un jeton de Proxmox : la console lui donne une passe, le ticket reste au serveur | aucune construction : web/ est servi tel quel ; essais `test/proxlab.test.js:199`, `test/proxlab.test.js:170` |
+| REQ-CFG-003 | HIGH | FAIL | VM d’essai et production distinctes (instruction de l’exploitant) | jeton d’API Proxmox et clés séparés par environnement à émettre : action H6 |
+| REQ-CFG-004 | HIGH | PASS | `src/config.js:10` sur `socle/src/config.js:14` : jeton du Hub de 24 caractères au moins (`src/config.js:23`), bornes de la surveillance et de la rétention, secret de clé maîtresse vide refusé (`src/config.js:14`) | essai `test/proxlab.test.js:154` ; aucun mode de débogage ni contournement par variable |
+| REQ-CFG-005 | HIGH | PASS | chaque secret, son lieu et sa rotation : section « Secrets inventory » ci-dessous ; SOCLE_CLE tournée de bout en bout (`outils/exercice-rotation.mjs:1`, 21 vérifications le 2026-10-12) ; liaison retirée sans arrêter le service : `src/cli.js:51` | essais `test/proxlab.test.js:467`, `test/proxlab.test.js:483` ; runbook joué par `outils/exercice-incident.mjs:96` (22 vérifications le 2026-10-12) ; jeton chez Proxmox : actions H5, H6 |
+| REQ-CI-001 | CRITICAL | FAIL | `.github/workflows/verification.yml:44` | Actions, crochet local et protection de poussée à activer : actions H3, H4 |
+| REQ-CI-002 | HIGH | FAIL | CodeQL, requêtes « security-extended » : `.github/workflows/verification.yml:103` | bloquant une fois les Actions actives et le contrôle requis : action H3 |
+| REQ-CI-003 | HIGH | FAIL | aucune dépendance npm (`package.json:8` sans dépendances) ; image de base épinglée `Dockerfile:6` ; actions épinglées par commit ; mises à jour proposées, jamais appliquées seules (`.github/dependabot.yml:10`) ; crible de l’image `.github/workflows/publish.yml:53` ; SBOM `.github/workflows/publish.yml:89` | le dépôt est prêt ; l’exécution en CI, les alertes et le contrôle requis dépendent de GitHub : action H3 (la 1.x n’avait qu’un contrôle de syntaxe et des actions suivies par étiquette) |
+| REQ-CI-004 | HIGH | FAIL | `.github/workflows/verification.yml:78` | échoue tant que le secret n’existe pas : action H4 |
+| REQ-CI-005 | MEDIUM | FAIL | permissions minimales `.github/workflows/verification.yml:15` ; actions épinglées par commit | protection de branche : action H3 |
+| REQ-CI-006 | MEDIUM | PASS | `test/proxlab.test.js:116` : chaque route du routeur balayée sans session (401), avec le jeton du Hub (401/403), en lecture et en membre selon le rôle déclaré (403) ; une session n’ouvre aucune route du Hub | la table des rôles est lue dans le routeur et chaque route doit en déclarer un (`test/proxlab.test.js:145`) ; cassures volontaires : NO-VIBE.md |
+| REQ-WEB-001 | CRITICAL | FAIL | HSTS dès que la requête est chiffrée : `socle/src/http.js:88` | ProxLab est publié sur la boucle locale ou par le Hub ; servi en HTTP tant qu’aucun relais TLS n’est posé : action H1 |
+| REQ-WEB-002 | HIGH | PASS | chaque page : `src/main.js:66` sur `socle/src/http.js:62` (script-src 'self' et un nonce par requête, object-src 'none', base-uri 'none', frame-ancestors 'none', aucun unsafe-inline ni unsafe-eval) ; aucun style en ligne, les largeurs et couleurs dynamiques posées en CSSOM (`web/proxlab.css:2`) | essai `test/proxlab.test.js:89` ; parcours navigateur du 2026-10-12 : 133 écrans et largeurs par gamme, aucune erreur en console |
+| REQ-WEB-003 | HIGH | PASS | `socle/src/http.js:79`, Referrer-Policy, Permissions-Policy, X-Frame-Options, COOP, CORP, no-store, ni Server ni X-Powered-By (annexe B.4) | HSTS dès HTTPS (H1) |
+| REQ-WEB-004 | HIGH | PASS | aucun en-tête CORS émis : `curl -sI -H "Origin: https://evil.example" /api/etat` → aucun Access-Control-* (annexe B.4) | API de même origine pour le navigateur ; le Hub appelle de serveur à serveur |
+| REQ-WEB-005 | HIGH | PASS | CSRF : `socle/src/portail.js:98` ; JSON exigé : `socle/src/http.js:122` ; aucun GET n’écrit ; SSRF : l’adresse de Proxmox et celle du récepteur sont posées par un administrateur sous renfort, métadonnées et plages réservées refusées en littéral comme à la résolution (`src/reseau.js:52`, `src/alerte.js:72`), aucune redirection suivie ; le chemin vers Proxmox n’est jamais assemblé à partir d’une requête (`src/pve.js:24`) | essais `test/proxlab.test.js:232`, `test/proxlab.test.js:190`, `test/proxlab.test.js:154` |
+| REQ-WEB-006 | CRITICAL | PASS | corps : schéma strict, champ inconnu refusé (`socle/src/schema.js:69`) ; paramètres de requête : schéma par route, tout paramètre non déclaré refusé (`src/api.js:567`) ; nœud, VMID, instantané, stockage, tâche et volume validés au format de Proxmox (`src/api.js:19`, `src/api.js:24`) ; volume hors du stockage nommé refusé (`src/api.js:356`) ; rôle vérifié dans chaque gestionnaire ; erreurs génériques (`socle/src/http.js:171`) | essais `test/proxlab.test.js:116`, `test/proxlab.test.js:225`, `test/proxlab.test.js:290` ; sondage exploratoire ci-dessous |
+| REQ-WEB-007 | HIGH | PASS | requêtes préparées partout ; aucun processus lancé par le serveur (`grep -rnE "child_process\|execFile\|spawn" src` → 0) ; Proxmox reçoit des paramètres de formulaire encodés, jamais une chaîne assemblée (`src/pve.js:53`) ; la console ne transmet que deux messages bornés (`src/console.js:46`) ; `innerHTML` seulement dans le gabarit du socle, sur du balisage écrit dans le code (`socle/web/gabarit.js:115`) | eval et Function absents ; le terminal construit chaque ligne nœud par nœud (`web/terminal.js:2`) |
+| REQ-WEB-008 | MEDIUM | PASS | débit global par adresse `src/main.js:58`, mises à niveau WebSocket comprises (`src/main.js:84`) ; trente-deux consoles au plus (`src/main.js:23`) ; trames et messages WebSocket bornés ; réponses de Proxmox bornées à 16 Mio (`src/pve.js:14`) ; événements bornés (vingt mille, `src/base.js:38`) et listés par 200 au plus ; corps bornés à 64 Kio ; `?limit=100000` refusé (paramètre non déclaré) | essais `test/proxlab.test.js:154`, `test/proxlab.test.js:225` ; aucun appel à une IA |
+| REQ-DATA-001 | CRITICAL | PASS | SQLite embarqué, aucun port : `src/base.js:14` ; dossier en 0700 et base en 0600 : `src/base.js:13` | essai `test/proxlab.test.js:100` |
+| REQ-DATA-002 | HIGH | FAIL | secrets de la liaison et des alertes, et TOTP, scellés AES-256-GCM, sous-clé par usage, liés à leur réglage : `src/base.js:36` sur `socle/src/chiffre.js:60` ; trafic vers Proxmox toujours en TLS vérifié (autorité ou empreinte épinglée, `src/tls.js:69`) ; récepteur d’alertes en HTTPS vérifié quand l’adresse est en https | restent le chiffrement du disque des hôtes et HTTPS vers ProxLab lui-même : actions H7, H1 |
+| REQ-DATA-003 | HIGH | FAIL | sauvegarde chiffrée pour une clé publique RSA : `src/cli.js:57` ; restauration ailleurs avec la clé privée seule : `src/cli.js:23` ; restauration réelle puis démarrage sur la base restaurée : `outils/exercice-incident.mjs:87` (2026-10-12, instance d’essai) | essai `test/proxlab.test.js:483` ; planification quotidienne, copie hors hôte, trente jours de garde et restauration datée sur la VM : action H8 |
+| REQ-DATA-004 | HIGH | PASS | socle : connexions, facteurs, rôles, refus (`socle/src/portail.js:110`), verrous du limiteur ; ProxLab : jetons du Hub refusés (`src/api.js:109`), consoles ouvertes et refusées (`src/main.js:100`, `src/main.js:90`), arrêts forcés, migrations, configurations, instantanés, sauvegardes supprimées, tâches arrêtées, liaison et alertes, sauvegarde et retrait en ligne de commande ; jamais un secret : `socle/src/journal.js:10` | essais `test/proxlab.test.js:268`, `test/proxlab.test.js:352` |
+| REQ-DATA-005 | MEDIUM | PASS | vigie : `socle/src/vigie.js:11` (connexions, refus, limites, erreurs internes), jetons du Hub refusés compris ; runbook d’une page ci-dessous, joué de bout en bout sur une instance lancée comme en production le 2026-10-12 (`outils/exercice-incident.mjs:96`, 22 vérifications) : détection au journal, sessions fermées en une requête, jeton du Hub changé, liaison retirée, mot de passe forcé, restauration | rotation de SOCLE_CLE jouée à part (`outils/exercice-rotation.mjs:1`) ; alertes hors de l’application par courriel : action H2 |
+| REQ-DATA-006 | MEDIUM | PASS | `web/confidentialite.txt:7` ; événements purgés chaque heure au-delà de la rétention réglée et de vingt mille (`src/base.js:133`) ; état de la grappe jamais conservé ; export et effacement : `src/main.js:44` | essai `test/proxlab.test.js:457` |
+| REQ-DATA-007 | MEDIUM | N/A | aucun envoi de fichier ni import depuis une adresse : corps JSON seulement (`socle/src/http.js:122`), `grep -rniE "multipart\|busboy\|formidable" src socle/src` → 0 |  |
+| REQ-CODE-001 | HIGH | PASS | essais de référence relevés avant la passe (voir NO-VIBE.md) ; surface publique inchangée : mêmes routes, mêmes schémas, mêmes codes | voir NO-VIBE.md |
+| REQ-CODE-002 | HIGH | PASS | voir NO-VIBE.md, couche des commentaires |  |
+| REQ-CODE-003 | HIGH | PASS | voir NO-VIBE.md, couches structurelle et défensive |  |
+| REQ-CODE-004 | HIGH | PASS | voir NO-VIBE.md, profil de style du dépôt |  |
+| REQ-CODE-005 | MEDIUM | PASS | cassures volontaires, chacune détectée par au moins un essai : NO-VIBE.md, « Tests » |  |
+| REQ-CODE-006 | MEDIUM | PASS | un sujet par commit, message d’une seule ligne dans le style du dépôt : `git log --format=%b \| grep -c .` → 0 (aucun corps, aucune ligne de fin) ; `git log --format=%B \| grep -ciE "co-authored\|generated\|claude\|anthropic\|assistant"` → 0 ; réécriture découpée par sujet (serveur en huit commits) ; le socle embarqué entre en un commit, copie vérifiée par ses empreintes (`socle/EMPREINTES:14`) | en UTC : `git log --format=%cI \| grep -v "+00:00$" \| wc -l` → 0 ; relevés commités seuls, jamais mêlés à un changement |
+| GOV-001 | HIGH | PASS | ce document : revue datée, périmètre (258 contrôles), résolution ligne par ligne, deux passes complètes | à refaire à chaque changement généré important |
+| GOV-002 | MEDIUM | PASS | section « Inventory » ci-dessous : routes, données, tiers, secrets |  |
+| GOV-003 | LOW | FAIL | `socle/src/portail.js:148` ; contact : `src/main.js:22` | essai `test/proxlab.test.js:89` (Contact et Expires) ; activer le signalement privé sur le dépôt : action H3 |
+| GOV-004 | MEDIUM | FAIL | VM d’essai distincte de la production (règle de l’exploitant) ; données d’essai fabriquées, faux Proxmox pour les essais et la vitrine (`outils/vitrine.mjs:3`) | jeton d’API et comptes Proxmox distincts à confirmer : action H6 |
+| GOV-005 | HIGH | FAIL | jeton CI éphémère et limité : `.github/workflows/publish.yml:27` | 2FA sur GitHub et consoles des fournisseurs : action H3 |
+| SEC-SECRETS-001 | CRITICAL | PASS | gitleaks sur tout l’historique → aucune fuite ; `git grep` de REQ-CFG-001 → valeurs d’essai seulement | gitleaks en CI (H3) |
+| SEC-SECRETS-002 | CRITICAL | PASS | aucune variable publique ni construction : web/ servi tel quel, `grep -rnE "\bsk-[A-Za-z0-9_-]{20}\|sk_live\|service_role\|-----BEGIN" web socle/web` → 0 | rien n’est injecté dans le code servi, sauf le nonce CSP et la gamme : `web/index.html:12` |
+| SEC-SECRETS-003 | CRITICAL | PASS | `.gitignore:9` ; seuls web/ et socle/web sont servis, tout segment caché → 404 (annexe B.2, `/.env` demandé à l’instance d’essai) | secrets vides dans `.env.example:11` |
+| SEC-SECRETS-004 | HIGH | PASS | installé par le Hub : secrets posés depuis son coffre (`deploy/compose.hub.yml:37`) ; installé seul : secret Docker hors du volume (`docker-compose.yml:14`) ; fichiers acceptés : `socle/src/config.js:5` ; jeton d’API de Proxmox jamais dans l’environnement : saisi dans l’interface et scellé en base (`src/config.js:4`) | jamais dans la CI |
+| SEC-SECRETS-005 | HIGH | FAIL | une clé par usage, lue par ProxLab seul ; jeton d’API Proxmox à séparation de privilèges, rôles minimaux documentés (`README.md:78`) | créer le jeton dédié, restreint, et séparer les clés par environnement : action H6 |
+| SEC-SECRETS-006 | HIGH | FAIL | procédures de rotation ci-dessous ; SOCLE_CLE exercée de bout en bout (`outils/exercice-rotation.mjs:1`) | jetons et mots de passe vus pendant le développement : action H5 |
+| SEC-SECRETS-007 | HIGH | PASS | clé maîtresse de 32 octets aléatoires : `socle/src/chiffre.js:24` ; jeton du Hub de 24 caractères au moins (`src/config.js:23`) ; valeurs d’exemple refusées : `socle/src/config.js:54` | essai `test/proxlab.test.js:154` ; passes de console tirées par le serveur (voir REQ-CRYPT-005) |
+| SEC-SECRETS-008 | MEDIUM | PASS | `src/config.js:10` : une valeur invalide arrête le démarrage avec la liste des erreurs ; aucun mode de débogage ; mode HTTP dégradé affiché en permanence : `socle/web/compte.js:703` | essai `test/proxlab.test.js:154` |
+| SEC-AUTH-001 | CRITICAL | PASS | voir REQ-CRYPT-001 |  |
+| SEC-AUTH-002 | MEDIUM | PASS | voir REQ-CRYPT-004 |  |
+| SEC-AUTH-003 | CRITICAL | PASS | voir REQ-AUTH-010 : humains par adresse et par compte, jeton du Hub par adresse, dans le même limiteur persistant |  |
+| SEC-AUTH-004 | MEDIUM | PASS | voir REQ-AUTH-011 |  |
+| SEC-AUTH-005 | CRITICAL | PASS | voir REQ-AUTH-006 ; lien depuis l’adresse publique : `socle/src/portail.js:56` | sans adresse publique, l’origine attestée par le navigateur de l’administrateur, contrôlée sur la même requête |
+| SEC-AUTH-006 | MEDIUM | PASS | confirmation sur la nouvelle adresse et avis à l’ancienne : `socle/src/comptes.js:959` | essai `socle/test/courriel.test.js:122` |
+| SEC-AUTH-007 | HIGH | PASS | TOTP et clés pour tous, second facteur imposé aux administrateurs : `socle/src/comptes.js:165` | codes de secours toujours émis |
+| SEC-AUTH-008 | HIGH | N/A | aucune connexion par fournisseur externe : `grep -rniE "oauth\|openid\|id_token\|redirect_uri" socle/src src` → 0 |  |
+| SEC-AUTH-009 | HIGH | PASS | les liens reçus par courriel demandent un geste : `socle/web/compte.js:449` ; uniques et courts : `socle/src/comptes.js:35` | aucune connexion sans mot de passe par courriel |
+| SEC-AUTH-010 | CRITICAL | PASS | chaque route non publique appelle `session()` ou `hub()` en tête, avant de lire son corps : `src/api.js:112` ; WebSocket : origine, session et passe vérifiées avant la mise à niveau (`src/main.js:79`) | essai `test/proxlab.test.js:116` |
+| SEC-AUTH-011 | HIGH | PASS | jeton du Hub faux → 401 : `src/api.js:110` ; erreur imprévue réduite à un numéro : `socle/src/http.js:171` | le jeton du Hub ne vaut jamais session, une session n’ouvre jamais une route du Hub |
+| SEC-SESS-001 | CRITICAL | PASS | voir REQ-SESS-001 |  |
+| SEC-SESS-002 | HIGH | PASS | `grep -rn "localStorage" web/app.js web/terminal.js socle/web/compte.js` → thème seulement (`socle/web/compte.js:299`), jamais une session |  |
+| SEC-SESS-003 | HIGH | PASS | 256 bits : `socle/src/comptes.js:272` | renouvelé à chaque changement de niveau |
+| SEC-SESS-004 | HIGH | PASS | voir REQ-SESS-003, REQ-SESS-004 et REQ-SESS-006 |  |
+| SEC-SESS-005 | CRITICAL | N/A | aucun JWT : `grep -rniE "jwt\|jsonwebtoken\|jose" src web/app.js web/terminal.js socle/src` → 0 |  |
+| SEC-SESS-006 | MEDIUM | N/A | aucun jeton de rafraîchissement : sessions serveur (voir SEC-SESS-005) ; le ticket de Proxmox, côté serveur, est renouvelé avant ses deux heures (`src/pve.js:16`) |  |
+| SEC-SESS-007 | MEDIUM | PASS | voir REQ-SESS-005 ; avis par courriel via le canal d’alerte | courriel : H2 |
+| SEC-AUTHZ-001 | CRITICAL | PASS | la grappe est partagée entre les opérateurs, sans propriétaire d’objet : la portée est le rôle ; chaque cible (nœud, type, VMID) est validée puis transmise à Proxmox, dont le jeton à privilèges séparés borne ce que ProxLab peut faire (`src/api.js:117`) | essai `test/proxlab.test.js:116` ; droits Proxmox minimaux : README |
+| SEC-AUTHZ-002 | CRITICAL | PASS | rôle humain lu en base par le socle (`socle/src/portail.js:120`) ; portée du Hub fermée : trois gestes d’alimentation seulement (`src/api.js:34`) ; arrêt forcé et réinitialisation réservés à l’administrateur sous renfort, même quand le membre a accès à la route | essais `test/proxlab.test.js:413`, `test/proxlab.test.js:246` ; la table des rôles de chaque route est lue dans le routeur et balayée |
+| SEC-AUTHZ-003 | HIGH | PASS | schémas stricts, champ inconnu refusé : `socle/src/schema.js:69` ; l’auteur d’un événement vient de la session, jamais du corps (`src/api.js:113`) | essai `test/proxlab.test.js:160` |
+| SEC-AUTHZ-004 | HIGH | PASS | route /api inconnue → 404, méthode inconnue → 405 avec Allow : `src/api.js:561` ; une seule route publique (`src/api.js:134`) | aucune route de débogage ni de semis |
+| SEC-AUTHZ-005 | CRITICAL | N/A | aucune notion de locataire : une instance pilote une grappe ; `grep -rniwE "tenants?\|organisations?\|workspaces?" src` → 0 |  |
+| SEC-AUTHZ-006 | LOW | PASS | les objets désignés par l’utilisateur sont ceux de Proxmox (nœud, VMID, nom d’instantané, volume, UPID), validés à leur format et vérifiés par Proxmox lui-même ; les événements ont une référence aléatoire de 72 bits (`src/base.js:108`), l’entier interne ne sort pas | la pagination des événements n’accepte qu’une référence au format exact (`src/api.js:66`) |
+| SEC-AUTHZ-007 | HIGH | PASS | invariants tenus par le serveur : arrêt voulu marqué avant l’arrêt, pour ne pas sonner (`src/api.js:266`) ; migration vers soi refusée (`src/api.js:279`) ; réinitialisation refusée sur un conteneur ; liaison essayée en direct avant d’être enregistrée (`src/api.js:438`) ; un secret ne suit jamais un changement de destination (`src/api.js:430`) | essais `test/proxlab.test.js:204`, `test/proxlab.test.js:355` ; aucun prix, crédit ni solde |
+| SEC-AUTHZ-008 | MEDIUM | PASS | rôle et renfort exigés par le serveur, jamais par l’interface : l’interface ne propose pas ce qui serait refusé (`web/app.js:4`), le serveur refuse chaque route appelée directement | essai `test/proxlab.test.js:116` (403 sur chaque route appelée directement) |
+| SEC-INJ-001 | CRITICAL | PASS | requêtes préparées ; seul fragment variable : un filtre de niveau constant (`src/base.js:121`) | annexe B.3 : aucune interpolation de valeur dans le texte SQL |
+| SEC-INJ-002 | HIGH | N/A | aucun ORM : node:sqlite, requêtes préparées seulement |  |
+| SEC-INJ-003 | HIGH | N/A | aucune base documentaire : SQLite seulement ; JSON rangé en colonne texte |  |
+| SEC-INJ-004 | CRITICAL | PASS | serveur : aucun processus (`grep -rnE "child_process\|execFile\|spawn" src` → 0) ; la console transmet la saisie de l’opérateur au terminal de Proxmox, dans le protocole termproxy, sans l’interpréter (`src/console.js:46`) | la console est la fonction elle-même : réservée au membre pour une machine, à l’administrateur sous renfort pour un nœud, chaque ouverture journalisée |
+| SEC-INJ-005 | HIGH | PASS | `socle/src/http.js:194` ; chemins vers Proxmox : « .. » et tout segment hors motif refusés (`src/pve.js:26`) | essai `test/proxlab.test.js:232` |
+| SEC-INJ-006 | HIGH | PASS | aucun gabarit côté serveur ; `grep -rnE "new Function\|node:vm" src socle/src` → 0 | l’interface construit son DOM en texte (voir SEC-XSS-001) |
+| SEC-INJ-007 | HIGH | N/A | aucun analyseur XML : Proxmox parle JSON, `grep -rniE "xml2js\|sax\|libxml\|fast-xml\|DOMParser" src socle/src` → 0 |  |
+| SEC-INJ-008 | HIGH | PASS | JSON seulement ; clés de prototype refusées : `socle/src/schema.js:6` ; réponses de Proxmox lues en JSON, champ par champ |  |
+| SEC-XSS-001 | CRITICAL | PASS | interface : DOM construit par `h()`, texte seulement (`web/app.js:7`) ; graphiques construits nœud par nœud (`socle/web/graphes.js:3`) ; terminal écrit par textContent (`web/terminal.js:4`) | noms de machines, notes, descriptions et journaux de tâches de Proxmox affichés en texte brut |
+| SEC-XSS-002 | HIGH | N/A | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:714`) |  |
+| SEC-XSS-003 | HIGH | PASS | aucun eval, setTimeout chaîne ni affectation de location depuis une donnée : `grep -rnE "eval\(\|new Function\|location\.href *=" web/app.js web/terminal.js socle/web/compte.js socle/web/graphes.js` → 0 | le hash ne choisit qu’une page connue ou une fiche au format vérifié : `web/app.js:150` |
+| SEC-XSS-004 | HIGH | PASS | voir REQ-WEB-002 |  |
+| SEC-XSS-005 | MEDIUM | PASS | seul échange : le Worker de preuve de travail, de même origine : `socle/web/compte.js:233` | aucune écoute de window message |
+| SEC-XSS-006 | MEDIUM | PASS | une erreur de Proxmox : la cause courte, sans chemin de l’hyperviseur, et une référence au client ; le détail au seul journal du serveur (`src/api.js:78`) ; erreurs imprévues réduites à un numéro (`socle/src/http.js:171`) | essai `test/proxlab.test.js:293` |
+| SEC-XSS-007 | MEDIUM | N/A | aucune redirection pilotée par paramètre ; `curl -sI "/login?next=https://evil.example"` → aucun Location (annexe B.4) |  |
+| SEC-XSS-008 | MEDIUM | PASS | aucun script tiers ni CDN : tout est servi par ProxLab (`grep -rnE "https?://" web/index.html` → 0) | polices servies par le socle |
+| SEC-HDR-001 | HIGH | FAIL | voir REQ-WEB-001 | action H1 |
+| SEC-HDR-002 | HIGH | PASS | voir REQ-WEB-002 |  |
+| SEC-HDR-003 | MEDIUM | PASS | voir REQ-WEB-003 |  |
+| SEC-HDR-004 | LOW | PASS | `curl -sI /` : ni Server ni X-Powered-By (annexe B.4) |  |
+| SEC-HDR-005 | MEDIUM | PASS | no-store sur l’API et les pages : `socle/src/http.js:150` ; seuls les fichiers publics du socle sont mis en cache (`src/main.js:70`) | aucun CDN |
+| SEC-HDR-006 | CRITICAL | PASS | voir REQ-WEB-004 |  |
+| SEC-HDR-007 | HIGH | PASS | voir REQ-SESS-001 |  |
+| SEC-CSRF-001 | HIGH | PASS | SameSite=Strict + origine + jeton : `socle/src/portail.js:98` appelé par chaque écriture de session ; mise à niveau de console : origine vérifiée (`src/main.js:91`) | essais `test/proxlab.test.js:154`, `test/proxlab.test.js:157` ; le Hub présente un jeton en en-tête, que le navigateur n’envoie jamais seul |
+| SEC-CSRF-002 | MEDIUM | PASS | `socle/src/http.js:122` | 415 sur tout autre type : essai `test/proxlab.test.js:158` |
+| SEC-CSRF-003 | MEDIUM | PASS | voir REQ-WEB-005 : aucun GET n’écrit | les GET de ProxLab ne font que lire Proxmox |
+| SEC-CSRF-004 | CRITICAL | PASS | adresses que le serveur joint : Proxmox et le récepteur d’alertes, posés par un administrateur sous renfort et journalisés ; métadonnées, lien local et plages réservées refusés en littéral comme à la résolution (`src/reseau.js:52`, `src/api.js:408`) ; la sonde du certificat n’envoie aucune donnée applicative (`src/tls.js:36`) ; aucune redirection suivie | essais `test/proxlab.test.js:190`, `test/proxlab.test.js:360` ; Proxmox et le récepteur vivent sur le réseau interne par nature : le bouclage et les plages privées y restent permis à l’administrateur |
+| SEC-CSRF-005 | HIGH | PASS | webhook sortant vers le récepteur réglé par l’administrateur : adresse contrôlée (`src/api.js:469`), signée HMAC (`src/alerte.js:11`), clé d’idempotence, quota du récepteur respecté (Retry-After), réponse bornée ; aucun webhook reçu | essai `test/proxlab.test.js:355` |
+| SEC-CSRF-006 | MEDIUM | N/A | aucune redirection pilotée par paramètre : voir SEC-XSS-007 |  |
+| SEC-API-001 | HIGH | PASS | voir REQ-WEB-006 |  |
+| SEC-API-002 | HIGH | PASS | voir REQ-WEB-008 ; échecs du jeton du Hub plafonnés par adresse (voir REQ-AUTH-010) |  |
+| SEC-API-003 | MEDIUM | PASS | événements par 200 au plus (`src/api.js:66`), tâches par 200, contenu d’un stockage par 500, sauvegardes d’une machine par 200 ; aucun paramètre de taille non déclaré accepté (`src/api.js:567`) | essai `test/proxlab.test.js:225` |
+| SEC-API-004 | HIGH | PASS | réponses construites champ par champ : `src/api.js:87`, `src/api.js:88`, configuration filtrée par liste blanche (`src/api.js:30` : ni mots de passe cloud-init, ni clés SSH) ; résumé du Hub réduit à des comptes | essai `test/proxlab.test.js:212` ; sondage exploratoire ci-dessous |
+| SEC-API-005 | MEDIUM | PASS | 405 avec Allow : `src/api.js:562` ; aucune page de documentation ni de débogage |  |
+| SEC-API-006 | HIGH | N/A | aucun GraphQL : `grep -rniE "graphql\|apollo" src web/app.js socle/src` → 0 |  |
+| SEC-API-007 | MEDIUM | PASS | un seul formateur d’erreurs : `socle/src/http.js:159` ; erreur amont rendue en 502 avec un message écrit pour l’opérateur (`socle/src/http.js:161`) ; rescellage des secrets après une rotation en une seule transaction (`src/base.js:151`) | essai `test/proxlab.test.js:293` |
+| SEC-API-008 | MEDIUM | N/A | aucune opération monétaire ni crédit : `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement ; aucun webhook reçu |  |
+| SEC-API-009 | HIGH | PASS | pas de RPC implicite : mise à niveau WebSocket revérifiée comme une route, puis seulement deux messages admis (`src/console.js:47`) | essai `test/proxlab.test.js:333` |
+| SEC-API-010 | MEDIUM | PASS | `socle/src/http.js:128` ; 64 Kio par défaut ; trames de console bornées | essai `test/proxlab.test.js:154` |
+| SEC-DB-001 | CRITICAL | PASS | voir REQ-DATA-001 |  |
+| SEC-DB-002 | HIGH | N/A | SQLite embarqué sans rôle ni identifiant : `src/base.js:14` |  |
+| SEC-DB-003 | HIGH | FAIL | aucun trafic réseau vers la base ; secrets de facteurs et de la liaison chiffrés | chiffrement du disque des hôtes : action H7 |
+| SEC-DB-004 | MEDIUM | PASS | secrets TOTP, de la liaison et des alertes scellés AES-256-GCM, sous-clé par usage et lien à leur réglage (`src/base.js:36`) ; clé maîtresse jamais dans le volume : secret du Hub, ou secret Docker hors du volume pour l’installation seule (`docker-compose.yml:14`, `README.md:119`), secret vide refusé au démarrage | lecture brute des colonnes : essais `test/proxlab.test.js:199`, `test/proxlab.test.js:497` |
+| SEC-DB-005 | CRITICAL | PASS | voir SEC-INJ-001 |  |
+| SEC-DB-006 | HIGH | FAIL | voir REQ-DATA-003 | action H8 |
+| SEC-DB-007 | MEDIUM | PASS | essais sur données fabriquées ; aucun compte par défaut : jeton d’installation exigé (`socle/src/comptes.js:232`) — la 1.x laissait le premier visiteur créer le compte |  |
+| SEC-DB-008 | CRITICAL | N/A | le navigateur ne parle jamais à la base : SQLite côté serveur seulement |  |
+| SEC-DB-009 | LOW | PASS | `src/base.js:15` ; listes plafonnées | un seul processus, pas de pool nécessaire |
+| SEC-DB-010 | LOW | PASS | voir REQ-DATA-004 : gestes qui coupent ou effacent, consoles, liaison, alertes et sauvegardes au journal chaîné |  |
+| SEC-FILE-001 | HIGH | N/A | aucun envoi de fichier : corps JSON seulement (`socle/src/http.js:122`) |  |
+| SEC-FILE-002 | MEDIUM | N/A | aucun envoi de fichier ; corps JSON bornés (voir SEC-API-010) |  |
+| SEC-FILE-003 | HIGH | N/A | aucun fichier d’utilisateur écrit ; seule écriture : la base, nommée par le serveur |  |
+| SEC-FILE-004 | HIGH | N/A | aucun fichier d’utilisateur servi |  |
+| SEC-FILE-005 | CRITICAL | N/A | aucun fichier d’utilisateur stocké |  |
+| SEC-FILE-006 | MEDIUM | N/A | aucun fichier partagé entre utilisateurs |  |
+| SEC-FILE-007 | LOW | N/A | aucune image acceptée |  |
+| SEC-FILE-008 | HIGH | N/A | aucun import par adresse : voir SEC-CSRF-004 |  |
+| SEC-PAY-001 | CRITICAL | N/A | `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement |  |
+| SEC-PAY-002 | CRITICAL | N/A | `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement ; aucun webhook reçu |  |
+| SEC-PAY-003 | HIGH | N/A | `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement ; aucun abonnement |  |
+| SEC-PAY-004 | HIGH | N/A | `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement |  |
+| SEC-PAY-005 | HIGH | N/A | `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement |  |
+| SEC-PAY-006 | HIGH | PASS | vérification : 5 par heure par compte et par adresse (`socle/src/portail.js:38`) ; alertes : 30 par heure et par compte (`socle/src/notifications.js:98`) | destinataires et contenus jamais choisis par une requête |
+| SEC-PAY-007 | MEDIUM | FAIL | le domaine d’expédition est celui du relais de l’exploitant | SPF, DKIM et DMARC à publier avec le relais : action H2 |
+| SEC-PAY-008 | MEDIUM | PASS | aucun mot de passe dans un courriel ; liens uniques, hachés, de 30 minutes (`socle/src/comptes.js:35`) ou 72 heures pour fermer les sessions (`socle/src/notifications.js:27`) | le lien de révocation ne peut que fermer des sessions |
+| SEC-NEXT-001 | CRITICAL | N/A | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |  |
+| SEC-NEXT-002 | CRITICAL | N/A | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |  |
+| SEC-NEXT-003 | HIGH | N/A | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |  |
+| SEC-NEXT-004 | CRITICAL | N/A | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |  |
+| SEC-NEXT-005 | HIGH | N/A | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |  |
+| SEC-NEXT-006 | HIGH | N/A | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |  |
+| SEC-NEXT-007 | HIGH | N/A | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |  |
+| SEC-NEXT-008 | MEDIUM | N/A | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; aucun déploiement Vercel |  |
+| SEC-NEXT-009 | MEDIUM | N/A | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; aucune bibliothèque de cache client |  |
+| SEC-BAAS-001 | CRITICAL | N/A | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |  |
+| SEC-BAAS-002 | CRITICAL | N/A | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |  |
+| SEC-BAAS-003 | CRITICAL | N/A | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |  |
+| SEC-BAAS-004 | HIGH | N/A | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |  |
+| SEC-BAAS-005 | CRITICAL | N/A | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |  |
+| SEC-BAAS-006 | HIGH | N/A | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |  |
+| SEC-BAAS-007 | MEDIUM | N/A | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |  |
+| SEC-BAAS-008 | CRITICAL | N/A | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |  |
+| SEC-BAAS-009 | CRITICAL | N/A | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |  |
+| SEC-BAAS-010 | HIGH | N/A | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |  |
+| SEC-BAAS-011 | HIGH | N/A | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |  |
+| SEC-BE-001 | MEDIUM | PASS | en-têtes posés avant toute route, erreurs et 429 compris : `src/main.js:66` | annexe B.4 ; essai `test/proxlab.test.js:89` |
+| SEC-BE-002 | MEDIUM | PASS | corps bornés ; 404 pour l’inconnu ; relais de confiance explicites : `socle/src/http.js:14` ; délais du serveur : `src/main.js:108` ; délais et taille des réponses de Proxmox bornés (`src/pve.js:105`) | formateur d’erreurs unique : `src/main.js:74` |
+| SEC-BE-003 | HIGH | PASS | voir SEC-INJ-004 et SEC-INJ-008 ; aucun import dynamique d’un chemin fourni | modules du navigateur importés depuis des chemins fixes (`web/app.js:13`) |
+| SEC-BE-004 | HIGH | PASS | aucune dépendance npm : `package.json:8` sans dépendances, rien à verrouiller | Playwright ne sert qu’à l’outil de parcours, hors de l’image et du dépôt |
+| SEC-BE-005 | CRITICAL | N/A | aucun Django : serveur Node seul |  |
+| SEC-BE-006 | HIGH | N/A | aucun Flask ni FastAPI : serveur Node seul, aucun Python dans le dépôt (`git ls-files "*.py" \| wc -l` → 0) |  |
+| SEC-BE-007 | HIGH | N/A | aucun Python dans le dépôt : voir SEC-BE-006 |  |
+| SEC-BE-008 | HIGH | N/A | aucun PHP |  |
+| SEC-BE-009 | MEDIUM | PASS | `Dockerfile:19` ; base slim épinglée ; dossier de données en 0700, base et fichiers WAL en 0600 : `src/base.js:31` |  |
+| SEC-BE-010 | MEDIUM | PASS | `socle/src/http.js:159` ; sonde publique réduite à « vivant » : `src/api.js:134` | essai `test/proxlab.test.js:89` |
+| SEC-WP-001 | CRITICAL | N/A | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |  |
+| SEC-WP-002 | HIGH | N/A | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |  |
+| SEC-WP-003 | HIGH | N/A | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |  |
+| SEC-WP-004 | MEDIUM | N/A | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |  |
+| SEC-WP-005 | MEDIUM | N/A | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |  |
+| SEC-WP-006 | CRITICAL | N/A | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |  |
+| SEC-WP-007 | HIGH | N/A | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |  |
+| SEC-WP-008 | MEDIUM | N/A | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |  |
+| SEC-INFRA-001 | HIGH | FAIL | voir REQ-WEB-001 | action H1 |
+| SEC-INFRA-002 | MEDIUM | FAIL | aucun domaine dans le dépôt | DNS, CAA et verrou du registraire du domaine éventuel : action H13 |
+| SEC-INFRA-003 | HIGH | FAIL | hôtes de l’exploitant, Proxmox compris | pare-feu, SSH par clé, mises à jour, interface de Proxmox non exposée : action H9 |
+| SEC-INFRA-004 | MEDIUM | FAIL | `Dockerfile:6` ; `Dockerfile:19` ; `deploy/compose.hub.yml:14` ; `deploy/compose.hub.yml:17` ; `deploy/compose.hub.yml:19` ; installé seul : port publié sur la boucle locale (`docker-compose.yml:19`) | crible de l’image (Grype en CI, Trivy au déploiement) à exécuter : actions H3, H14 |
+| SEC-INFRA-005 | CRITICAL | N/A | aucun stockage objet : `grep -rniE "s3\.\|aws\|gcs\|azure\|bucket" src socle/src` → 0 |  |
+| SEC-INFRA-006 | HIGH | N/A | aucun nuage : service auto-hébergé, aucune clé IAM |  |
+| SEC-INFRA-007 | HIGH | FAIL | permissions minimales, actions épinglées par commit, aucun secret pour les demandes de fusion | protection de branche et revue requise : action H3 |
+| SEC-INFRA-008 | MEDIUM | FAIL | empreinte d’image, provenance et SBOM à la publication : `.github/workflows/publish.yml:88` | la publication tourne sur les Actions : action H3 (l’image est aujourd’hui construite sur la VM depuis le dépôt) |
+| SEC-INFRA-009 | MEDIUM | N/A | aucune infrastructure décrite en code : `find . -name "*.tf" -o -name "Pulumi.yaml"` → 0 fichier |  |
+| SEC-DEP-001 | HIGH | PASS | aucune dépendance npm ; image de base par empreinte (`Dockerfile:6`) ; actions par commit |  |
+| SEC-DEP-002 | HIGH | FAIL | aucune dépendance npm ; image passée au crible à chaque publication (`.github/workflows/publish.yml:53`) | alertes Dependabot et contrôle requis : action H3 |
+| SEC-DEP-003 | MEDIUM | PASS | aucune dépendance npm ni bibliothèque du navigateur : terminal, graphiques et gabarit écrits ici | (la 1.x non plus) |
+| SEC-DEP-004 | MEDIUM | PASS | actions épinglées par commit (`.github/workflows/verification.yml:22`) ; image par empreinte ; mises à jour proposées en demandes de fusion, jamais fusionnées seules (`.github/dependabot.yml:6`) | revue requise avant fusion : protection de branche, action H3 |
+| SEC-DEP-005 | MEDIUM | PASS | aucune installation de paquet npm : ni npm install ni script de cycle de vie, dans le dépôt comme dans l’image (`Dockerfile:14` sans installation) |  |
+| SEC-DEP-006 | LOW | FAIL | `.github/workflows/publish.yml:89` | produit par la publication (H3) |
+| SEC-DEP-007 | MEDIUM | PASS | voir SEC-XSS-008 |  |
+| SEC-DEP-008 | LOW | FAIL | crible de l’image à chaque publication | abonnement aux avis GitHub : action H3 |
+| SEC-LLM-001 | CRITICAL | N/A | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |  |
+| SEC-LLM-002 | CRITICAL | N/A | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |  |
+| SEC-LLM-003 | HIGH | N/A | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |  |
+| SEC-LLM-004 | HIGH | N/A | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |  |
+| SEC-LLM-005 | CRITICAL | N/A | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service ; les actions offertes à l’assistant du Hub passent par le jeton du Hub, qui n’ouvre que l’état, les événements et trois gestes d’alimentation (« destructive » : validation humaine dans le Hub, `hub.json:466`) |  |
+| SEC-LLM-006 | HIGH | N/A | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |  |
+| SEC-LLM-007 | MEDIUM | N/A | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |  |
+| SEC-LLM-008 | LOW | N/A | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |  |
+| SEC-LOG-001 | MEDIUM | PASS | voir REQ-DATA-004 ; chaque ligne : date, acteur, adresse, action, objet, résultat (`socle/src/journal.js:10`) ; identifiant de requête : `socle/src/requete.js:12` | magasin persistant : le journal chaîné en base ; hors hôte : action H11 |
+| SEC-LOG-002 | HIGH | PASS | `socle/src/journal.js:10` ; jamais une passe ni un secret de Proxmox au journal ; le détail d’une erreur de Proxmox va au journal du serveur sous une référence, jamais au client | essai `test/proxlab.test.js:352` |
+| SEC-LOG-003 | MEDIUM | FAIL | sortie standard conservée par Docker, hors de portée du service : `deploy/compose.hub.yml:25` | collecteur central hors hôte : action H11 |
+| SEC-LOG-004 | MEDIUM | FAIL | règles : rafales d’échecs de connexion, jetons du Hub refusés compris, refus d’accès, verrous et limites, erreurs internes, connexion d’un administrateur (`socle/src/vigie.js:11`) ; alerte tirée de bout en bout jusqu’à la page Sécurité des administrateurs (`socle/test/surveillance.test.js:59`) | hors de l’application, l’alerte ne part que par courriel : tant qu’aucun relais n’est posé, personne ne la reçoit sans ouvrir ProxLab → action H2 |
+| SEC-LOG-005 | LOW | FAIL | santé du conteneur : `Dockerfile:23` ; sondes du Hub (`hub.json:537`) | surveillance externe : action H10 |
+| SEC-LOG-006 | MEDIUM | PASS | runbook ci-dessous |  |
+| SEC-LOG-007 | HIGH | PASS | sessions : fermeture globale `socle/src/portail.js:479` ; liaison à Proxmox retirée en ligne de commande, service en marche (`src/cli.js:51`) ; jeton du Hub changé au redéploiement ; SOCLE_CLE tournée sans réinscription ; chaque procédure écrite dans le runbook ci-dessous | joué de bout en bout le 2026-10-12 : `outils/exercice-incident.mjs:96` (22 vérifications), `outils/exercice-rotation.mjs:1` (21) |
+| SEC-PRIV-001 | MEDIUM | PASS | `web/confidentialite.txt:7` avec durées ; purges automatiques : `src/base.js:133`, `socle/src/comptes.js:974` |  |
+| SEC-PRIV-002 | MEDIUM | PASS | un cookie de session indispensable, documenté ; aucun traceur (`web/confidentialite.txt:71`) |  |
+| SEC-PRIV-003 | MEDIUM | PASS | `web/confidentialite.txt:57` nomme chaque destinataire ; lien depuis la page Sécurité (`web/app.js:114`) |  |
+| SEC-PRIV-004 | MEDIUM | PASS | export : `socle/src/portail.js:334` complété par ProxLab (`src/base.js:139`) ; effacement en libre-service sous renfort : `socle/src/comptes.js:844`, gestes du compte neutralisés (`src/base.js:142`) | essai `test/proxlab.test.js:457` |
+| SEC-PRIV-005 | HIGH | FAIL | voir REQ-DATA-002 | action H7 |
+| SEC-PRIV-006 | LOW | FAIL | aucun sous-traitant dans le code : Proxmox, le récepteur d’alertes et le Hub sont chez l’exploitant ; le relais SMTP est choisi par lui | si ce relais est un prestataire hors de l’UE : accord de traitement ou relais européen, action H15 |
+| SEC-PRIV-007 | MEDIUM | PASS | runbook : notification sous 72 heures |  |
+| SEC-PRIV-008 | LOW | PASS | `web/confidentialite.txt:94` | aucune catégorie particulière de données |
+| SEC-TEST-001 | MEDIUM | FAIL | `.github/workflows/verification.yml:105` | Actions : H3 |
+| SEC-TEST-002 | HIGH | FAIL | voir REQ-CI-001 | actions H3, H4 |
+| SEC-TEST-003 | HIGH | FAIL | image : `.github/workflows/publish.yml:50` | actions H3, H14 |
+| SEC-TEST-004 | MEDIUM | FAIL | aucun passage DAST encore | ZAP en mode « baseline » contre la VM d’essai : action H14 |
+| SEC-TEST-005 | LOW | FAIL | voir REQ-WEB-001 | notation après HTTPS : action H1 |
+| SEC-TEST-006 | HIGH | PASS | voir REQ-CI-006 |  |
+| SEC-TEST-007 | LOW | PASS | sondage exploratoire du 2026-10-12, rejoué à chaque génération de ce fichier : section « Exploratory probing » ci-dessous (segments de chemin piégés, champs et paramètres inconnus, rôles, corps géants, jetons inventés, adresses interdites, passes rejouées) | chaque trouvaille est devenue un essai de non-régression |
+| SEC-TEST-008 | LOW | N/A | ni argent, ni santé, ni large public : service auto-hébergé pour quelques comptes invités ; `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement |  |
+
+## Not applicable
+| ID | Why, with proof |
+|---|---|
+| REQ-CRYPT-003 | bcrypt absent : `grep -rniE "bcrypt" socle/src src` → 0 ; Argon2id seul |
+| REQ-DATA-007 | aucun envoi de fichier ni import depuis une adresse : corps JSON seulement (`socle/src/http.js:122`), `grep -rniE "multipart\|busboy\|formidable" src socle/src` → 0 |
+| SEC-AUTH-008 | aucune connexion par fournisseur externe : `grep -rniE "oauth\|openid\|id_token\|redirect_uri" socle/src src` → 0 |
+| SEC-SESS-005 | aucun JWT : `grep -rniE "jwt\|jsonwebtoken\|jose" src web/app.js web/terminal.js socle/src` → 0 |
+| SEC-SESS-006 | aucun jeton de rafraîchissement : sessions serveur (voir SEC-SESS-005) ; le ticket de Proxmox, côté serveur, est renouvelé avant ses deux heures (`src/pve.js:16`) |
+| SEC-AUTHZ-005 | aucune notion de locataire : une instance pilote une grappe ; `grep -rniwE "tenants?\|organisations?\|workspaces?" src` → 0 |
+| SEC-INJ-002 | aucun ORM : node:sqlite, requêtes préparées seulement |
+| SEC-INJ-003 | aucune base documentaire : SQLite seulement ; JSON rangé en colonne texte |
+| SEC-INJ-007 | aucun analyseur XML : Proxmox parle JSON, `grep -rniE "xml2js\|sax\|libxml\|fast-xml\|DOMParser" src socle/src` → 0 |
+| SEC-XSS-002 | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:714`) |
+| SEC-XSS-007 | aucune redirection pilotée par paramètre ; `curl -sI "/login?next=https://evil.example"` → aucun Location (annexe B.4) |
+| SEC-CSRF-006 | aucune redirection pilotée par paramètre : voir SEC-XSS-007 |
+| SEC-API-006 | aucun GraphQL : `grep -rniE "graphql\|apollo" src web/app.js socle/src` → 0 |
+| SEC-API-008 | aucune opération monétaire ni crédit : `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement ; aucun webhook reçu |
+| SEC-DB-002 | SQLite embarqué sans rôle ni identifiant : `src/base.js:14` |
+| SEC-DB-008 | le navigateur ne parle jamais à la base : SQLite côté serveur seulement |
+| SEC-FILE-001 | aucun envoi de fichier : corps JSON seulement (`socle/src/http.js:122`) |
+| SEC-FILE-002 | aucun envoi de fichier ; corps JSON bornés (voir SEC-API-010) |
+| SEC-FILE-003 | aucun fichier d’utilisateur écrit ; seule écriture : la base, nommée par le serveur |
+| SEC-FILE-004 | aucun fichier d’utilisateur servi |
+| SEC-FILE-005 | aucun fichier d’utilisateur stocké |
+| SEC-FILE-006 | aucun fichier partagé entre utilisateurs |
+| SEC-FILE-007 | aucune image acceptée |
+| SEC-FILE-008 | aucun import par adresse : voir SEC-CSRF-004 |
+| SEC-PAY-001 | `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement |
+| SEC-PAY-002 | `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement ; aucun webhook reçu |
+| SEC-PAY-003 | `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement ; aucun abonnement |
+| SEC-PAY-004 | `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement |
+| SEC-PAY-005 | `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement |
+| SEC-NEXT-001 | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |
+| SEC-NEXT-002 | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |
+| SEC-NEXT-003 | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |
+| SEC-NEXT-004 | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |
+| SEC-NEXT-005 | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |
+| SEC-NEXT-006 | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |
+| SEC-NEXT-007 | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 |
+| SEC-NEXT-008 | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; aucun déploiement Vercel |
+| SEC-NEXT-009 | Node sans cadriciel : `package.json:5`, aucune dépendance ; `grep -rniE "next/\|nextjs\|use server\|vercel" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; aucune bibliothèque de cache client |
+| SEC-BAAS-001 | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |
+| SEC-BAAS-002 | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |
+| SEC-BAAS-003 | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |
+| SEC-BAAS-004 | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |
+| SEC-BAAS-005 | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |
+| SEC-BAAS-006 | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |
+| SEC-BAAS-007 | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |
+| SEC-BAAS-008 | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |
+| SEC-BAAS-009 | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |
+| SEC-BAAS-010 | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |
+| SEC-BAAS-011 | `grep -rniE "supabase\|firebase\|firestore\|postgrest" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 ; base SQLite embarquée côté serveur : `src/base.js:14` |
+| SEC-BE-005 | aucun Django : serveur Node seul |
+| SEC-BE-006 | aucun Flask ni FastAPI : serveur Node seul, aucun Python dans le dépôt (`git ls-files "*.py" \| wc -l` → 0) |
+| SEC-BE-007 | aucun Python dans le dépôt : voir SEC-BE-006 |
+| SEC-BE-008 | aucun PHP |
+| SEC-WP-001 | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |
+| SEC-WP-002 | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |
+| SEC-WP-003 | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |
+| SEC-WP-004 | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |
+| SEC-WP-005 | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |
+| SEC-WP-006 | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |
+| SEC-WP-007 | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |
+| SEC-WP-008 | application Node écrite ici : `grep -rniE "wordpress\|wp-admin\|bubble\|webflow\|airtable" src web/app.js web/terminal.js socle/src socle/web/compte.js` → 0 |
+| SEC-INFRA-005 | aucun stockage objet : `grep -rniE "s3\.\|aws\|gcs\|azure\|bucket" src socle/src` → 0 |
+| SEC-INFRA-006 | aucun nuage : service auto-hébergé, aucune clé IAM |
+| SEC-INFRA-009 | aucune infrastructure décrite en code : `find . -name "*.tf" -o -name "Pulumi.yaml"` → 0 fichier |
+| SEC-LLM-001 | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |
+| SEC-LLM-002 | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |
+| SEC-LLM-003 | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |
+| SEC-LLM-004 | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |
+| SEC-LLM-005 | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service ; les actions offertes à l’assistant du Hub passent par le jeton du Hub, qui n’ouvre que l’état, les événements et trois gestes d’alimentation (« destructive » : validation humaine dans le Hub, `hub.json:466`) |
+| SEC-LLM-006 | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |
+| SEC-LLM-007 | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |
+| SEC-LLM-008 | ProxLab n’appelle aucun modèle et n’en expose aucun : `grep -rniE "openai\|anthropic\|ollama\|mistral\|completions\|embeddings\|/v1/chat" src web/app.js web/terminal.js socle/src` → 0 ; ses alertes sont relevées par le Hub, la mémoire de SYNAPSE est un autre service |
+| SEC-TEST-008 | ni argent, ni santé, ni large public : service auto-hébergé pour quelques comptes invités ; `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement |
+
+## Anonymity (REQ-ANON-001 to -010)
+Arbre de travail : 0 occurrence de la liste d’anonymat propre à ce dépôt (la liste commune moins le nom de l’hyperviseur, objet du logiciel) ; les motifs de l’annexe B.1 y relèvent 1 ligne, un nom de fichier du .gitignore. Historique local complet (28 commits, tous les arbres, tous les messages, auteurs et validateurs) : 0 occurrence de cette liste, une seule identité, toutes les dates en UTC, aucune mention d’outil ; le motif « infrastructure personnelle » y relève 195 lignes, toutes le nom de l’hyperviseur piloté ou des mots qui contiennent le motif. Aucun binaire image ni document dans tout l’historique. Le dépôt ne contient pas l’historique de la 1.x : l’ancien dépôt publié n’a pas pu être relu d’ici (accès refusé au clonage) ; l’archive de la 1.x reçue, relue hors dépôt, ne portait aucun terme de la liste hors du nom de l’hyperviseur, mais son historique publié reste non audité et le pseudonyme y figurait en auteur → H12, détail dans le rapport d’anonymat hors dépôt. Le balayage est fait sur motifs et sur une liste finie : il ne prouve pas l’absence de ce que la liste ne nomme pas.
+
+## Human actions required
+Ce qu’aucun agent ne peut faire à la place de l’exploitant. Cette liste bloque la mise en production tant qu’elle n’est pas vide.
+
+| # | Action | Contrôles | Étapes |
+|---|---|---|---|
+| H1 | Servir ProxLab en HTTPS | REQ-WEB-001, SEC-HDR-001, SEC-INFRA-001, SEC-TEST-005 | Dans le Hub : Relay ou certificat de l’autorité locale pour ProxLab ; déclarer l’adresse du relais dans « Relais de confiance » (SOCLE_PROXYS) ; « Accès sans HTTPS » à Non ; vérifier `curl -sI https://<proxlab>/ \| grep -i strict-transport-security` ; noter le résultat de testssl.sh. Installé seul : relais TLS devant le port publié sur la boucle locale, mêmes variables dans `.env`, mise à niveau WebSocket permise sur `/ws/console`. |
+| H2 | Relais SMTP et adresses d’alerte | REQ-AUTH-014, SEC-PAY-007, SEC-LOG-004 | Réglages avancés de ProxLab dans le Hub (ou `SOCLE_SMTP_*` dans `.env`) : relais, port, chiffrement, identifiants, expéditeur, adresse publique ; publier SPF, DKIM et DMARC pour le domaine d’expédition ; chaque administrateur ajoute puis confirme son adresse dans Sécurité → Alertes par courriel. |
+| H3 | GitHub | REQ-CI-001…005, GOV-003, GOV-005, SEC-INFRA-007/008, SEC-TEST-001…003, SEC-DEP-002/006/008 | Activer les Actions ; Settings → Branches : protéger `main` (pas de poussée forcée, contrôles requis : essais, secrets, identite, anonymat, analyse) ; Code security : Dependabot alerts, secret scanning et push protection, private vulnerability reporting ; 2FA sur le compte et sur chaque console de fournisseur. |
+| H4 | Liste d’anonymat | REQ-ANON-003, REQ-CI-004, REQ-CI-001 | Sur le poste : gitleaks installé ; `~/.config/git/denylist.txt`, un terme par ligne ; un crochet global `pre-commit` qui refuse un commit dont le diff contient un terme de la liste, puis `git config --global core.hooksPath ~/.config/git/hooks`. Sur GitHub : secret de dépôt `LISTE_ANONYMAT` avec les termes de la liste SAUF le nom de l’hyperviseur, qui est l’objet même de ProxLab (le crochet global doit l’exempter pour ce dépôt). Vérifier : un commit d’essai portant un terme est refusé par le crochet, puis par la vérification. |
+| H5 | Brûler les secrets vus pendant le développement | SEC-SECRETS-006 | Dans Proxmox, révoquer tout jeton d’API ou mot de passe d’utilisateur ayant servi aux essais de la 1.x et de la 2.0, et en créer un neuf, dédié (H6) ; dans le Hub, régénérer le jeton de service de ProxLab (HUB_TOKEN) et redéployer ; tourner SOCLE_CLE une fois (README, « Tourner la clé maîtresse » ; déjà exercé hors de la VM par `outils/exercice-rotation.mjs`). |
+| H6 | Jeton Proxmox dédié et clés par environnement | REQ-CFG-003, SEC-SECRETS-005, GOV-004 | Dans Proxmox : utilisateur `proxlab@pve`, jeton à séparation de privilèges, rôles du README (PVEAuditor, PVEVMUser, PVEDatastoreUser sur les stockages de sauvegarde ; PVEVMAdmin seulement si migration, configuration et instantanés sont voulus) ; mot de passe de cet utilisateur réservé à la console. Un jeu pour la VM d’essai, un autre pour la production. |
+| H7 | Chiffrement des disques | REQ-DATA-002, SEC-DB-003, SEC-PRIV-005 | LUKS (ou chiffrement du stockage de l’hyperviseur) sur l’hôte qui porte le volume de ProxLab. |
+| H8 | Sauvegardes et exercices | REQ-DATA-003, SEC-DB-006, REQ-DATA-005 | Paire RSA 3072 bits créée hors de la machine de ProxLab (README, « Sauvegardes ») ; cron quotidien `docker exec -i <proxlab> node src/cli.js sauvegarde < proxlab-sauvegarde.pub > proxlab-$(date -u +%F).sauv` ; copie hors hôte, trente jours ; restauration réelle sur la VM avec `node src/cli.js restaurer`, datée ici ; dérouler une fois le runbook ci-dessous. |
+| H9 | Hôtes | SEC-INFRA-003 | Pare-feu (seuls les ports publiés), SSH par clé sans root, mises à jour de sécurité automatiques, fail2ban ; l’interface de Proxmox (8006) jamais exposée hors du réseau d’administration. |
+| H10 | Disponibilité vue de l’extérieur | SEC-LOG-005 | Une sonde externe sur `/api/health`, ou décision écrite : service de réseau local seulement, sondes du Hub suffisantes. |
+| H11 | Journaux centralisés | SEC-LOG-003 | Transférer les journaux du conteneur (dont les lignes du journal de sécurité) vers un collecteur hors de l’hôte : pilote de journalisation Docker ou agent. |
+| H12 | Remplacer le dépôt de la 1.x | REQ-ANON-002 | Supprimer l’ancien dépôt `proxlab` (Settings → Delete this repository : le contenu poussé par-dessus ne purge pas ses anciens commits, toujours lisibles par leur empreinte), vérifier qu’aucune bifurcation n’existe, recréer `proxlab` vide et y pousser ce dépôt ; supprimer aussi, dans les paquets du compte, les images de la 1.x et les journaux d’Actions antérieurs. |
+| H13 | Domaine | REQ-ANON-009, SEC-INFRA-002 | Si ProxLab reçoit un nom public : protection WHOIS, verrou du registraire, 2FA, enregistrement CAA, suppression des enregistrements orphelins. |
+| H14 | Crible au déploiement | SEC-INFRA-004, SEC-TEST-003, SEC-TEST-004 | Sur la VM : `trivy image ghcr.io/codexx64/proxlab:2.0.0` sans CRITICAL ni HIGH corrigeable ; `zap-baseline.py -t http://<vm>:<port>` ; résultats notés ici. |
+| H15 | Relais SMTP hors UE | SEC-PRIV-006 | Si le relais SMTP choisi (H2) est un prestataire hors de l’Union européenne : accepter son accord de traitement, ou choisir un relais européen ou auto-hébergé. |
+| H16 | Clé maîtresse hors ligne | REQ-DATA-003, SEC-DB-006 | Garder une copie hors ligne de SOCLE_CLE (coffre du Hub, ou `secrets/socle_cle` installé seul), à part des sauvegardes de la base : sans elle, une sauvegarde restaurée ne déchiffre ni les secrets TOTP ni ceux de la liaison. |
+
+Orthographe du pseudonyme : le manuel nomme l’identité « Codex64 » ; les commits et le compte GitHub portent la forme du compte, identique dans tout l’historique. Changer maintenant créerait une seconde identité dans le journal git ; à trancher par l’exploitant.
+
+## Secrets inventory
+| Secret | Where it lives | Scope | Rotation procedure | Last rotated |
+|---|---|---|---|---|
+| SOCLE_CLE (tirée par le Hub, ou par l’exploitant installé seul) | coffre du Hub → variable du conteneur ; installé seul : secret Docker `secrets/socle_cle`, hors du volume | scelle les secrets TOTP, le secret du jeton et le mot de passe de Proxmox, la clé et le secret du récepteur d’alertes | README, « Tourner la clé maîtresse » : l’actuelle dans « Clé maîtresse remplacée » (SOCLE_CLE_ANCIENNE), une neuve (`openssl rand -base64 32`) dans « Clé maîtresse », redéployer (secrets rescellés, journal `coffre.tourne`), vider le champ, redéployer | création à l’installation ; procédure exercée le 2026-10-12 (`outils/exercice-rotation.mjs`) |
+| PROXLAB_HUB_TOKEN (HUB_TOKEN du Hub, tiré par le Hub) | coffre du Hub → variable | état résumé, événements, alertes, démarrer / arrêter proprement / redémarrer | régénérer dans le Hub, redéployer ProxLab (l’ancien cesse au démarrage) | création à l’installation |
+| SOCLE_JETON_ADMIN_HUB (HUB_ADMIN_TOKEN, tiré par le Hub) | coffre du Hub → variable | gestion des comptes de ProxLab depuis le Hub, après confirmation de l’identité dans le Hub | régénérer dans le Hub, redéployer | création à l’installation |
+| Jeton d’API de Proxmox (émis par Proxmox, saisi par un administrateur) | table `reglages`, scellé sous SOCLE_CLE | lecture de la grappe et gestes permis par ses rôles | Proxmox : Datacenter › Permissions › API Tokens, nouveau jeton ; le coller dans Réglages (administrateur, renfort) ; supprimer l’ancien dans Proxmox | à la liaison (H6) |
+| Mot de passe de l’utilisateur Proxmox (pour la console) | table `reglages`, scellé sous SOCLE_CLE | ticket de console (termproxy) | changer dans Proxmox, ressaisir dans Réglages | à la liaison (H6) |
+| Clé et secret de signature du récepteur d’alertes (émis par le récepteur ou l’exploitant) | table `reglages`, scellés sous SOCLE_CLE | dépôt de tickets, signature HMAC | changer chez le récepteur, ressaisir dans Réglages ; « Effacer » pour retirer | à la pose |
+| Passes de console (tirées par ProxLab) | mémoire du processus, par leur empreinte, une minute | une mise à niveau WebSocket, pour une cible, sous une session | aucune : usage unique, expirent seules | à chaque ouverture |
+| SOCLE_JETON_INSTALLATION (tiré par le socle) | tiré au premier démarrage, journaux du conteneur | création du premier compte, puis inutile | aucun : invalide dès qu’un compte existe | — |
+| SOCLE_SMTP_MOTDEPASSE (émis par le fournisseur de courriel) | coffre du Hub → variable ; installé seul : `.env` | relais des alertes | changer chez le fournisseur de courriel, coller dans le Hub, redéployer | à la mise en service (H2) |
+| Clé privée des sauvegardes (tirée par l’exploitant, `openssl genpkey`) | hors de la machine de ProxLab, jamais dans le conteneur | relit les sauvegardes | nouvelle paire, sauvegardes suivantes chiffrées pour la nouvelle clé publique ; garder l’ancienne privée tant que ses sauvegardes sont conservées | à créer (H8) |
+| SOCLE_POIVRE (tiré par l’exploitant, s’il en pose un) | non posé par défaut | poivre HMAC des mots de passe | le nouveau dans `SOCLE_POIVRE`, l’ancien dans `SOCLE_POIVRE_ANCIEN` : chaque mot de passe passe au nouveau à la connexion suivante | — |
+
+## Incident runbook
+Détecter : alertes « vigie » dans la page Sécurité des administrateurs (et par courriel, H2) ; refus : `docker logs <proxlab> | grep '"resultat":"refus"'` ; jetons du Hub refusés : `docker logs <proxlab> | grep connexion.jeton` ; consoles : `docker logs <proxlab> | grep console.`.
+
+```bash
+# 1. Fermer toutes les sessions sauf la sienne (renfort demandé)
+#    Page Comptes → « Fermer toutes les sessions », ou :
+curl -X POST -H 'Content-Type: application/json' -H "X-CSRF: $CSRF" -b "$COOKIE" https://<proxlab>/api/compte/admin/sessions/fermer-tout -d '{}'
+# 2. Couper le Hub : régénérer son jeton de service (HUB_TOKEN) → Redéployer
+# 3. Couper ProxLab de la grappe, service en marche, puis révoquer le jeton dans Proxmox
+docker exec <proxlab> node src/cli.js liaison retirer
+#    Proxmox : Datacenter › Permissions › API Tokens → supprimer ; changer le mot de passe de l'utilisateur de la console
+# 4. Tourner les secrets touchés : voir « Secrets inventory »
+# 5. Forcer un nouveau mot de passe : Page Comptes → compte → « Réinitialiser » (le second facteur reste exigé)
+# 6. Restaurer, depuis le poste qui garde la clé privée, puis remettre la base dans le volume
+node src/cli.js restaurer proxlab-sauvegarde.pem proxlab.db < proxlab-AAAA-MM-JJ.sauv
+docker stop <proxlab> && docker run --rm -v <volume>:/data -v "$PWD":/b busybox sh -c 'cp /b/proxlab.db /data/proxlab.db && rm -f /data/proxlab.db-wal /data/proxlab.db-shm && chown 10001:10001 /data/proxlab.db && chmod 600 /data/proxlab.db' && docker start <proxlab>
+#    Base sauvegardée avant une rotation : poser la clé d'alors dans SOCLE_CLE_ANCIENNE avant de démarrer
+# 7. Vérifier la chaîne du journal : Page Comptes → Journal de sécurité (« chaîne intacte »)
+```
+Qui : l’exploitant de l’instance tient chaque étape ; supports pour révoquer : Proxmox (jeton d’API), console du Hub (jeton de service), support.github.com pour le dépôt. Communiquer : prévenir les comptes concernés ; si des données personnelles ont pu être lues (comptes, événements), notifier l’autorité de contrôle sous 72 heures à compter de la découverte (heure de découverte, nature, comptes touchés, mesures prises), et les personnes si le risque est élevé. Revue après incident : cause, chronologie, contrôle qui a manqué, correctif et essai de non-régression.
+
+## Inventory
+Routes publiques : `GET /api/health` (`{ok:true}` seulement), `GET /.well-known/security.txt`, `GET /api/compte/etat`, cérémonies de connexion et d’installation du socle (`/api/compte/connexion*`, `/api/compte/installation`, `/api/compte/jeton*`, `/api/compte/courriel/verifier`, `/api/compte/pas-moi/lien`, `/api/compte/deconnexion`), fichiers de `web/` et `socle/web/` (tout segment commençant par un point → 404). Jeton du Hub : `GET /api/hub/etat`, `GET /api/hub/machines`, `GET /api/hub/evenements`, `GET /api/hub/alertes`, `POST /api/hub/machines/:noeud/:type/:vmid/alimentation` (start, shutdown, reboot). Session : 28 routes sous `/api/`, chacune avec son rôle déclaré et vérifié dans le gestionnaire, balayées par l’essai « autorisation » ; WebSocket `/ws/console` (membre, passe à usage unique tirée sous session ; shell d’un nœud : administrateur sous renfort).
+
+Données : `proxlab.db` (comptes, sessions, jetons hachés, journal chaîné, réglages de la liaison et des alertes aux secrets scellés, événements de la grappe — sensibilité : personnelle et opérationnelle), volume `/data` en 0700, base en 0600. L’état de la grappe est lu dans Proxmox et jamais conservé.
+
+Tiers (tous chez l’exploitant) : Proxmox VE (TLS vérifié ou épinglé), le récepteur d’alertes s’il est réglé, le Hub s’il installe ProxLab (SYNAPSE par lui), le relais SMTP s’il est configuré. Aucun service en ligne tiers.
+
+
+## Appendix B sweep
+Relancé à chaque génération de ce fichier (bash, LC_ALL=C.UTF-8) ; un résultat différent de celui qui a été relu arrête la génération. B.5 est dans NO-VIBE.md.
+
+| # | Commande | Résultat | Justification |
+|---|---|---|---|
+| B.1.1 | `git log --all --format='%an <%ae>' \| sort -u` | `CodexX64 <CodexX64@users.noreply.github.com>` | le pseudonyme seul |
+| B.1.2 | `git log --all --format='%cn <%ce>' \| sort -u` | `CodexX64 <CodexX64@users.noreply.github.com>` | le pseudonyme seul |
+| B.1.3 | `git log --all --format='%B' \| rg -in 'co-authored-by\|generated (by\|with)\|assistant\|as an ai'` | 0 ligne |  |
+| B.1.4 | `find . -path ./node_modules -prune -o \( -name .ai -o -name .cursor -o -name .aider -o -name .continue -o -name .windsurfrules \) -print` | 0 ligne |  |
+| B.1.5 | `find . -path ./node_modules -prune -o -regextype posix-extended -regex '.*/(CLAUDE\|AGENTS?\|PROMPTS?\|GEMINI)\.md' -print` | 0 ligne |  |
+| B.1.6 | `git log --all --name-only --format= \| sort -u \| rg -i '(^\|/)(CLAUDE\|AGENTS?\|PROMPTS?\|GEMINI)\.md$\|copilot-instructions\|\.cursor\|\.aider'` | 0 ligne | aucun fichier de consignes d’outil dans tout l’historique |
+| B.1.7 | `rg -n 'copilot-instructions' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne |  |
+| B.1.8 | `git grep -nIiE` avec le motif « personal infrastructure, paths and networks » de l’annexe B.1, hors des deux fichiers de conformité | 1 ligne | le nom de fichier `.env.local` du .gitignore |
+| B.1.9 | `git log --all -p` filtré par le motif « infrastructure personnelle » de l’annexe B.1, compté | `195` | le nom de l’hyperviseur que ProxLab pilote, objet du logiciel ; hors de ce nom, 4 lignes, toutes des mots qui contiennent le motif (« cadenas », « nœud »…) ; aucun terme d’infrastructure personnelle |
+| B.1.10 | `git log --all --format='%aI' \| rg -v '\+00:00' \| wc -l` | `0` | tout l’historique en UTC |
+| B.1.11 | `git log --all --format='%cI' \| rg -v '\+00:00' \| wc -l` | `0` | idem pour le validateur |
+| B.1.12 | `git grep -nIE '/home/[a-z]\|/[U]sers/[A-Za-z]\|/tmp/[c]laude\|[c]laude-0\|[s]cratchpad' $(git rev-list --all) \| wc -l` | `0` | aucun chemin d’un poste ni d’un espace de travail d’outil dans aucun arbre de l’historique, relevés compris |
+| B.1.13 | `git log --all --name-only --format= \| sort -u \| rg -i '\.(png\|jpe?g\|pdf\|mp4\|gif\|webp\|ico)$'` | 0 ligne | aucun binaire image ou document dans tout l’historique : exiftool n’a rien à lire |
+| B.1.14 | `git log --all -p` filtré par la liste d’anonymat (hors dépôt), compté | `0` | liste d’anonymat propre à ce dépôt, hors dépôt, sur tout l’historique : arbres, messages, identités |
+| B.2.1 | `gitleaks git --no-banner --redact . 2>&1 \| tail -1` | `no leaks found` | tout l’historique |
+| B.2.2 | `gitleaks dir --no-banner --redact . 2>&1 \| tail -1` | `no leaks found` | arbre de travail |
+| B.2.3 | `git grep -nIiE '(api[_-]?key\|secret\|token\|password\|bearer)\s*[=:]\s*["'"'"'][^"'"'"']{8,}' -- . ':!SECURITY.md' ':!NO-VIBE.md'` | 5 lignes | jeton et secrets du faux Proxmox et du récepteur d’essai, fabriqués pour les essais et les exercices ; aucune vraie clé |
+| B.2.4 | `git grep -nI -e '-----BEGIN (RSA\|EC\|OPENSSH\|PGP) PRIVATE' -- . ':!SECURITY.md' ':!NO-VIBE.md'` | 0 ligne | les certificats d’essai sont tirés par openssl à l’exécution |
+| B.2.5 | `rg -ni 'sk_live\|service_role\|xox[baprs]-\|-----BEGIN' web socle/web` | 0 ligne | aucune étape de construction : le navigateur reçoit web/ et socle/web tels quels |
+| B.2.6 | `curl -s -o /dev/null -w '%{http_code}' http://localhost:18144/.env` | `404` | instance locale ; tout segment caché répond 404 |
+| B.3.1 | `rg -n 'dangerouslySetInnerHTML\|innerHTML *=\|outerHTML *=\|document\.write' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 2 lignes | le gabarit du socle : balisage écrit dans le code, valeurs posées en nœuds texte ou attributs (SEC-XSS-001) |
+| B.3.2 | `rg -n 'eval\(\|new Function\(\|execSync\|child_process\|os\.system\|subprocess.*shell=True' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 6 lignes | outils et essais seulement, chacun sans shell, binaire fixe et arguments en tableau : les exercices lancent ProxLab et sa ligne de commande (`process.execPath`), les essais la ligne de commande et openssl (certificats tirés à la volée), ceux du socle openssl et python3 ; rien dans src/ |
+| B.3.3 | `rg -n '[^.]\bexec\(' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne |  |
+| B.3.4 | `rg -n 'f"SELECT\|"SELECT .*" *\+\|\$\{.*\} *FROM\|\.raw\(\|query\(.*\+ *req\.' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne |  |
+| B.3.5 | `rg -n 'Math\.random\|uuidv1\|new Random\(\)' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne |  |
+| B.3.6 | `rg -n 'verify *= *False\|rejectUnauthorized: *false\|InsecureSkipVerify' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 1 ligne | la sonde de confiance au premier usage (`src/tls.js`), justifiée dans le tableau « B.3 — TLS sans vérification par autorité, ligne à ligne » ci-dessous |
+| B.3.7 | `rg -n 'jwt\.decode\(\|algorithms: *\[.*none\|verify: *false' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne |  |
+| B.4.1 | `curl -sI http://localhost:18144/ \| rg -i 'content-security\|x-content-type\|referrer-policy\|permissions-policy\|x-frame\|cross-origin' \| wc -l` | `7` | CSP à nonce sans joker, nosniff, no-referrer, DENY, COOP et CORP same-origin, Permissions-Policy ; HSTS dès que la requête est chiffrée (H1) |
+| B.4.2 | `curl -sI http://localhost:18144/ \| rg -i '^(server\|x-powered-by\|x-aspnet\|x-generator)'` | 0 ligne |  |
+| B.4.3 | `curl -sI -H 'Origin: https://evil.example' http://localhost:18144/api/etat \| rg -i access-control` | 0 ligne | aucun CORS : même origine seulement |
+| B.4.4 | `curl -sI 'http://localhost:18144/login?next=https://evil.example' \| rg -i '^location'` | 0 ligne | aucune redirection : 404 |
+| B.4.5 | `curl -s -o /dev/null -w '%{http_code}' http://localhost:18144/.git/config` | `404` |  |
+| B.4.6 | `curl -s -o /dev/null -w '%{http_code}' http://localhost:18144/api/setup/state` | `404` | l’état d’installation lisible sans session de la 1.x n’existe plus |
+| B.4.7 | `for i in $(seq 1 30); do curl -s -o /dev/null -w '%{http_code} ' -X POST http://localhost:18144/api/compte/connexion -H 'Content-Type: application/json' -H 'Origin: http://localhost:18144' -d '{"identifiant":"quelquun","motDePasse":"mauvais mot de passe"}'; done` | `401 401 401 428` | trois échecs, puis preuve de travail exigée (428) ; 429 et verrouillage au-delà |
+| B.4.8 | quatorze `GET /api/hub/etat` avec un jeton du Hub inventé, codes de réponse comptés | `10 401 4 429` | un jeton du Hub inventé : 401, puis 429 une fois le plafond d’échecs de l’adresse atteint |
+
+### B.3 — TLS sans vérification par autorité, ligne à ligne
+Chaque ligne rendue par la commande B.3 correspondante, avec sa justification ; une ligne sans justification arrête la génération.
+
+| Ligne | Ce qu’elle est | Pourquoi elle est admise |
+|---|---|---|
+| `src/tls.js:45` | la sonde `observer()` de confiance au premier usage, seule connexion sans vérification par autorité | bornée par trois garanties écrites au-dessus d’elle et essayées : (1) atteinte seulement par `POST /api/liaison/sonde`, administrateur sous renfort récent ; (2) aucune donnée applicative envoyée, socket fermée dès la poignée finie ; (3) ne rend que l’empreinte SHA-256, le sujet, l’émetteur et l’échéance, et dit si une autorité du système reconnaît déjà le certificat. Toute connexion d’exploitation passe par `connecter()` : vérification ordinaire (autorité) ou empreinte épinglée comparée AVANT que la socket ne soit rendue au client HTTP (`rejectUnauthorized: !epingle`, puis comparaison et coupure). Essais « liaison : sonde, empreinte épinglée… » (une empreinte fausse : aucune requête n’atteint Proxmox) et « TLS épinglé : la socket n’est rendue qu’après l’empreinte, jamais avec une autre » |
+
+## Exploratory probing (SEC-TEST-007)
+Sondage exploratoire du 2026-10-12, rejoué à chaque génération de ce fichier sur une instance neuve reliée à un faux Proxmox en HTTPS (vrais comptes, vrai jeton du Hub, vraie console) : 39 cas d’abus tentés, chacun avec la réponse obtenue et celle qu’exige la règle ; un seul écart arrête la génération.
+
+| # | Cas d’abus | Tenté | Obtenu | Attendu |
+|---|---|---|---|---|
+| P1 | nœud remontant l’arborescence | `GET /api/machines/..%2F..%2Faccess/qemu/101` | 404, aucun appel à Proxmox | 404, aucun appel à Proxmox |
+| P2 | type de machine inventé | `GET /api/machines/pve-a/openvz/101` | 404, aucun appel à Proxmox | 404, aucun appel à Proxmox |
+| P3 | VMID non numérique | `GET /api/machines/pve-a/qemu/101;rm` | 404, aucun appel à Proxmox | 404, aucun appel à Proxmox |
+| P4 | instantané au nom piégé | `DELETE …/instantanes/..%2Fconfig (admin)` | 404, aucun appel à Proxmox | 404, aucun appel à Proxmox |
+| P5 | volume d’un autre stockage | `DELETE /api/sauvegardes/pve-a/sauvegardes?volid=local:backup/x (admin)` | 400, aucun appel à Proxmox | 400, aucun appel à Proxmox |
+| P6 | volume qui remonte | `DELETE …?volid=sauvegardes:backup/../../etc/passwd (admin)` | 400, aucun appel à Proxmox | 400, aucun appel à Proxmox |
+| P7 | UPID piégé | `GET /api/taches/pve-a/UPID%3A..%2F..` | 404, aucun appel à Proxmox | 404, aucun appel à Proxmox |
+| P8 | anonyme sur l’état de la grappe | `GET /api/etat` | 401 | 401 |
+| P9 | lecture seule qui démarre une machine | `POST …/101/alimentation start (lecture)` | 403 | 403 |
+| P10 | membre qui force un arrêt | `POST …/101/alimentation stop (membre)` | 403 | 403 |
+| P11 | membre qui revient à un instantané | `POST …/instantanes/avant-maj/retour (membre)` | 403 | 403 |
+| P12 | membre qui ouvre le shell d’un nœud | `POST /api/console {type:node} (membre)` | 403 | 403 |
+| P13 | membre qui lit la liaison | `GET /api/liaison (membre)` | 403 | 403 |
+| P14 | membre qui change le récepteur d’alertes | `PUT /api/alertes (membre)` | 403 | 403 |
+| P15 | jeton du Hub sur une route de session | `GET /api/etat (Hub)` | 401 | 401 |
+| P16 | jeton du Hub qui force un arrêt | `POST /api/hub/machines/pve-a/qemu/101/alimentation stop (Hub)` | 400 | 400 |
+| P17 | jeton du Hub sur les comptes | `GET /api/compte/admin/comptes (Hub)` | 401 | 401 |
+| P18 | session sur une route du Hub | `GET /api/hub/etat (admin)` | 401 | 401 |
+| P19 | champ réservé dans la configuration | `PUT …/configuration {cipassword} (admin)` | 400 | 400 |
+| P20 | argument brut de Proxmox glissé | `PUT …/configuration {args:"-monitor"} (admin)` | 400 | 400 |
+| P21 | prototype pollué | `POST …/instantanes {"__proto__":{…}}` | 400 | 400 |
+| P22 | paramètre de liste géant | `GET /api/evenements?limite=100000` | 400 | 400 |
+| P23 | paramètre non déclaré | `GET /api/etat?debug=1` | 400 | 400 |
+| P24 | corps géant | `POST …/instantanes, 200 Kio` | 413 | 413 |
+| P25 | écriture sans jeton anti-CSRF | `POST …/alimentation sans X-CSRF (membre)` | 403 | 403 |
+| P26 | secrets de configuration dans la fiche | `GET /api/machines/pve-a/qemu/101 : cipassword, sshkeys` | 0 | 0 |
+| P27 | secret de la liaison rendu | `GET /api/liaison (admin) contient le secret ?` | false | false |
+| P28 | chemin de l’hyperviseur dans une erreur | `DELETE d’un volume absent : /mnt/pve dans la réponse ?` | false | false |
+| P29 | liaison vers une adresse interdite | `POST /api/liaison/sonde {hote:169.254.169.254} (admin)` | 400 | 400 |
+| P30 | liaison vers une adresse interdite | `POST /api/liaison/sonde {hote:0.0.0.0} (admin)` | 400 | 400 |
+| P31 | liaison vers une adresse interdite | `POST /api/liaison/sonde {hote:224.0.0.1} (admin)` | 400 | 400 |
+| P32 | liaison vers une adresse interdite | `POST /api/liaison/sonde {hote:[::ffff:169.254.169.254]} (admin)` | 400 | 400 |
+| P33 | récepteur d’alertes vers les métadonnées | `PUT /api/alertes {url:http://169.254.169.254/} (admin)` | 400 | 400 |
+| P34 | récepteur avec identifiants dans l’adresse | `PUT /api/alertes {url:http://u:p@198.51.100.9/} (admin)` | 400 | 400 |
+| P35 | empreinte épinglée fausse | `PUT /api/liaison fp=ab…ab : requêtes parties vers Proxmox` | 502, aucun appel à Proxmox | 502, aucun appel à Proxmox |
+| P36 | passe de console volée par une autre session | `mise à niveau avec la passe du membre (admin)` | 403 | 403 |
+| P37 | console ouverte depuis une autre origine | `Origin: https://evil.example` | 403 | 403 |
+| P38 | passe inventée | `passe = 32 caractères au hasard` | 403 | 403 |
+| P39 | jetons du Hub inventés en rafale | `douze GET /api/hub/etat, jetons faux` | bloqué (429) | bloqué (429) |
