@@ -43,7 +43,7 @@ services:
       SOCLE_PROXYS: "{{config.SOCLE_PROXYS}}"
       SOCLE_ORIGINES: "{{config.SOCLE_ORIGINES}}"
       # Gamme de l'interface, choisie dans la page Thème du Hub.
-      SOCLE_THEME: "{{hub.theme}}"
+      SOCLE_THEME: "{{hub.gamme}}"
       SOCLE_URL_PUBLIQUE: "{{config.SOCLE_URL_PUBLIQUE}}"
       SOCLE_SMTP_HOTE: "{{config.SOCLE_SMTP_HOTE}}"
       SOCLE_SMTP_PORT: "{{config.SOCLE_SMTP_PORT}}"

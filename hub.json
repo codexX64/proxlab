@@ -8,7 +8,7 @@
   "icon": "server",
   "repository": "https://github.com/CodexX64/proxlab",
   "license": "AGPL-3.0-or-later",
-  "minHubVersion": "0.7.0",
+  "minHubVersion": "0.9.16",
   "install": {
     "type": "compose",
     "compose": "deploy/compose.hub.yml",
