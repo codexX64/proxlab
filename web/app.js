@@ -773,7 +773,7 @@ function champ(lbl, el, aide = null) {
 }
 
 function carteLiaison(l) {
-  const hote = h('input', { class: 'field', value: l?.hote || '', placeholder: 'proxmox.exemple.lan ou 192.0.2.10', autocomplete: 'off' });
+  const hote = h('input', { class: 'field', value: l?.hote || '', placeholder: 'proxmox.exemple.org ou 192.0.2.10', autocomplete: 'off' });
   const port = h('input', { class: 'field', type: 'number', min: 1, max: 65535, value: l?.port || 8006 });
   const confiance = h('select', { class: 'field' }, [['epingle', 'Empreinte épinglée'], ['autorite', 'Autorité reconnue par le système']].map(([v, t]) => h('option', { value: v, text: t, selected: (l?.confiance || 'epingle') === v })));
   const fp = h('input', { class: 'field mono fs12', value: l?.fp || '', placeholder: 'sha256:…', autocomplete: 'off', spellcheck: false });
@@ -831,12 +831,12 @@ function carteLiaison(l) {
 
 function carteAlertes(a) {
   const actif = h('input', { type: 'checkbox', checked: !!a?.actif });
-  const url = h('input', { class: 'field mono fs12', value: a?.url || '', placeholder: 'https://tickets.exemple.lan/api/alertes', autocomplete: 'off' });
+  const url = h('input', { class: 'field mono fs12', value: a?.url || '', placeholder: 'https://tickets.exemple.org/api/alertes', autocomplete: 'off' });
   const format = h('select', { class: 'field' }, [['ticket', 'Ticket (schéma commun)'], ['brut', 'Événement brut']].map(([v, t]) => h('option', { value: v, text: t, selected: (a?.format || 'ticket') === v })));
   const entete = h('input', { class: 'field mono', value: a?.entete || 'X-API-Key' });
   const cle = h('input', { class: 'field mono', type: 'password', placeholder: a?.aCle ? 'inchangée' : 'clé du récepteur', autocomplete: 'new-password' });
   const secret = h('input', { class: 'field mono', type: 'password', placeholder: a?.aSecret ? 'inchangé' : 'secret HMAC (facultatif)', autocomplete: 'new-password' });
-  const lienP = h('input', { class: 'field mono fs12', value: a?.lien || '', placeholder: 'https://proxlab.exemple.lan', autocomplete: 'off' });
+  const lienP = h('input', { class: 'field mono fs12', value: a?.lien || '', placeholder: 'https://proxlab.exemple.org', autocomplete: 'off' });
   const seuil = (v, d) => h('input', { class: 'field', type: 'number', min: 50, max: 100, value: v ?? d });
   const cpu = seuil(a?.cpu, 92), mem = seuil(a?.memoire, 92), sto = seuil(a?.stockage, 90);
   const effCle = h('input', { type: 'checkbox' }), effSecret = h('input', { type: 'checkbox' });
