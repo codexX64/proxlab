@@ -445,7 +445,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     reglages.ecrire('liaison', { ...neuve, verifie: Date.now() });
     proxmox.oublier();
     const qui = acteur(ctx);
-    journal.ecrire({ acteur: qui.acteurCompte, action: 'liaison.modifiee', objet: `${hote}:${b.port}`, ip: ctx.ip, details: { confiance: b.confiance, jeton: !!neuve.jeton_id, console: !!neuve.utilisateur } });
+    journal.ecrire({ acteur: qui.acteurCompte, action: 'liaison.modifiee', objet: `${hote}:${b.port}`, ip: ctx.ip, details: { confiance: b.confiance, api: !!neuve.jeton_id, console: !!neuve.utilisateur } });
     evenements.noter({ genre: 'panel.configured', niveau: 'info', titre: 'Liaison à Proxmox enregistrée', corps: `Proxmox VE ${String(version?.version || '?')}, par ${qui.acteur}.`, ...qui });
     return {
       liaison: liaisonPublique(), version: String(version?.version || ''), release: String(version?.release || ''),
