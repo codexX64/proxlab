@@ -98,6 +98,14 @@ test('en-têtes de sécurité, nonce, sonde publique minimale, security.txt', as
   assert.equal(r.headers['x-powered-by'], undefined);
   for (const f of ['proxlab.db', 'proxlab.db-wal']) assert.equal(fs.statSync(path.join(base, f)).mode & 0o777, 0o600, f);
   assert.equal(fs.statSync(base).mode & 0o077, 0, 'dossier des données fermé aux autres');
+  // Une base remise dans le volume avec d'autres droits (restauration) est refermée à l'ouverture.
+  const { ouvrirBase } = await import('../src/base.js');
+  const ailleurs = fs.mkdtempSync(path.join(os.tmpdir(), 'proxlab-droits-'));
+  const premiere = ouvrirBase(ailleurs); premiere.close();
+  for (const f of fs.readdirSync(ailleurs)) fs.chmodSync(path.join(ailleurs, f), 0o644);
+  ouvrirBase(ailleurs).close();
+  for (const f of fs.readdirSync(ailleurs)) assert.equal(fs.statSync(path.join(ailleurs, f)).mode & 0o777, 0o600, f);
+  fs.rmSync(ailleurs, { recursive: true, force: true });
   const sante = await s.client().get('/api/health');
   assert.deepEqual(sante.json, { ok: true });
   const st = await s.client().get('/.well-known/security.txt');
@@ -230,6 +238,7 @@ test('chemins : un segment hors format n\'atteint jamais Proxmox', async () => {
   }
   assert.equal(pve.appels.length, n0);
   assert.throws(() => chemin('nodes', '..', 'qemu'), /refusé/);
+  assert.throws(() => chemin('nodes', 'pve..a'), /refusé/, '« .. » au milieu d\'un segment');
   assert.throws(() => chemin('nodes', 'a?b=c'), /refusé/);
   assert.equal(chemin('nodes', 'pve-a', 'qemu', 101), '/nodes/pve-a/qemu/101');
 });
@@ -319,8 +328,9 @@ test('console : passe à usage unique liée à la session, origine contrôlée, 
   await attendre(() => ws.texte().includes('\x1b[32minvite-101'));
   ws.conn.envoyerTexte(JSON.stringify({ r: [99999, 1] }));
   ws.conn.envoyerTexte('pas du json');
-  await attendre(() => pve.consoles.at(-1).tailles.length >= 1);
-  assert.deepEqual(pve.consoles.at(-1).tailles, [[100, 30]], 'une taille hors bornes n\'est pas transmise');
+  ws.conn.envoyerTexte(JSON.stringify({ r: [80, 24] }));
+  await attendre(() => pve.consoles.at(-1).tailles.length >= 2);
+  assert.deepEqual(pve.consoles.at(-1).tailles, [[100, 30], [80, 24]], 'une taille hors bornes n\'est pas transmise');
   ws.conn.close();
   // La passe a déjà servi.
   assert.equal((await ouvrirWs(membre, p3.json.passe)).code, 403);
@@ -338,7 +348,7 @@ test('console : passe à usage unique liée à la session, origine contrôlée, 
   const p4 = await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '101' });
   assert.equal((await ouvrirWs(s.client(), p4.json.passe)).code, 401);
   const refus = s.db.prepare("SELECT details FROM socle_journal WHERE action = 'console.refusee'").all();
-  assert.ok(refus.length >= 1, 'les refus de console sont au journal');
+  for (const motif of ['passe', 'origine ou poignée', 'session']) assert.ok(refus.some(r => JSON.parse(r.details).raison === motif), `refus de console au journal : ${motif}`);
   assert.ok(!refus.some(r => [p.json.passe, p2.json.passe, p3.json.passe, p4.json.passe].some(x => String(r.details).includes(x))), 'jamais la passe au journal');
 });
 
