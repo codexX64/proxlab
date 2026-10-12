@@ -12,6 +12,7 @@ import {
 } from '/socle/compte.js';
 import { courbe, anneau, jauge, calendrier, capacite, tuiles } from '/socle/graphes.js';
 import { Terminal } from '/terminal.js';
+import { Ecran } from '/ecran.js';
 
 appliquerTheme();
 const SERVICE = 'ProxLab';
@@ -35,6 +36,8 @@ ajouterPictos({
   arret: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
   relance: '<path d="M20 11.4a8.2 8.2 0 1 0-1.9 6.2"/><path d="M20.5 5v5h-5"/>',
   terminal: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7 9l3 3-3 3M12.5 15h4"/>',
+  ecran: '<rect x="3" y="4" width="18" height="12.5" rx="2"/><path d="M8.5 20h7M12 16.5V20"/>',
+  agrandir: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   photo: '<path d="M4 8h3l1.5-2.5h7L17 8h3v11H4z"/><circle cx="12" cy="13.2" r="3.4"/>',
   archive: '<rect x="3.5" y="4" width="17" height="4.5" rx="1"/><path d="M5 8.5V20h14V8.5M10 12h4"/>',
   deplacer: '<path d="M4 12h15M14 7l5 5-5 5"/><path d="M4 6v12"/>',
@@ -402,13 +405,13 @@ function ligneMachine(m) {
 async function pageFiche(noeud, type, vmid) {
   const base = `/api/machines/${encodeURIComponent(noeud)}/${type}/${vmid}`;
   let f = await api.get(base);
-  const onglets = [['resume', 'Résumé'], ['instantanes', 'Instantanés'], ['sauvegardes', 'Sauvegardes'], ['configuration', 'Configuration'], ...(membre ? [['console', 'Console']] : [])];
+  const onglets = [['resume', 'Résumé'], ['instantanes', 'Instantanés'], ['sauvegardes', 'Sauvegardes'], ['configuration', 'Configuration'], ...(membre && type === 'qemu' ? [['ecran', 'Écran']] : []), ...(membre ? [['console', 'Console']] : [])];
   let onglet = 'resume', term = null, ws = null;
-  const fermerConsole = () => { try { ws?.close(); } catch { /* fermé */ } ws = null; term?.detruire(); term = null; };
+  const fermerConsole = () => { try { ws?.close(); } catch { /* fermé */ } ws = null; term?.detruire?.(); term = null; };
   const corps = h('div', { class: 'dtpane' });
   const tabs = h('div', { class: 'views mb16', role: 'tablist' });
   const tete = h('div', { class: 'detailhead' });
-  const relire = async () => { f = await api.get(base); peindreTete(); if (onglet !== 'console') montrer(onglet); };
+  const relire = async () => { f = await api.get(base); peindreTete(); if (onglet !== 'console' && onglet !== 'ecran') montrer(onglet); };
   const action = (act, libelle, { danger = false, question = null } = {}) => sur(async () => {
     if (question && !await confirmer(question, `${genreMachine(f)} ${f.vmid} sur ${f.node}.`, { danger, oui: libelle })) return;
     await api.post(base + '/alimentation', { action: act });
@@ -437,7 +440,7 @@ async function pageFiche(noeud, type, vmid) {
   async function montrer(k) {
     onglet = k;
     for (const b of tabs.children) { const on = b.dataset.k === k; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); }
-    if (k !== 'console') fermerConsole();
+    fermerConsole();
     history.replaceState(null, '', `#fiche/${noeud}/${type}/${vmid}`);
     try {
       if (k === 'resume') corps.replaceChildren(resumeMachine(f, base));
@@ -445,6 +448,7 @@ async function pageFiche(noeud, type, vmid) {
       else if (k === 'sauvegardes') corps.replaceChildren(await sauvegardes(f, base));
       else if (k === 'configuration') corps.replaceChildren(configuration(f, base, relire));
       else if (k === 'console') corps.replaceChildren(consoleMachine({ noeud: f.node, type: f.type, vmid: String(f.vmid) }, (t, w) => { fermerConsole(); term = t; ws = w; }));
+      else if (k === 'ecran') corps.replaceChildren(ecranMachine({ noeud: f.node, type: f.type, vmid: String(f.vmid) }, f.status === 'running', (t, w) => { fermerConsole(); term = t; ws = w; }));
     } catch (e) { corps.replaceChildren(h('p', { class: 'vide', text: e.message })); }
   }
   tabs.replaceChildren(...onglets.map(([k, l]) => h('button', { class: 'view', type: 'button', role: 'tab', text: l, dataset: { k }, onclick: () => montrer(k) })));
@@ -585,6 +589,38 @@ async function migrer(f, base) {
       try { await api.post(base + '/migration', { cible: cible.value, enLigne: chaud.checked }); return true; } catch (e) { err.textContent = e.message; return false; }
     } }] });
   if (ok) toast('Migration lancée : suis-la dans les tâches.');
+}
+
+// L'écran d'une VM (VNC) : clavier à la disposition de la machine, souris,
+// Ctrl+Alt+Suppr, plein écran. Chaque ouverture est journalisée.
+function ecranMachine(cible, enMarche, garder) {
+  const hote = h('div', { class: 'ecran-hote' });
+  const etat = h('span', { class: 'note', text: 'fermé' });
+  let ecran = null;
+  const outils = h('div', { class: 'ecran-outils' },
+    h('button', { class: 'btn sm', type: 'button', disabled: true, onclick: () => { ecran?.ctrlAltSuppr(); ecran?.toile.focus(); } }, 'Ctrl+Alt+Suppr'),
+    h('button', { class: 'btn sm', type: 'button', disabled: true, 'aria-label': 'Plein écran', onclick: () => (document.fullscreenElement ? document.exitFullscreen() : hote.requestFullscreen?.())?.catch(() => {}) }, icone('agrandir', 14), h('span', { class: 'cache-s', text: 'Plein écran' })));
+  const ouvrir = sur(async () => {
+    const { passe } = await api.post('/api/console', { ...cible, mode: 'ecran' });
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/ws/console?passe=${encodeURIComponent(passe)}`);
+    ws.binaryType = 'arraybuffer';
+    ecran = new Ecran(hote, ws, { surEtat: (q, d) => { etat.textContent = q === 'taille' ? `ouvert · ${d}` : q; } });
+    garder({ detruire: () => ecran?.relacher() }, ws);
+    etat.textContent = 'connexion…';
+    ws.addEventListener('message', ev => {
+      if (typeof ev.data !== 'string') return ecran.recevoir(ev.data);
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.pret) { ecran.demarrer(); for (const b of outils.querySelectorAll('button')) b.disabled = false; ecran.toile.focus(); }
+      if (m.fin) { etat.textContent = 'fermé'; hote.append(h('p', { class: 'vide', text: m.fin })); }
+    });
+    ws.addEventListener('close', () => { if (etat.textContent !== 'fermé') etat.textContent = 'fermé'; for (const b of outils.querySelectorAll('button')) b.disabled = true; });
+    bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
+  });
+  const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: ouvrir }, icone('ecran', 14), 'Ouvrir');
+  hote.append(h('p', { class: 'vide', text: enMarche ? 'L\'écran de la machine, avec le clavier et la souris. Clique dans l\'image pour lui donner le clavier ; chaque ouverture est journalisée.' : 'La machine est arrêtée : démarre-la pour voir son écran.' }));
+  if (!enMarche) bouton.disabled = true;
+  return h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Écran' }), etat, outils, bouton), hote);
 }
 
 function consoleMachine(cible, garder) {

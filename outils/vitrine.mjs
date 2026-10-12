@@ -10,7 +10,7 @@ import { demarrer } from '../src/main.js';
 import { fauxProxmox, JETON, UTILISATEUR } from '../test/faux-pve.js';
 
 const [port = '8191', gamme = 'soma'] = process.argv.slice(2);
-const pve = await fauxProxmox();
+const pve = await fauxProxmox({ ecran: [1024, 640] });
 const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'proxlab-vitrine-'));
 const JETON_INSTALLATION = crypto.randomBytes(18).toString('base64url');
 const s = await demarrer({

@@ -15,8 +15,8 @@ Projet [CodexX64](https://github.com/CodexX64). Licence AGPL-3.0 ou ultérieure.
   heure par heure sur sept jours ; occupation de chaque stockage.
 - **Machines** : machines virtuelles et conteneurs de tous les nœuds, filtrés
   et cherchés ; une fiche par machine avec ses relevés (processeur, mémoire,
-  réseau, disque), ses instantanés, ses sauvegardes, sa configuration et sa
-  console texte.
+  réseau, disque), ses instantanés, ses sauvegardes, sa configuration, l'écran
+  d'une machine virtuelle (clavier et souris) et la console texte.
 - **Gestes** : démarrer, arrêter proprement, redémarrer, suspendre, prendre un
   instantané, lancer une sauvegarde (membre) ; arrêt forcé, réinitialisation,
   migration, configuration, retour à un instantané, suppressions (administrateur,
@@ -74,6 +74,15 @@ tirée sous la session (où le rôle et le renfort sont vérifiés) et présent�
 la mise à niveau WebSocket, qui vérifie l'origine et revérifie la session.
 Seules la saisie et la taille passent du navigateur à Proxmox, bornées ; la
 session est revérifiée chaque minute et la console se ferme avec elle.
+
+**Écran.** L'écran d'une machine virtuelle passe par le VNC de QEMU (vncproxy
+de Proxmox), sous la même passe. ProxLab fait lui-même la poignée VNC avec le
+ticket de vncproxy, qui ne quitte jamais le serveur ; le navigateur reprend le
+protocole ensuite, et seuls les messages d'un client VNC ordinaire (format,
+encodages, demandes d'image, touches, souris, presse-papiers) passent, entiers
+et bornés. Les touches partent avec leur code physique : la disposition du
+clavier est celle de la machine (AZERTY reste AZERTY). Ctrl+Alt+Suppr et le
+plein écran ont leur bouton.
 
 **Droits à donner dans Proxmox.** Un utilisateur dédié (par exemple
 `proxlab@pve`) et un jeton d'API à séparation de privilèges, avec les rôles
