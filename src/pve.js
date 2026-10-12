@@ -1,0 +1,113 @@
+// Client de l'API de Proxmox VE. Chaque requête passe par l'agent TLS de la
+// liaison (autorité ou empreinte épinglée, vérifiée avant le premier octet) ;
+// l'authentification est un jeton d'API, ou à défaut un ticket obtenu avec
+// l'utilisateur et son mot de passe — que la console exige de toute façon,
+// le WebSocket de Proxmox refusant les jetons.
+//
+// Un chemin n'est jamais assemblé ici à partir d'une requête : les routes
+// valident chaque segment (nœud, VMID, nom) puis appellent chemin(), qui
+// refuse tout ce qui sortirait de l'API.
+import https from 'node:https';
+import { agentProxmox } from './tls.js';
+
+const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._:@~%!-]{0,399}$/;
+const REPONSE_MAX = 16 * 1024 * 1024;
+const CERTIFICAT_NON_RECONNU = new Set(['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID']);
+const TICKET_DUREE = 100 * 60e3; // un ticket Proxmox vaut deux heures : on le renouvelle avant
+
+export class ErreurProxmox extends Error {
+  constructor(message, status = 502) { super(message); this.status = status; }
+}
+
+// '/nodes', 'pve1', 'qemu', 101 → '/nodes/pve1/qemu/101'. Un segment hors motif,
+// ou « .. », arrête tout : l'appelant valide déjà, ceci est la seconde barrière.
+export function chemin(...segments) {
+  const morceaux = segments.flatMap(s => String(s).split('/')).filter(Boolean);
+  for (const m of morceaux) if (!SEGMENT.test(m) || m.includes('..')) throw new ErreurProxmox('segment de chemin refusé', 400);
+  return '/' + morceaux.join('/');
+}
+
+export class Proxmox {
+  constructor({ reglages, timeout = 20000 } = {}) {
+    this.reglages = reglages; this.timeout = timeout;
+    this.agent = null; this.cle = null; this.ticket = null;
+  }
+
+  // La liaison en vigueur ; l'agent est refait quand elle change.
+  liaison() {
+    const l = this.reglages.liaison();
+    if (!l) throw new ErreurProxmox('Proxmox n\'est pas encore relié : un administrateur le règle dans Réglages.', 409);
+    const cle = JSON.stringify([l.hote, l.port, l.confiance, l.fp, l.jeton_id, l.utilisateur, l.jeton_scelle, l.mdp_scelle]);
+    if (cle !== this.cle) { this.agent?.destroy(); this.agent = agentProxmox(l); this.cle = cle; this.ticket = null; }
+    return l;
+  }
+  oublier() { this.agent?.destroy(); this.agent = null; this.cle = null; this.ticket = null; }
+
+  get(p, q) { return this.appel('GET', p, q); }
+  post(p, q) { return this.appel('POST', p, q); }
+  put(p, q) { return this.appel('PUT', p, q); }
+  del(p, q) { return this.appel('DELETE', p, q); }
+
+  async appel(methode, p, params = {}, { relance = true } = {}) {
+    const l = this.liaison();
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null && v !== '') qs.append(k, String(v));
+    const corps = methode === 'GET' || methode === 'DELETE' ? null : qs.toString();
+    const url = '/api2/json' + p + (corps === null && qs.size ? '?' + qs : '');
+    const entetes = { Accept: 'application/json', ...(await this.authentification(l, methode)) };
+    if (corps !== null) Object.assign(entetes, { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(corps) });
+    const r = await brut({ agent: this.agent, hote: l.hote, port: l.port, methode, url, entetes, corps, timeout: this.timeout });
+    if (r.status === 401 && relance && !l.jeton_id) { this.ticket = null; return this.appel(methode, p, params, { relance: false }); }
+    let json = null;
+    try { json = JSON.parse(r.texte); } catch { /* page d'erreur HTML */ }
+    if (r.status >= 400) {
+      const detail = json?.message || (json?.errors && JSON.stringify(json.errors)) || r.message || `HTTP ${r.status}`;
+      throw new ErreurProxmox(String(detail).trim().slice(0, 500), r.status === 401 || r.status === 403 ? 502 : r.status >= 500 ? 502 : r.status);
+    }
+    return json ? json.data : null;
+  }
+
+  async authentification(l, methode) {
+    if (l.jeton_id && l.secret) return { Authorization: `PVEAPIToken=${l.jeton_id}=${l.secret}` };
+    const t = await this.obtenirTicket();
+    return { Cookie: `PVEAuthCookie=${encodeURIComponent(t.ticket)}`, ...(methode !== 'GET' ? { CSRFPreventionToken: t.csrf } : {}) };
+  }
+
+  // Ticket de session Proxmox (utilisateur + mot de passe), gardé en mémoire.
+  async obtenirTicket({ forcer = false } = {}) {
+    const l = this.liaison();
+    if (!forcer && this.ticket && this.ticket.expire > Date.now()) return this.ticket;
+    if (!l.utilisateur || !l.motDePasse) throw new ErreurProxmox('Utilisateur et mot de passe Proxmox requis pour cette opération (console).', 409);
+    const corps = new URLSearchParams({ username: l.utilisateur, password: l.motDePasse }).toString();
+    const r = await brut({
+      agent: this.agent, hote: l.hote, port: l.port, methode: 'POST', url: '/api2/json/access/ticket', corps, timeout: this.timeout,
+      entetes: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(corps) },
+    });
+    if (r.status !== 200) throw new ErreurProxmox('Proxmox a refusé l\'utilisateur et le mot de passe.', 502);
+    const d = JSON.parse(r.texte).data;
+    this.ticket = { ticket: d.ticket, csrf: d.CSRFPreventionToken, expire: Date.now() + TICKET_DUREE };
+    return this.ticket;
+  }
+}
+
+function brut({ agent, hote, port, methode, url, entetes, corps, timeout }) {
+  return new Promise((resolve, reject) => {
+    const req = https.request({ host: hote, port, method: methode, path: url, agent, headers: entetes, timeout }, res => {
+      const morceaux = []; let taille = 0;
+      res.on('data', c => {
+        taille += c.length;
+        if (taille > REPONSE_MAX) { req.destroy(new ErreurProxmox('réponse de Proxmox trop volumineuse')); return; }
+        morceaux.push(c);
+      });
+      res.on('end', () => resolve({ status: res.statusCode, message: res.statusMessage, texte: Buffer.concat(morceaux).toString('utf8') }));
+      res.on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new ErreurProxmox('Proxmox ne répond pas (délai dépassé).')));
+    req.on('error', e => reject(e instanceof ErreurProxmox ? e : new ErreurProxmox(
+      e.code === 'EEMPREINTE' ? e.message
+        : CERTIFICAT_NON_RECONNU.has(e.code) ? `certificat non reconnu par les autorités du système (${e.code}) : épingler son empreinte.`
+          : `Proxmox injoignable (${e.code || e.message}).`)));
+    if (corps) req.write(corps);
+    req.end();
+  });
+}
