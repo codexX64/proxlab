@@ -14,6 +14,8 @@ import { chemin } from '../src/pve.js';
 import { connecter as connecterTls, empreinte } from '../src/tls.js';
 import { Connexion } from '../src/websocket.js';
 import { corpsTicket, urgence } from '../src/alerte.js';
+import { desChiffrer, reponseVnc } from '../src/des.js';
+import { longueurMessageClient } from '../src/ecran.js';
 
 const JETON_HUB = 'jeton-du-hub-pour-les-essais-de-proxlab-0123';
 const INSTALL = 'jeton-installation-proxlab-essai';
@@ -63,11 +65,11 @@ function ouvrirWs(client, passe, { origine = client.origine } = {}) {
       const code = Number(tete.split(' ')[1]);
       if (code !== 101) { socket.destroy(); return resolve({ code }); }
       const conn = new Connexion(socket, { role: 'client' });
-      const recu = [];
-      conn.on('message', m => recu.push(m.toString('utf8')));
+      const recu = [], bruts = [];
+      conn.on('message', (m, texte) => { recu.push(m.toString('utf8')); bruts.push({ m, texte }); });
       const reste = tampon.subarray(i + 4);
       if (reste.length) conn._recevoir(reste);
-      resolve({ code, conn, recu, texte: () => recu.join('') });
+      resolve({ code, conn, recu, bruts, texte: () => recu.join(''), octets: () => Buffer.concat(bruts.filter(b => !b.texte).map(b => b.m)) });
     };
     socket.on('data', surDonnees);
     socket.on('error', reject);
@@ -350,6 +352,56 @@ test('console : passe à usage unique liée à la session, origine contrôlée, 
   const refus = s.db.prepare("SELECT details FROM socle_journal WHERE action = 'console.refusee'").all();
   for (const motif of ['passe', 'origine ou poignée', 'session']) assert.ok(refus.some(r => JSON.parse(r.details).raison === motif), `refus de console au journal : ${motif}`);
   assert.ok(!refus.some(r => [p.json.passe, p2.json.passe, p3.json.passe, p4.json.passe].some(x => String(r.details).includes(x))), 'jamais la passe au journal');
+});
+
+test('écran d\'une VM : poignée VNC faite par ProxLab, le ticket ne sort jamais, seuls les messages d\'un client RFB passent', async () => {
+  // DES : vecteurs de référence, puis la réponse VNC (clé aux bits inversés).
+  assert.equal(desChiffrer(Buffer.from('133457799BBCDFF1', 'hex'), Buffer.from('0123456789ABCDEF', 'hex')).toString('hex'), '85e813540f0ab405');
+  assert.equal(desChiffrer(Buffer.from('0101010101010101', 'hex'), Buffer.from('95F8A5E5DD31D900', 'hex')).toString('hex'), '8000000000000000');
+  assert.equal(reponseVnc('PVEVNC:6ABCDEF', Buffer.from([...Array(16).keys()])).toString('hex'), '6cd546c0dcc738ca6c0274eae59a2bf2');
+  // Filtre du sens navigateur → Proxmox.
+  assert.equal(longueurMessageClient(Buffer.from([3, 1, 0]), false), 0, 'demande incomplète : attendre');
+  assert.equal(longueurMessageClient(Buffer.alloc(10, 0).fill(3, 0, 1), false), 10);
+  assert.equal(longueurMessageClient(Buffer.from([2, 0, 0xff, 0xff]), false), -1, 'trop d\'encodages');
+  assert.equal(longueurMessageClient(Buffer.from([6, 0, 0, 0, 0x10, 0, 0, 0]), false), -1, 'presse-papiers démesuré');
+  assert.equal(longueurMessageClient(Buffer.from([255, 1]), false), -1, 'seule la touche étendue de QEMU passe');
+  assert.equal(longueurMessageClient(Buffer.from([7]), false), -1);
+
+  assert.equal((await membre.post('/api/console', { noeud: 'pve-a', type: 'lxc', vmid: '200', mode: 'ecran' })).status, 400, 'un conteneur n\'a pas d\'écran');
+  assert.equal((await lecteur.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '101', mode: 'ecran' })).status, 403);
+  const p = await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '101', mode: 'ecran' });
+  assert.equal(p.status, 200, JSON.stringify(p.json));
+  const ws = await ouvrirWs(membre, p.json.passe);
+  assert.equal(ws.code, 101);
+  await attendre(() => ws.recu.some(t => t.includes('"pret":true')));
+  const e = pve.ecrans.at(-1);
+  assert.equal(e.authentifie, true, 'réponse au défi calculée avec le ticket');
+  assert.equal(e.cible, 'qemu/101');
+  ws.conn.envoyerBinaire(Buffer.from([1]));                                     // ClientInit
+  await attendre(() => ws.octets().length >= 24);
+  const init = ws.octets();
+  assert.deepEqual([init.readUInt16BE(0), init.readUInt16BE(2)], [4, 2]);
+  assert.equal(init.subarray(24).toString(), 'invite-101');
+  const pf = Buffer.alloc(20); pf.set([0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16]);
+  const enc = Buffer.alloc(12); enc[0] = 2; enc.writeUInt16BE(2, 2); enc.writeInt32BE(0, 4); enc.writeInt32BE(-258, 8);
+  const demande = Buffer.from([3, 0, 0, 0, 0, 0, 0, 4, 0, 2]);
+  // Un message coupé en deux trames arrive entier.
+  ws.conn.envoyerBinaire(Buffer.concat([pf, enc, demande.subarray(0, 4)]));
+  ws.conn.envoyerBinaire(demande.subarray(4));
+  await attendre(() => ws.octets().length >= init.length + 48);
+  const image = ws.octets().subarray(init.length);
+  assert.deepEqual([image[0], image.readUInt16BE(2), image.readInt32BE(12)], [0, 1, 0], 'une image brute de 4 × 2');
+  const touche = Buffer.alloc(12); touche[0] = 255; touche.writeUInt16BE(1, 2); touche.writeUInt32BE(0x61, 4); touche.writeUInt32BE(0x10, 8);
+  ws.conn.envoyerBinaire(touche);
+  await attendre(() => e.messages.length >= 4);
+  assert.deepEqual(e.messages.map(m => m[0]), [0, 2, 3, 255]);
+  assert.ok(!ws.texte().includes('PVEVNC'), 'le ticket de vncproxy ne part jamais vers le navigateur');
+  // Tout autre message ferme l'écran.
+  ws.conn.envoyerBinaire(Buffer.from([7, 0, 0, 0]));
+  await attendre(() => ws.recu.some(t => t.includes('message refusé')));
+  assert.equal(e.messages.length, 4, 'le message refusé n\'atteint pas Proxmox');
+  const ligne = s.db.prepare("SELECT details FROM socle_journal WHERE action = 'console.ouverte' ORDER BY rowid DESC LIMIT 1").get();
+  assert.equal(JSON.parse(ligne.details).mode, 'ecran');
 });
 
 test('surveillance : une machine tombée est un événement et un ticket signé ; un arrêt depuis ProxLab ne sonne pas', async () => {

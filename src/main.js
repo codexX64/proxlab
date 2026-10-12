@@ -11,6 +11,7 @@ import { Surveillance } from './surveillance.js';
 import { creerApi } from './api.js';
 import { verifierUpgrade, accepter, refuser } from './websocket.js';
 import { ouvrirTermproxy, relayer } from './console.js';
+import { ouvrirVnc, relayerEcran } from './ecran.js';
 import {
   Debit, ErreurHttp, demarrerSocle, entetesSecurite, envelopper, nonceCsp, politiqueContenu,
   repondreErreur, repondreJson, servirFichier, origineDe, adresseClient,
@@ -97,11 +98,10 @@ export async function demarrer(env = process.env, { log = CONSOLE } = {}) {
       const ws = accepter(req, socket);
       ouvertes.add(ws);
       const sessionId = ctx.session.id, jeton = ctx.jeton;
-      socle.journal.ecrire({ acteur: ctx.session.compte, action: 'console.ouverte', objet: cible.type === 'node' ? `node/${cible.noeud}` : `${cible.type}/${cible.vmid}`, ip: ctx.ip, details: { noeud: cible.noeud } });
-      relayer(ws, () => ouvrirTermproxy(proxmox, cible), {
-        vivante: () => socle.comptes.session(jeton)?.id === sessionId,
-        surFin: () => ouvertes.delete(ws),
-      });
+      socle.journal.ecrire({ acteur: ctx.session.compte, action: 'console.ouverte', objet: cible.type === 'node' ? `node/${cible.noeud}` : `${cible.type}/${cible.vmid}`, ip: ctx.ip, details: { noeud: cible.noeud, mode: cible.mode } });
+      const suivi = { vivante: () => socle.comptes.session(jeton)?.id === sessionId, surFin: () => ouvertes.delete(ws) };
+      if (cible.mode === 'ecran') relayerEcran(ws, () => ouvrirVnc(proxmox, cible), suivi);
+      else relayer(ws, () => ouvrirTermproxy(proxmox, cible), suivi);
     } catch { try { socket.destroy(); } catch { /* déjà fermé */ } }
   });
 

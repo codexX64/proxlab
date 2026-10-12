@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { accepter } from '../src/websocket.js';
+import { reponseVnc } from '../src/des.js';
 
 export const JETON = { id: 'proxlab@pve!panneau', secret: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' };
 export const UTILISATEUR = { nom: 'proxlab@pve', motDePasse: 'mot-de-passe-de-la-grappe-essai' };
@@ -70,7 +71,7 @@ function historiqueSauvegardes() {
 
 const rrd = n => Array.from({ length: 70 }, (_, i) => ({ time: 1791780000 + i * 60, cpu: 0.05 + 0.04 * Math.sin(i / 6 + n), mem: 1e9 + 2e8 * Math.sin(i / 9), maxmem: 2147483648, netin: 2e4 + 1e4 * Math.sin(i / 4), netout: 1e4 + 5e3 * Math.cos(i / 5), diskread: 3e4 * (1 + Math.sin(i / 7)), diskwrite: 2e4 * (1 + Math.cos(i / 8)) }));
 
-export async function fauxProxmox({ certificats = certificatsGrappe() } = {}) {
+export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [4, 2] } = {}) {
   const etat = grappeInitiale();
   const appels = [];
   const tickets = new Map(), vnctickets = new Map();
@@ -174,6 +175,16 @@ export async function fauxProxmox({ certificats = certificatsGrappe() } = {}) {
   const origine = serveur.listeners('request')[0];
   serveur.removeAllListeners('request');
   serveur.on('request', (req, res) => {
+    if (req.method === 'POST' && /\/qemu\/\d+\/vncproxy$/.test(req.url)) {
+      const ticket = 'PVEVNC:' + crypto.randomBytes(12).toString('hex');
+      const s = req.url.replace(/^\/api2\/json/, '').split('/').filter(Boolean);
+      vnctickets.set(ticket, { node: s[1], cle: `${s[2]}/${s[3]}`, vnc: true });
+      appels.push({ methode: 'POST', chemin: req.url.replace(/^\/api2\/json/, ''), auth: req.headers.authorization || 'ticket' });
+      req.resume();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: { port: '5900', ticket, cert: '', user: UTILISATEUR.nom, upid: 'UPID:essai' } }));
+      return;
+    }
     if (req.method === 'POST' && /\/termproxy$/.test(req.url)) {
       const ticket = 'PVEVNC:' + crypto.randomBytes(10).toString('hex');
       const s = req.url.replace(/^\/api2\/json/, '').split('/').filter(Boolean);
@@ -196,6 +207,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe() } = {}) {
     const vt = vnctickets.get(url.searchParams.get('vncticket') || '');
     if (!cookie || !tickets.has(decodeURIComponent(cookie[1])) || !vt) { socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
     const ws = accepter(req, socket, { sousProtocole: 'binary' });
+    if (vt.vnc) return ecranVnc(ws, vt, url.searchParams.get('vncticket'));
     const c = { cible: vt.cle || `node/${vt.node}`, saisies: [], tailles: [] };
     consoles.push(c);
     let authentifie = false, ligne = '';
@@ -219,10 +231,62 @@ export async function fauxProxmox({ certificats = certificatsGrappe() } = {}) {
     });
   });
 
+  // L'écran d'une VM : un serveur RFB 3.8 minimal, authentification VNC avec
+  // le ticket de vncproxy, l'image entière à chaque demande non incrémentale
+  // (4 × 2 pixels pour les essais ; une fausse invite de connexion, inventée,
+  // pour la vitrine). Une demande incrémentale attend : rien ne change.
+  const [EL, EH] = ecran;
+  const pixels = Buffer.alloc(EL * EH * 4);
+  for (let y = 0; y < EH; y++) for (let x = 0; x < EL; x++) {
+    const i = (y * EL + x) * 4, cadre = EL > 8 && x > EL * 0.3 && x < EL * 0.7 && y > EH * 0.35 && y < EH * 0.65;
+    const champ = cadre && y > EH * 0.48 && y < EH * 0.54 && x > EL * 0.34 && x < EL * 0.66;
+    const [r, g, b] = EL <= 8 ? [200, 100, 50] : champ ? [235, 238, 242] : cadre ? [44, 52, 64] : [18 + Math.round(y / EH * 20), 24 + Math.round(y / EH * 26), 38 + Math.round(x / EL * 30)];
+    pixels.set([r, g, b, 0], i);
+  }
+  const ecrans = [];
+  function ecranVnc(ws, vt, ticket) {
+    const e = { cible: vt.cle, authentifie: false, messages: [] };
+    ecrans.push(e);
+    let tampon = Buffer.alloc(0), etape = 'version', defi = crypto.randomBytes(16);
+    ws.envoyerBinaire(Buffer.from('RFB 003.008\n', 'latin1'));
+    const longueur = b => ({ 0: 20, 3: 10, 4: 8, 5: 6, 255: 12 }[b[0]] ?? (b[0] === 2 && b.length >= 4 ? 4 + 4 * b.readUInt16BE(2) : b[0] === 6 && b.length >= 8 ? 8 + b.readUInt32BE(4) : 0));
+    ws.on('message', d => {
+      tampon = Buffer.concat([tampon, d]);
+      for (;;) {
+        if (etape === 'version') { if (tampon.length < 12) return; tampon = tampon.subarray(12); etape = 'type'; ws.envoyerBinaire(Buffer.from([1, 2])); continue; }
+        if (etape === 'type') { if (tampon.length < 1) return; if (tampon[0] !== 2) return ws.close(); tampon = tampon.subarray(1); etape = 'reponse'; ws.envoyerBinaire(defi); continue; }
+        if (etape === 'reponse') {
+          if (tampon.length < 16) return;
+          e.authentifie = tampon.subarray(0, 16).equals(reponseVnc(ticket, defi));
+          tampon = tampon.subarray(16);
+          if (!e.authentifie) { const r = Buffer.from('mauvais mot de passe'); const l = Buffer.alloc(4); l.writeUInt32BE(r.length); ws.envoyerBinaire(Buffer.concat([Buffer.from([0, 0, 0, 1]), l, r])); return ws.close(); }
+          ws.envoyerBinaire(Buffer.from([0, 0, 0, 0])); etape = 'clientinit'; continue;
+        }
+        if (etape === 'clientinit') {
+          if (tampon.length < 1) return;
+          tampon = tampon.subarray(1); etape = 'messages';
+          const nom = Buffer.from(`invite-${vt.cle.split('/')[1]}`);
+          const init = Buffer.alloc(24); init.writeUInt16BE(EL, 0); init.writeUInt16BE(EH, 2); init.set([32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0], 4); init.writeUInt32BE(nom.length, 20);
+          ws.envoyerBinaire(Buffer.concat([init, nom]));
+          continue;
+        }
+        if (!tampon.length) return;
+        const n = longueur(tampon);
+        if (!n || tampon.length < n) return;
+        const m = tampon.subarray(0, n); tampon = tampon.subarray(n);
+        e.messages.push([...m]);
+        if (m[0] === 3 && m[1] === 0) {
+          const t = Buffer.alloc(16); t.writeUInt16BE(1, 2); t.writeUInt16BE(EL, 8); t.writeUInt16BE(EH, 10); t.writeInt32BE(0, 12);
+          ws.envoyerBinaire(Buffer.concat([t, pixels]));
+        }
+      }
+    });
+  }
+
   await new Promise(r => serveur.listen(0, '127.0.0.1', r));
   const port = serveur.address().port;
   return {
-    hote: '127.0.0.1', port, etat, appels, consoles, autorite: certificats.autorite,
+    hote: '127.0.0.1', port, etat, appels, consoles, ecrans, autorite: certificats.autorite,
     empreinte: new crypto.X509Certificate(certificats.cert).fingerprint256,
     fermer: () => new Promise(f => { serveur.closeAllConnections?.(); serveur.close(f); }),
   };

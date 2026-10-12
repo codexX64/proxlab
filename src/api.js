@@ -43,7 +43,7 @@ const S = {
     stockage: { type: 'chaine', requis: true, max: 100, motif: STOCKAGE }, mode: { type: 'chaine', parmi: ['snapshot', 'suspend', 'stop'], defaut: 'snapshot' },
     compression: { type: 'chaine', parmi: ['zstd', 'lzo', 'gzip', '0'], defaut: 'zstd' }, notes: { type: 'chaine', max: 200, defaut: '' },
   },
-  console: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, type: { type: 'chaine', requis: true, parmi: ['node', ...TYPES] }, vmid: { type: 'chaine', max: 9, motif: VMID } },
+  console: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, type: { type: 'chaine', requis: true, parmi: ['node', ...TYPES] }, vmid: { type: 'chaine', max: 9, motif: VMID }, mode: { type: 'chaine', parmi: ['texte', 'ecran'] } },
   sonde: { hote: { type: 'chaine', requis: true, max: 253 }, port: { type: 'entier', min: 1, max: 65535, defaut: 8006 } },
   liaison: {
     hote: { type: 'chaine', requis: true, max: 253 }, port: { type: 'entier', min: 1, max: 65535, defaut: 8006 },
@@ -378,13 +378,16 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     const b = await corps(ctx, S.console);
     if (b.type === 'node') session(ctx, { role: 'admin', renfort: true });
     else if (!b.vmid) throw new ErreurHttp(400, 'VMID requis.');
+    // L'écran (VNC) : celui d'une machine virtuelle ; un conteneur n'a que sa console texte.
+    const mode = b.mode === 'ecran' ? 'ecran' : 'texte';
+    if (mode === 'ecran' && b.type !== 'qemu') throw new ErreurHttp(400, 'L\'écran est celui d\'une machine virtuelle ; un conteneur a sa console texte.');
     if (!reglages.lire('liaison')?.utilisateur) throw new ErreurHttp(409, 'La console demande l\'utilisateur et le mot de passe Proxmox dans la liaison (Réglages).');
     const passe = crypto.randomBytes(24).toString('base64url');
     const t = Date.now();
     for (const [k, v] of passes) if (v.expire < t) passes.delete(k);
     if (passes.size > 1000) throw new ErreurHttp(429, 'Trop de consoles en attente.');
     // Gardée par son empreinte : la passe en clair n'existe que dans la réponse.
-    passes.set(empreintePasse(passe), { session: ctx.session.id, cible: { noeud: b.noeud, type: b.type, vmid: b.type === 'node' ? null : b.vmid }, expire: t + 60e3 });
+    passes.set(empreintePasse(passe), { session: ctx.session.id, cible: { noeud: b.noeud, type: b.type, vmid: b.type === 'node' ? null : b.vmid, mode }, expire: t + 60e3 });
     return { passe };
   }, { role: 'membre' });
 
