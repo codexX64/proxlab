@@ -1,0 +1,62 @@
+# ProxLab installé par le Hub.
+# Les {{...}} sont remplacés à l'installation : secrets générés, port d'hôte,
+# volume nommé et réseau partagé du Hub.
+services:
+  proxlab:
+    image: ghcr.io/codexx64/proxlab:{{config.IMAGE_TAG}}
+    container_name: {{service.host}}
+    restart: unless-stopped
+    networks: [hub]
+    ports:
+      - "{{hostport.http}}:8140"
+    volumes:
+      - {{volume.data}}:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    environment:
+      PORT: "8140"
+      DATA_DIR: /data
+      # Jeton de service du Hub : état résumé, événements, alertes et trois
+      # gestes d'alimentation — jamais les comptes, la liaison ni les alertes.
+      PROXLAB_HUB_TOKEN: {{config.HUB_TOKEN}}
+      PROXLAB_INTERVAL: "{{config.PROXLAB_INTERVAL}}"
+      PROXLAB_EVENTS_DAYS: "{{config.PROXLAB_EVENTS_DAYS}}"
+      # Comptes : clé maîtresse gardée par le Hub, accès HTTPS ou mode dégradé,
+      # relais de confiance.
+      SOCLE_CLE: "{{config.SOCLE_CLE}}"
+      SOCLE_CLE_ANCIENNE: "{{config.SOCLE_CLE_ANCIENNE}}"
+      SOCLE_HTTP: "{{config.SOCLE_HTTP}}"
+      SOCLE_JETON_INSTALLATION: "{{config.SOCLE_JETON_INSTALLATION}}"
+      # Gestion des comptes depuis le Hub (Comptes des services) : jeton à lui seul.
+      SOCLE_JETON_ADMIN_HUB: "{{config.HUB_ADMIN_TOKEN}}"
+      SOCLE_PROXYS: "{{config.SOCLE_PROXYS}}"
+      SOCLE_ORIGINES: "{{config.SOCLE_ORIGINES}}"
+      # Gamme de l'interface, choisie dans la page Thème du Hub.
+      SOCLE_THEME: "{{hub.theme}}"
+      SOCLE_URL_PUBLIQUE: "{{config.SOCLE_URL_PUBLIQUE}}"
+      SOCLE_SMTP_HOTE: "{{config.SOCLE_SMTP_HOTE}}"
+      SOCLE_SMTP_PORT: "{{config.SOCLE_SMTP_PORT}}"
+      SOCLE_SMTP_SECURITE: "{{config.SOCLE_SMTP_SECURITE}}"
+      SOCLE_SMTP_UTILISATEUR: "{{config.SOCLE_SMTP_UTILISATEUR}}"
+      SOCLE_SMTP_MOTDEPASSE: "{{config.SOCLE_SMTP_MOTDEPASSE}}"
+      SOCLE_SMTP_DE: "{{config.SOCLE_SMTP_DE}}"
+
+networks:
+  hub:
+    name: {{hub.network}}
+    external: true
+
+volumes:
+  {{volume.data}}:
+    name: {{volume.data}}

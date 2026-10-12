@@ -1,0 +1,45 @@
+# ProxLab seul, sans le Hub : docker compose up -d --build
+# Les réglages viennent de .env (voir .env.example), la clé maîtresse d'un
+# secret Docker (README, « Installation seule »).
+services:
+  proxlab:
+    build: .
+    image: proxlab:local
+    container_name: proxlab
+    restart: unless-stopped
+    env_file: .env
+    # La clé maîtresse vient d'un fichier hors du volume de données : une copie
+    # du volume ne suffit pas à ouvrir ce qu'elle scelle.
+    environment:
+      SOCLE_CLE_FILE: /run/secrets/socle_cle
+      SOCLE_CLE_ANCIENNE_FILE: /run/secrets/socle_cle_ancienne
+    secrets: [socle_cle, socle_cle_ancienne]
+    # La boucle locale seulement : un relais HTTPS devant (Relay, Caddy…).
+    ports:
+      - "127.0.0.1:${PROXLAB_PORT:-8140}:8140"
+    volumes:
+      - proxlab-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+    # Journaux du conteneur, où part aussi le journal de sécurité : gardés par
+    # le démon Docker, hors de portée du service, cinq fichiers de 10 Mo.
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+secrets:
+  socle_cle:
+    file: ./secrets/socle_cle
+  # Vide, sauf pendant une rotation (README, « Tourner la clé maîtresse »).
+  socle_cle_ancienne:
+    file: ./secrets/socle_cle_ancienne
+
+volumes:
+  proxlab-data:
+    name: proxlab-data

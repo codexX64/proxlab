@@ -1,0 +1,674 @@
+{
+  "$schema": "https://raw.githubusercontent.com/CodexX64/hub-registry/main/schema/hub-extension.v1.json",
+  "manifestVersion": 1,
+  "id": "proxlab",
+  "name": "ProxLab",
+  "version": "2.0.0",
+  "description": "La grappe Proxmox VE sous les yeux : machines, consoles, instantanés, sauvegardes, disponibilité et alertes — auto-hébergé, sur le socle commun.",
+  "icon": "server",
+  "repository": "https://github.com/CodexX64/proxlab",
+  "license": "AGPL-3.0-or-later",
+  "minHubVersion": "0.7.0",
+  "install": {
+    "type": "compose",
+    "compose": "deploy/compose.hub.yml",
+    "remote": {
+      "supported": true,
+      "label": "Adresse de ProxLab",
+      "placeholder": "http://192.0.2.40:8140",
+      "defaultPort": 8140,
+      "setupHelp": "Pour un ProxLab déjà en service ailleurs : poser PROXLAB_HUB_TOKEN dans son environnement, redémarrer, puis coller ce jeton ici."
+    },
+    "healthcheck": {
+      "type": "http",
+      "path": "/api/health",
+      "expect": 200,
+      "timeout": "5s"
+    },
+    "arch": [
+      "amd64",
+      "arm64"
+    ],
+    "resources": {
+      "ramMb": 128,
+      "cpu": 0.25,
+      "diskMb": 512
+    },
+    "ports": [
+      {
+        "name": "http",
+        "container": 8140,
+        "protocol": "http",
+        "expose": "proxy"
+      }
+    ],
+    "volumes": [
+      {
+        "name": "data",
+        "path": "/data"
+      }
+    ]
+  },
+  "config": [
+    {
+      "key": "IMAGE_TAG",
+      "label": "Version de l'image",
+      "type": "string",
+      "default": "2.0.0",
+      "help": "Étiquette de l'image publiée sur ghcr.io."
+    },
+    {
+      "key": "HUB_TOKEN",
+      "label": "Jeton de service",
+      "type": "secret",
+      "generate": "random:32",
+      "help": "Créé par le Hub. Il ouvre au Hub l'état résumé de la grappe, les événements et trois gestes d'alimentation — jamais les comptes, la liaison à Proxmox ni les alertes."
+    },
+    {
+      "key": "PROXLAB_INTERVAL",
+      "label": "Passe de surveillance (s)",
+      "type": "number",
+      "default": 60,
+      "min": 15,
+      "max": 3600,
+      "advanced": true,
+      "help": "Toutes les combien de secondes ProxLab compare l'état de la grappe au précédent."
+    },
+    {
+      "key": "PROXLAB_EVENTS_DAYS",
+      "label": "Rétention des événements (jours)",
+      "type": "number",
+      "default": 30,
+      "min": 1,
+      "max": 365,
+      "advanced": true
+    },
+    {
+      "key": "HUB_ADMIN_TOKEN",
+      "label": "Jeton d'administration des comptes",
+      "type": "secret",
+      "generate": "random:48",
+      "advanced": true,
+      "help": "Généré par le Hub, distinct du jeton de service : il ne sert qu'à gérer les comptes de ProxLab depuis Comptes des services, après confirmation de ton identité dans le Hub. Vide : aucune gestion depuis le Hub."
+    },
+    {
+      "key": "SOCLE_HTTP",
+      "label": "Accès sans HTTPS",
+      "type": "select",
+      "default": "0",
+      "required": true,
+      "options": [
+        {
+          "value": "0",
+          "label": "Non — ProxLab est servi en HTTPS (Relay ou certificat du Hub)"
+        },
+        {
+          "value": "1",
+          "label": "Oui — réseau de confiance, mode dégradé"
+        }
+      ],
+      "help": "Les clés d'accès n'existent qu'en HTTPS. En mode dégradé, l'administrateur se connecte avec mot de passe et application d'authentification, et ProxLab l'affiche partout."
+    },
+    {
+      "key": "SOCLE_CLE",
+      "label": "Clé maîtresse",
+      "type": "secret",
+      "generate": "random:32",
+      "help": "Scelle le secret du jeton Proxmox, le mot de passe de la console, les secrets des alertes et les secrets TOTP. Créée par le Hub, gardée dans son coffre, jamais sur le volume de ProxLab."
+    },
+    {
+      "key": "SOCLE_CLE_ANCIENNE",
+      "label": "Clé maîtresse remplacée",
+      "type": "secret",
+      "advanced": true,
+      "help": "Pendant une rotation seulement : la clé actuelle ici, une neuve dans « Clé maîtresse », redéployer, puis vider ce champ."
+    },
+    {
+      "key": "SOCLE_JETON_INSTALLATION",
+      "label": "Jeton d'installation",
+      "type": "secret",
+      "advanced": true,
+      "help": "Vide : ProxLab en tire un au premier démarrage et l'écrit dans ses journaux. Il ne sert qu'à créer le premier compte."
+    },
+    {
+      "key": "SOCLE_PROXYS",
+      "label": "Relais de confiance",
+      "type": "string",
+      "default": "",
+      "advanced": true,
+      "help": "Plages (CIDR) des relais inverses autorisés à transmettre l'adresse du client. Vide : l'adresse vue est celle de la connexion."
+    },
+    {
+      "key": "SOCLE_ORIGINES",
+      "label": "Origines supplémentaires",
+      "type": "string",
+      "default": "",
+      "advanced": true,
+      "help": "Adresses complètes acceptées en plus de celle de la page, quand un relais réécrit l'hôte."
+    },
+    {
+      "key": "SOCLE_URL_PUBLIQUE",
+      "label": "Adresse publique (courriels)",
+      "type": "string",
+      "default": "",
+      "advanced": true,
+      "help": "Ex. https://proxlab.exemple. Les liens des courriels d'alerte en partent. Obligatoire avec un relais SMTP."
+    },
+    {
+      "key": "SOCLE_SMTP_HOTE",
+      "label": "Relais SMTP",
+      "type": "string",
+      "default": "",
+      "advanced": true,
+      "help": "Vide : les alertes de sécurité restent visibles dans ProxLab, sans courriel."
+    },
+    {
+      "key": "SOCLE_SMTP_PORT",
+      "label": "Port SMTP",
+      "type": "number",
+      "min": 1,
+      "advanced": true,
+      "help": "Vide : 465 en TLS, 587 en STARTTLS."
+    },
+    {
+      "key": "SOCLE_SMTP_SECURITE",
+      "label": "Chiffrement SMTP",
+      "type": "select",
+      "default": "tls",
+      "advanced": true,
+      "options": [
+        {
+          "value": "tls",
+          "label": "TLS dès la connexion (465)"
+        },
+        {
+          "value": "starttls",
+          "label": "STARTTLS exigé (587)"
+        }
+      ]
+    },
+    {
+      "key": "SOCLE_SMTP_UTILISATEUR",
+      "label": "Identifiant SMTP",
+      "type": "string",
+      "default": "",
+      "advanced": true
+    },
+    {
+      "key": "SOCLE_SMTP_MOTDEPASSE",
+      "label": "Mot de passe SMTP",
+      "type": "secret",
+      "advanced": true
+    },
+    {
+      "key": "SOCLE_SMTP_DE",
+      "label": "Adresse d'expédition",
+      "type": "string",
+      "default": "",
+      "advanced": true
+    }
+  ],
+  "api": {
+    "baseUrl": "{{service.url}}",
+    "auth": {
+      "type": "bearer",
+      "token": "{{service.token}}",
+      "localToken": "HUB_TOKEN",
+      "remoteToken": "HUB_TOKEN"
+    }
+  },
+  "capabilities": {
+    "provides": [
+      "virt.inventory",
+      "virt.power",
+      "alerts.source"
+    ],
+    "requires": [],
+    "accepts": []
+  },
+  "triggers": [
+    {
+      "id": "alert.new",
+      "name": "Nouvelle alerte",
+      "description": "Une machine tombée, un nœud perdu, un seuil franchi (stockage, mémoire, processeur), un démarrage échoué.",
+      "icon": "bell",
+      "group": "Alertes",
+      "delivery": {
+        "type": "poll",
+        "request": {
+          "method": "GET",
+          "path": "/api/hub/alertes",
+          "query": {
+            "limite": "50"
+          }
+        },
+        "interval": "1m",
+        "items": "$",
+        "dedupeKey": "$.id"
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "node": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          }
+        }
+      },
+      "sample": {
+        "id": "Qm9uam91cjEyMzQ1",
+        "kind": "guest.down",
+        "severity": "critique",
+        "title": "passerelle est arrêtée",
+        "message": "La machine virtuelle 101 tournait à la passe précédente et ne tourne plus (état : stopped).",
+        "target": "qemu/101",
+        "node": "pve-a",
+        "by": null,
+        "at": "2026-10-12T08:12:00.000Z"
+      }
+    },
+    {
+      "id": "event.new",
+      "name": "Nouvel événement",
+      "description": "Tout ce qui arrive à la grappe : pannes et retours, gestes faits depuis ProxLab, créations, migrations, instantanés, sauvegardes.",
+      "icon": "logs",
+      "group": "Grappe",
+      "delivery": {
+        "type": "poll",
+        "request": {
+          "method": "GET",
+          "path": "/api/hub/evenements",
+          "query": {
+            "limite": "50"
+          }
+        },
+        "interval": "1m",
+        "items": "$",
+        "dedupeKey": "$.id"
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "node": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          }
+        }
+      },
+      "sample": {
+        "id": "U25hcHNob3QxMjM0",
+        "kind": "snapshot.created",
+        "severity": "info",
+        "title": "Instantané « avant-maj » de qemu/101",
+        "message": "Avant la mise à jour du noyau",
+        "target": "qemu/101",
+        "node": "pve-a",
+        "by": "ana",
+        "at": "2026-10-12T08:12:00.000Z"
+      }
+    }
+  ],
+  "actions": [
+    {
+      "id": "summary",
+      "name": "État de la grappe",
+      "description": "Les comptes essentiels : nœuds (en ligne, hors ligne), machines (en marche), occupation du stockage, alertes à traiter.",
+      "icon": "chart",
+      "group": "Grappe",
+      "capability": "virt.inventory",
+      "risk": "read",
+      "idempotent": true,
+      "params": [],
+      "request": {
+        "method": "GET",
+        "path": "/api/hub/etat"
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "relie": {
+            "type": "boolean"
+          },
+          "noeuds": {
+            "type": "number"
+          },
+          "noeuds_en_ligne": {
+            "type": "number"
+          },
+          "noeuds_hors_ligne": {
+            "type": "number"
+          },
+          "machines": {
+            "type": "number"
+          },
+          "machines_en_marche": {
+            "type": "number"
+          },
+          "stockage_pct": {
+            "type": "number"
+          },
+          "a_traiter": {
+            "type": "number"
+          }
+        }
+      },
+      "sample": {
+        "relie": true,
+        "noeuds": 2,
+        "noeuds_en_ligne": 2,
+        "noeuds_hors_ligne": 0,
+        "machines": 5,
+        "machines_en_marche": 3,
+        "stockage_pct": 47,
+        "a_traiter": 1
+      }
+    },
+    {
+      "id": "guests.list",
+      "name": "Lister les machines",
+      "description": "Machines virtuelles et conteneurs (hors modèles) : nœud, type, VMID, nom, état.",
+      "icon": "devices",
+      "group": "Grappe",
+      "capability": "virt.inventory",
+      "risk": "read",
+      "idempotent": true,
+      "params": [],
+      "request": {
+        "method": "GET",
+        "path": "/api/hub/machines"
+      },
+      "output": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "vmid": {
+              "type": "number"
+            },
+            "name": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "sample": [
+        {
+          "node": "pve-a",
+          "type": "qemu",
+          "vmid": 101,
+          "name": "passerelle",
+          "status": "running"
+        }
+      ]
+    },
+    {
+      "id": "guest.power",
+      "name": "Alimentation d'une machine",
+      "description": "Arrêt propre seulement : l'arrêt forcé et la réinitialisation restent réservés à un administrateur dans ProxLab, sous renfort.",
+      "icon": "power",
+      "group": "Grappe",
+      "capability": "virt.power",
+      "risk": "destructive",
+      "params": [
+        {
+          "key": "node",
+          "label": "Nœud",
+          "type": "expression",
+          "required": true
+        },
+        {
+          "key": "type",
+          "label": "Type",
+          "type": "select",
+          "default": "qemu",
+          "options": [
+            {
+              "value": "qemu",
+              "label": "Machine virtuelle"
+            },
+            {
+              "value": "lxc",
+              "label": "Conteneur"
+            }
+          ]
+        },
+        {
+          "key": "vmid",
+          "label": "VMID",
+          "type": "expression",
+          "required": true
+        },
+        {
+          "key": "action",
+          "label": "Geste",
+          "type": "select",
+          "default": "start",
+          "options": [
+            {
+              "value": "start",
+              "label": "Démarrer"
+            },
+            {
+              "value": "shutdown",
+              "label": "Arrêter proprement"
+            },
+            {
+              "value": "reboot",
+              "label": "Redémarrer"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "path": "/api/hub/machines/{{params.node}}/{{params.type}}/{{params.vmid}}/alimentation",
+        "body": {
+          "action": "{{params.action}}"
+        }
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "upid": {
+            "type": "string"
+          }
+        }
+      },
+      "sample": {
+        "upid": "UPID:pve-a:00001234:0000AB12:6A000000:qmstart:101:proxlab@pve!panneau:"
+      }
+    }
+  ],
+  "probes": [
+    {
+      "id": "reachable",
+      "name": "Joignable",
+      "kind": "state",
+      "request": {
+        "method": "GET",
+        "path": "/api/health"
+      },
+      "value": "$.ok",
+      "states": {
+        "ok": [
+          true,
+          "true",
+          "ok"
+        ]
+      },
+      "interval": "30s"
+    },
+    {
+      "id": "running",
+      "name": "Machines en marche",
+      "kind": "gauge",
+      "unit": "machines",
+      "request": {
+        "method": "GET",
+        "path": "/api/hub/etat"
+      },
+      "value": "$.machines_en_marche",
+      "interval": "5m"
+    },
+    {
+      "id": "nodes_down",
+      "name": "Nœuds hors ligne",
+      "kind": "gauge",
+      "unit": "nœuds",
+      "request": {
+        "method": "GET",
+        "path": "/api/hub/etat"
+      },
+      "value": "$.noeuds_hors_ligne",
+      "thresholds": {
+        "warn": 1,
+        "crit": 2
+      },
+      "interval": "1m"
+    },
+    {
+      "id": "to_handle",
+      "name": "Alertes à traiter",
+      "kind": "gauge",
+      "unit": "alertes",
+      "request": {
+        "method": "GET",
+        "path": "/api/hub/etat"
+      },
+      "value": "$.a_traiter",
+      "thresholds": {
+        "warn": 1,
+        "crit": 3
+      },
+      "interval": "1m"
+    },
+    {
+      "id": "storage",
+      "name": "Stockage occupé",
+      "kind": "gauge",
+      "unit": "%",
+      "request": {
+        "method": "GET",
+        "path": "/api/hub/etat"
+      },
+      "value": "$.stockage_pct",
+      "thresholds": {
+        "warn": 80,
+        "crit": 90
+      },
+      "interval": "5m"
+    }
+  ],
+  "permissions": {
+    "dockerSocket": "none",
+    "privileged": false,
+    "hostNetwork": false,
+    "capAdd": [],
+    "egress": []
+  },
+  "accounts": {
+    "tokenKey": "HUB_ADMIN_TOKEN",
+    "roles": [
+      "admin",
+      "membre",
+      "lecture"
+    ],
+    "adminRole": "admin",
+    "invitation": true,
+    "fields": {
+      "id": "$.id",
+      "name": "$.identifiant",
+      "role": "$.role",
+      "mfa": "$.a2f",
+      "created": "$.cree",
+      "lastSeen": "$.derniere"
+    },
+    "list": {
+      "method": "GET",
+      "path": "/api/compte/hub/comptes"
+    },
+    "create": {
+      "method": "POST",
+      "path": "/api/compte/hub/comptes",
+      "body": {
+        "identifiant": "{{params.username}}",
+        "role": "{{params.role}}"
+      }
+    },
+    "update": {
+      "method": "PATCH",
+      "path": "/api/compte/hub/comptes/{{params.id}}",
+      "body": {
+        "role": "{{params.role}}"
+      }
+    },
+    "reset": {
+      "method": "POST",
+      "path": "/api/compte/hub/comptes/{{params.id}}/reinit",
+      "body": {}
+    },
+    "remove": {
+      "method": "DELETE",
+      "path": "/api/compte/hub/comptes/{{params.id}}"
+    }
+  },
+  "ai": {
+    "exposeActions": true,
+    "hints": "ProxLab surveille une grappe Proxmox VE (machines virtuelles et conteneurs), pas les services Docker — ça, c'est le Hub. « État de la grappe » d'abord ; lister les machines pour trouver un nœud et un VMID. Démarrer, arrêter proprement ou redémarrer est destructif et passe par une validation humaine ; l'arrêt forcé n'est pas offert au Hub. Les alertes de ProxLab (« Nouvelle alerte ») sont gardées en mémoire par SYNAPSE quand il est installé, par le Hub."
+  }
+}
