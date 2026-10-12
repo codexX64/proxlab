@@ -35,7 +35,7 @@ export function ouvrirBase(dossier) {
 // Usages du coffre : chacun sa sous-clé ; l'AAD lie un secret à son réglage.
 const SCEAUX = { jeton: ['pve-jeton', 'liaison'], motDePasse: ['pve-motdepasse', 'liaison'], cle: ['alerte-cle', 'alertes'], secret: ['alerte-secret', 'alertes'] };
 const NIVEAUX = ['info', 'avertissement', 'critique'];
-export const MAX_EVENEMENTS = 20000;
+const MAX_EVENEMENTS = 20000;
 
 export class Reglages {
   constructor(db, { coffre }) { this.db = db; this.coffre = coffre; }
@@ -100,7 +100,7 @@ export class Reglages {
 
 export class Evenements {
   constructor(db, { retentionJours = 30, maintenant = () => Date.now() } = {}) {
-    this.db = db; this.retention = retentionJours * 864e5; this.maintenant = maintenant; this.abonnes = new Set();
+    this.db = db; this.retention = retentionJours * 864e5; this.maintenant = maintenant;
   }
 
   noter({ genre, niveau = 'info', titre, corps = '', cible = null, noeud = null, acteur = null, acteurCompte = null }) {
@@ -112,9 +112,7 @@ export class Evenements {
     };
     this.db.prepare(`INSERT INTO evenements(ref, genre, niveau, titre, corps, cible, noeud, acteur, acteur_compte, cree)
       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(e.ref, e.genre, e.niveau, e.titre, e.corps, e.cible, e.noeud, e.acteur, acteurCompte, e.cree);
-    const pub = publicDe(e);
-    for (const f of this.abonnes) { try { f(pub); } catch { /* un abonné fermé ne bloque pas les autres */ } }
-    return pub;
+    return publicDe(e);
   }
 
   // Les plus récents d'abord, par pages bornées ; « avant » pagine vers le passé.
@@ -150,7 +148,7 @@ function publicDe(e) {
   return { id: e.ref, kind: e.genre, severity: e.niveau, title: e.titre, message: e.corps, target: e.cible, node: e.noeud, by: e.acteur, at: new Date(e.cree).toISOString() };
 }
 
-export function transaction(db, fn) {
+function transaction(db, fn) {
   db.exec('BEGIN IMMEDIATE');
   try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
