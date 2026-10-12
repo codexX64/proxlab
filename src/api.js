@@ -119,6 +119,9 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     return { noeud, type, vmid, base: chemin('nodes', noeud, type, vmid), cible: `${type}/${vmid}` };
   };
   const noeud = n => { if (!NOEUD.test(n)) throw new ErreurHttp(404, 'Nœud introuvable.'); return n; };
+  const stockageDe = ({ noeud: n, stockage }) => { if (!NOEUD.test(n) || !STOCKAGE.test(stockage)) throw new ErreurHttp(404, 'Stockage introuvable.'); return { n, stockage }; };
+  const tacheDe = ({ noeud: n, upid }) => { if (!NOEUD.test(n) || !UPID.test(upid)) throw new ErreurHttp(404, 'Tâche introuvable.'); return { n, upid }; };
+  const instantane = nom => { if (!INSTANTANE.test(nom)) throw new ErreurHttp(404, 'Instantané introuvable.'); return nom; };
 
   async function etatGrappe() {
     const ressources = await proxmox.get('/cluster/resources');
@@ -186,8 +189,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
 
   r.get('/api/stockages/:noeud/:stockage/contenu', async ctx => {
     session(ctx);
-    const { noeud: n, stockage } = ctx.params;
-    if (!NOEUD.test(n) || !STOCKAGE.test(stockage)) throw new ErreurHttp(404, 'Stockage introuvable.');
+    const { n, stockage } = stockageDe(ctx.params);
     const { type } = ctx.q;
     const liste = await pve(() => proxmox.get(chemin('nodes', n, 'storage', stockage, 'content'), { content: type }));
     return (liste || []).slice(0, 500).map(c => ({ volid: c.volid, format: c.format || '', size: nombre(c.size), ctime: nombre(c.ctime), vmid: c.vmid ? nombre(c.vmid) : null, content: c.content || '' }));
@@ -202,8 +204,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
 
   r.get('/api/taches/:noeud/:upid', async ctx => {
     session(ctx);
-    const { noeud: n, upid } = ctx.params;
-    if (!NOEUD.test(n) || !UPID.test(upid)) throw new ErreurHttp(404, 'Tâche introuvable.');
+    const { n, upid } = tacheDe(ctx.params);
     const { debut } = ctx.q;
     const [statut, lignes] = await pve(() => Promise.all([
       proxmox.get(chemin('nodes', n, 'tasks', upid, 'status')),
@@ -317,8 +318,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
   r.post('/api/machines/:noeud/:type/:vmid/instantanes/:nom/retour', async ctx => {
     session(ctx, { role: 'admin', renfort: true });
     const m = machine(ctx.params);
-    const nom = ctx.params.nom;
-    if (!INSTANTANE.test(nom)) throw new ErreurHttp(404, 'Instantané introuvable.');
+    const nom = instantane(ctx.params.nom);
     const upid = await pve(() => proxmox.post(`${m.base}/snapshot/${nom}/rollback`, {}));
     const qui = acteur(ctx);
     evenements.noter({ genre: 'snapshot.rolled_back', niveau: 'avertissement', titre: `Retour à l'instantané « ${nom} » de ${m.cible}`, corps: `Tout ce qui suivait cet instantané est perdu. Par ${qui.acteur}.`, cible: m.cible, noeud: m.noeud, ...qui });
@@ -329,8 +329,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
   r.del('/api/machines/:noeud/:type/:vmid/instantanes/:nom', async ctx => {
     session(ctx, { role: 'admin', renfort: true });
     const m = machine(ctx.params);
-    const nom = ctx.params.nom;
-    if (!INSTANTANE.test(nom)) throw new ErreurHttp(404, 'Instantané introuvable.');
+    const nom = instantane(ctx.params.nom);
     const upid = await pve(() => proxmox.del(`${m.base}/snapshot/${nom}`));
     const qui = acteur(ctx);
     journal.ecrire({ acteur: qui.acteurCompte, action: 'instantane.suppression', objet: m.cible, ip: ctx.ip, details: { instantane: nom } });
@@ -352,8 +351,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
 
   r.del('/api/sauvegardes/:noeud/:stockage', async ctx => {
     session(ctx, { role: 'admin', renfort: true });
-    const { noeud: n, stockage } = ctx.params;
-    if (!NOEUD.test(n) || !STOCKAGE.test(stockage)) throw new ErreurHttp(404, 'Stockage introuvable.');
+    const { n, stockage } = stockageDe(ctx.params);
     const { volid } = ctx.q;
     if (volid.includes('..') || !volid.startsWith(stockage + ':')) throw new ErreurHttp(400, 'Volume hors de ce stockage.');
     const upid = await pve(() => proxmox.del(chemin('nodes', n, 'storage', stockage, 'content', encodeURIComponent(volid))));
@@ -365,8 +363,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
 
   r.del('/api/taches/:noeud/:upid', async ctx => {
     session(ctx, { role: 'admin', renfort: true });
-    const { noeud: n, upid } = ctx.params;
-    if (!NOEUD.test(n) || !UPID.test(upid)) throw new ErreurHttp(404, 'Tâche introuvable.');
+    const { n, upid } = tacheDe(ctx.params);
     await pve(() => proxmox.del(chemin('nodes', n, 'tasks', upid)));
     journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'tache.arret', objet: upid.slice(0, 120), ip: ctx.ip });
     return { ok: true };
