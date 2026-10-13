@@ -463,6 +463,12 @@ test('synthèse : ce qui reste à traiter, vingt-huit nuits de sauvegardes, sept
 });
 
 test('Hub : jeton de service, état et événements en lecture, seulement trois gestes d\'alimentation', async () => {
+  // Le manifeste installe l'image de cette version : version, étiquette par défaut et serveur d'accord.
+  const manifeste = JSON.parse(fs.readFileSync(new URL('../hub.json', import.meta.url), 'utf8'));
+  const paquet = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(manifeste.version, paquet.version);
+  assert.equal(manifeste.config.find(c => c.key === 'IMAGE_TAG').default, paquet.version, 'le Hub installe l\'image de cette version');
+  assert.equal((await import('../src/config.js')).VERSION, paquet.version);
   const e = await hub('GET', '/api/hub/etat');
   assert.equal(e.status, 200);
   assert.equal(e.json.relie, true);
