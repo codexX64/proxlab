@@ -158,7 +158,7 @@ html[data-gamme="console"] .card>header{padding:18px 20px 14px}
 html[data-gamme="console"] .card>header h2{font-size:15px;font-weight:500}
 html[data-gamme="console"] .card>header .note{font-size:12px;color:var(--faint)}
 html[data-gamme="console"] .card .pad{padding:0 20px 18px}
-html[data-gamme="console"] .split{gap:12px}
+html[data-gamme="console"] .split,html[data-gamme="console"] .colonnes,html[data-gamme="console"] .colonne{gap:12px}
 html[data-gamme="console"] .page>*+*{margin-top:12px}
 html[data-gamme="console"] th{font-weight:400;font-size:13px;letter-spacing:0;text-transform:none;color:var(--faint);padding:10px 14px;background:var(--well);border-bottom:none}
 html[data-gamme="console"] td{padding:12px 14px;border-bottom:none;border-top:1px solid var(--hair);font-size:14px}
@@ -220,7 +220,7 @@ svg.i{display:block;flex:none;stroke:currentColor;fill:none;stroke-linecap:round
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
 .app{height:100%;display:flex}
-.rail{width:var(--rail);flex:none;padding:26px 16px 24px 22px;display:flex;flex-direction:column;overflow-y:auto;background:var(--paper);z-index:50}
+.rail{width:var(--rail);flex:none;padding:18px 16px 24px 22px;display:flex;flex-direction:column;overflow-y:auto;background:var(--paper);z-index:50}
 .mark{display:flex;align-items:center;gap:10px;padding:0 10px;margin-bottom:26px;min-width:0}
 .mark .g{width:28px;height:28px;border-radius:9px;background:var(--ink);color:var(--paper);display:flex;align-items:center;justify-content:center;box-shadow:var(--lift);flex:none}
 .mark b{font-size:15px;font-weight:600;letter-spacing:-.03em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -247,16 +247,18 @@ svg.i{display:block;flex:none;stroke:currentColor;fill:none;stroke-linecap:round
 .bar i{display:block;width:0;height:100%;background:var(--accent);border-radius:3px;transition:width .4s}
 
 .main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
-.top{display:flex;align-items:center;gap:12px;padding:20px var(--gouttiere) 0;flex:none;min-width:0}
+/* La barre du haut tient dans la bande de la marque du rail (même hauteur,
+   même ligne) ; la page commence juste dessous, sans bande vide. */
+.top{display:flex;align-items:center;gap:12px;padding:16px var(--gouttiere) 0;flex:none;min-width:0;min-height:48px}
 .top .menu{display:none}
 .topright{margin-left:auto;display:flex;gap:6px;align-items:center;flex:none}
 .ghost{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--muted);flex:none}
 .ghost:hover{background:var(--surface);color:var(--ink);box-shadow:var(--lift)}
 .who{width:32px;height:32px;border-radius:50%;background:var(--ink);color:var(--paper);display:grid;place-items:center;font-size:11.5px;font-weight:600;flex:none}
-.stage{flex:1;overflow-y:auto;overflow-x:hidden;padding:20px var(--gouttiere) 40px;min-height:0;container-type:inline-size;container-name:stage}
+.stage{flex:1;overflow-y:auto;overflow-x:hidden;padding:10px var(--gouttiere) 40px;min-height:0;container-type:inline-size;container-name:stage}
 .page{animation:rise .3s var(--courbe)}
 @keyframes rise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
-.headrow{display:flex;align-items:flex-end;gap:12px 20px;margin-bottom:20px;flex-wrap:wrap}
+.headrow{display:flex;align-items:center;gap:12px 20px;margin-bottom:20px;flex-wrap:wrap}
 .headrow>div:first-child{min-width:0;flex:1 1 280px}
 .title{font-size:32px;line-height:1.05;letter-spacing:-.035em;overflow-wrap:anywhere}
 .lede{color:var(--muted);font-size:13.5px;max-width:58ch;margin-top:5px}
@@ -288,8 +290,15 @@ svg.i{display:block;flex:none;stroke:currentColor;fill:none;stroke-linecap:round
 .views{display:inline-flex;gap:2px;background:var(--surface);border-radius:10px;padding:3px;box-shadow:var(--lift);max-width:100%;overflow-x:auto}
 .view{display:flex;align-items:center;gap:7px;padding:6px 13px;border-radius:8px;font-size:12.5px;color:var(--muted);white-space:nowrap}
 .view.on{background:var(--wash);color:var(--accent);font-weight:500}
+/* Barre d'outils en tête d'une carte : filtres, recherche, compte — tous à la
+   même hauteur (36 px), au même bord que l'en-tête du tableau qui suit. */
+.barre{display:flex;gap:10px 12px;align-items:center;flex-wrap:wrap;padding:12px 18px;min-width:0}
+.barre .views{flex:none}
+.barre .field{width:auto;flex:1 1 180px;max-width:300px;min-height:36px;padding:7px 12px;font-size:13px}
+.barre .compte{margin-left:auto;color:var(--muted);font-size:12.5px;white-space:nowrap}
+.barre+.tw th{padding-top:2px}
 
-.figs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}
+.figs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:16px}
 .fig{background:var(--surface);border-radius:var(--r-carte);padding:16px 17px 12px;box-shadow:var(--lift);overflow:hidden;min-width:0;transition:.18s}
 .fig:hover{box-shadow:var(--lift-hi);transform:translateY(-2px)}
 .tile{width:30px;height:30px;border-radius:9px;background:var(--wash);color:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:13px;flex:none}
@@ -303,6 +312,11 @@ svg.i{display:block;flex:none;stroke:currentColor;fill:none;stroke-linecap:round
 .fig .chart{margin:8px -17px -12px;display:block;width:calc(100% + 34px);height:46px}
 
 .split{display:grid;grid-template-columns:minmax(0,1.42fr) minmax(0,1fr);gap:16px;align-items:start}
+/* Deux colonnes de cartes qui s'empilent chacune à sa hauteur : jamais de vide
+ * sous une carte courte parce que sa voisine est longue (une ligne de .split
+ * prend la hauteur de la plus haute). */
+.colonnes{display:grid;grid-template-columns:minmax(0,1.42fr) minmax(0,1fr);gap:16px;align-items:start}
+.colonne{display:grid;gap:16px;align-content:start;min-width:0}
 .grille{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr));gap:16px}
 .card{background:var(--surface);border-radius:var(--r-carte);box-shadow:var(--lift);overflow:hidden;min-width:0}
 .card>header{display:flex;align-items:center;gap:10px;padding:15px 18px 13px;flex-wrap:wrap;min-width:0}
@@ -312,12 +326,13 @@ svg.i{display:block;flex:none;stroke:currentColor;fill:none;stroke-linecap:round
 .card>header p{color:var(--muted);font-size:12.5px;margin-top:2px;flex-basis:100%}
 .card>header p a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
 .card .pad{padding:0 18px 16px}
+.card>.pad:first-child{padding-top:14px}
 .page>*+*{margin-top:16px}
 .page>.headrow+*{margin-top:0}
 .tw{overflow-x:auto;min-width:0}
 table{width:100%;border-collapse:collapse}
-th{text-align:left;padding:0 16px 9px;font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--faint);font-weight:500;border-bottom:1px solid var(--hair-soft);white-space:nowrap}
-td{padding:11px 16px;border-bottom:1px solid var(--hair-soft);font-size:13px;vertical-align:middle}
+th{text-align:left;padding:0 18px 9px;font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--faint);font-weight:500;border-bottom:1px solid var(--hair-soft);white-space:nowrap}
+td{padding:11px 18px;border-bottom:1px solid var(--hair-soft);font-size:13px;vertical-align:middle}
 tr:last-child td{border-bottom:none}
 tbody tr{transition:background .14s}
 tbody tr:hover td{background:var(--well)}
@@ -529,7 +544,7 @@ textarea.field{min-height:90px;resize:vertical;line-height:1.5}
 
 /* Zone de travail : ce qui se replie quand la place manque. */
 @container stage (max-width:900px){
-  .split{grid-template-columns:minmax(0,1fr)}
+  .split,.colonnes{grid-template-columns:minmax(0,1fr)}
   .cache-l{display:none!important}
 }
 @container stage (max-width:720px){
@@ -544,9 +559,11 @@ textarea.field{min-height:90px;resize:vertical;line-height:1.5}
 @container stage (max-width:760px){
   .title{font-size:26px}
   .cache-m{display:none!important}
-  th,td{padding-left:12px;padding-right:12px}
+  th,td{padding-left:14px;padding-right:14px}
   .card>header{padding:13px 14px 11px}
   .card .pad{padding:0 14px 14px}
+  .card>.pad:first-child{padding-top:12px}
+  .barre{padding:10px 14px}
   .flowrow{padding:12px 14px;gap:10px}
   .row2{grid-template-columns:minmax(0,1fr)}
 }

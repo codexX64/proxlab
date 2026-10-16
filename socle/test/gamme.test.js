@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { lireConfig } from '../src/config.js';
-import { SPEC_SOCLE, GAMMES, servirFichier } from '../src/index.js';
+import { SPEC_SOCLE, GAMMES, servirFichier, cheminVersionne } from '../src/index.js';
 
 const WEB = path.resolve(import.meta.dirname, '..', 'web');
 
@@ -73,4 +73,16 @@ test('gamme Exploitation : chaque jeton de SOMA redéfini en clair et en sombre,
   const composants = css.split('\n').filter(l => /^\s*html\[data-gamme="exploitation"\]/.test(l));
   assert.ok(composants.length > 30);
   assert.deepEqual(composants.filter(l => /#[0-9A-Fa-f]{3,6}\b|rgba\(/.test(l)), []);
+});
+
+test('fichiers sous /v/<version>/ : la page porte sa version, le préfixe est retiré, cache durable pour la version courante seulement', () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'version-'));
+  fs.writeFileSync(path.join(dossier, 'index.html'), '<script src="/v/__VERSION__/app.js"></script>');
+  const page = v => { let corps = ''; servirFichier({ method: 'GET', headers: {} }, { writeHead() {}, end(b) { corps = String(b ?? ''); } }, dossier, '/index.html', { version: v }); return corps; };
+  assert.equal(page('1.2.3'), '<script src="/v/1.2.3/app.js"></script>');
+  assert.equal(page('"><script>'), '<script src="/v/0/app.js"></script>', 'une version hors format ne s’écrit jamais dans la page');
+  assert.deepEqual(cheminVersionne('/v/1.2.3/socle/compte.js', '1.2.3'), { chemin: '/socle/compte.js', durable: true });
+  assert.deepEqual(cheminVersionne('/v/1.2.2/app.js', '1.2.3'), { chemin: '/app.js', durable: false }, 'une page gardée en cache reçoit le fichier courant, sans cache durable');
+  assert.deepEqual(cheminVersionne('/app.js', '1.2.3'), { chemin: '/app.js', durable: false });
+  assert.deepEqual(cheminVersionne('/v/../../etc/passwd', '1.2.3').chemin, '/../etc/passwd', 'le reste passe par servirFichier, qui borne le chemin à sa racine');
 });

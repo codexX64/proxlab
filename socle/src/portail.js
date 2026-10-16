@@ -69,7 +69,7 @@ export class Portail {
     const cookies = lireCookies(req.headers.cookie);
     const ctx = { req, res, ip, securise, sur, cleIci, origine, rpId, cookies, appareil: appareilDe(req.headers['user-agent']) };
     ctx.jeton = cookies[this.nomCookie(ctx, 'sid')] || null;
-    ctx.session = this.comptes.session(ctx.jeton);
+    ctx.session = this.comptes.session(ctx.jeton, ctx.cleIci);
     // Le domaine vu par le navigateur : il dit quelles clés d'accès s'ouvrent ici.
     if (ctx.session && sur) ctx.session.rp = rpId;
     return ctx;
@@ -115,7 +115,7 @@ export class Portail {
   exiger(ctx, { role = 'lecture', renfort = false } = {}) {
     const s = ctx.session;
     if (!s || s.niveau === 'partiel') throw new ErreurHttp(401, 'Connexion requise.');
-    if (s.niveau !== 'complet') throw new ErreurHttp(403, 'Termine d’abord l’inscription de tes facteurs.', { inscription: s.compteLigne ? this.comptes.manquants(s.compteLigne) : [] });
+    if (s.niveau !== 'complet') throw new ErreurHttp(403, 'Termine d’abord l’inscription de tes facteurs.', { inscription: s.compteLigne ? this.comptes.manquants(s.compteLigne, ctx.cleIci) : [] });
     this.controlerCsrf(ctx);
     if ((RANG[s.compteLigne.role] ?? -1) < RANG[role]) {
       this.comptes.journal.rare(`refus:${s.compte}:${role}`, { acteur: s.compte, action: 'acces.refuse', objet: new URL(ctx.req.url, 'http://x').pathname, ip: ctx.ip, resultat: 'refus', details: { role } });
@@ -128,16 +128,17 @@ export class Portail {
   etat(ctx) {
     const c = this.comptes;
     const s = ctx.session;
-    const politique = c.politique();
+    const politique = c.politique(ctx.cleIci);
     return {
       service: this.service.nom, installe: c.estInstalle(), securise: ctx.securise, cles: ctx.cleIci && !c.modeHttp,
-      modeHttp: c.modeHttp, politique,
+      // modeHttp : le service entier (SOCLE_HTTP) ; sansCle : cette requête seulement (adresse IP, HTTP simple).
+      modeHttp: c.modeHttp, sansCle: c.sansCle(ctx.cleIci), politique,
       // Installé par le Hub : le premier compte se crée depuis le Hub.
       ...(this.jetonAdminHub && !c.estInstalle() ? { parHub: true } : {}),
       session: s ? {
         niveau: s.niveau, csrf: s.csrf, facteursUtilises: s.facteurs,
-        compte: s.niveau === 'partiel' ? { identifiant: s.compteLigne.identifiant } : c.publicDe(s.compteLigne),
-        ...(s.niveau === 'partiel' ? { methodes: c.methodesSecondes(s.compteLigne) } : {}),
+        compte: s.niveau === 'partiel' ? { identifiant: s.compteLigne.identifiant } : c.publicDe(s.compteLigne, ctx.cleIci),
+        ...(s.niveau === 'partiel' ? { methodes: c.methodesSecondes(s.compteLigne, ctx.cleIci) } : {}),
         renfortJusqua: c.estRenforcee(s) ? s.renfort + 5 * 60e3 : 0,
       } : null,
     };
@@ -170,7 +171,7 @@ export class Portail {
   async router(req, p, ctx) {
     if (p.startsWith('/api/compte/hub/')) return this.delegue(req, p, ctx);
     const c = this.comptes, m = req.method;
-    const ip = ctx.ip, appareil = ctx.appareil;
+    const ip = ctx.ip, appareil = ctx.appareil, cleIci = ctx.cleIci;
     const ouvre = s => { this.poserSession(ctx, s); return { ok: true, etape: s.etape, niveau: s.niveau, csrf: s.csrf, ...(s.methodes ? { methodes: s.methodes } : {}), ...(s.codes ? { codes: s.codes } : {}), ...(s.restants !== undefined ? { restants: s.restants } : {}) }; };
     const sessionPleine = () => {
       const s = ctx.session;
@@ -185,13 +186,13 @@ export class Portail {
     if (m === 'POST' && p === '/api/compte/installation') {
       this.controlerOrigine(ctx);
       const b = await this.corps(ctx, { jeton: { type: 'chaine', requis: true, max: 200 }, identifiant: S.identifiant, motDePasse: S.motDePasse, affichage: { type: 'chaine', max: 80 } });
-      return ouvre(await c.installer({ ...b, jetonAttendu: c.jetonInstallation(this.jetonEnv), ip, appareil }));
+      return ouvre(await c.installer({ ...b, jetonAttendu: c.jetonInstallation(this.jetonEnv), ip, appareil, cleIci }));
     }
 
     if (m === 'POST' && p === '/api/compte/connexion') {
       this.controlerOrigine(ctx);
       const b = await this.corps(ctx, { identifiant: S.identifiant, motDePasse: S.motDePasse, preuve: S.preuve });
-      const s = await c.connexionMotDePasse({ ...b, ip, appareil });
+      const s = await c.connexionMotDePasse({ ...b, ip, appareil, cleIci });
       if (ctx.session) c.fermerSession(ctx.session.id);
       return ouvre(s);
     }
@@ -199,13 +200,13 @@ export class Portail {
     if (m === 'POST' && p === '/api/compte/connexion/totp') {
       this.controlerOrigine(ctx);
       const b = await this.corps(ctx, { code: S.code6 });
-      return ouvre(c.connexionTotp(ctx.session, b.code, { ip, appareil }));
+      return ouvre(c.connexionTotp(ctx.session, b.code, { ip, appareil, cleIci }));
     }
 
     if (m === 'POST' && p === '/api/compte/connexion/secours') {
       this.controlerOrigine(ctx);
       const b = await this.corps(ctx, { code: S.secours });
-      return ouvre(await c.connexionSecours(ctx.session, b.code, { ip, appareil }));
+      return ouvre(await c.connexionSecours(ctx.session, b.code, { ip, appareil, cleIci }));
     }
 
     // Cérémonie de connexion par clé : liée à la session partielle s'il y en a
@@ -234,7 +235,7 @@ export class Portail {
         poseCookie(ctx.res, this.nomCookie(ctx, 'cer'), '', { maxAge: 0, secure: ctx.securise });
         lien = 'cer:' + sha256hex(cere);
       }
-      const s = c.connexionCle({ lien, session: ctx.session, reponse: b.reponse, ctx: this.ctxCle(ctx), ip, appareil });
+      const s = c.connexionCle({ lien, session: ctx.session, reponse: b.reponse, ctx: this.ctxCle(ctx), ip, appareil, cleIci });
       if (ctx.session && ctx.session.niveau !== 'partiel') c.fermerSession(ctx.session.id);
       return ouvre(s);
     }
@@ -249,7 +250,7 @@ export class Portail {
     if (m === 'POST' && p === '/api/compte/jeton') {
       this.controlerOrigine(ctx);
       const b = await this.corps(ctx, { usage: { type: 'chaine', requis: true, parmi: ['invitation', 'reinit'] }, jeton: { type: 'chaine', requis: true, max: 100 }, motDePasse: S.motDePasse });
-      const r = await c.utiliserJeton({ ...b, ip, appareil });
+      const r = await c.utiliserJeton({ ...b, ip, appareil, cleIci });
       return r.jeton ? ouvre(r) : r;
     }
 
@@ -280,9 +281,9 @@ export class Portail {
       const s = ctx.session;
       if (!s || s.niveau === 'partiel') throw new ErreurHttp(401, 'Connexion requise.');
       return {
-        compte: c.publicDe(s.compteLigne), cles: c.clesDe(s.compte), sessions: c.sessionsDe(s.compte, s.id),
-        alertes: c.alertesDe(s.compte), politique: c.politique(), methodesRenfort: c.methodesRenfort(s.compteLigne, s.rp), envoiCourriel: !!this.courriel,
-        renfortJusqua: c.estRenforcee(s) ? s.renfort + 5 * 60e3 : 0, clesPossibles: ctx.cleIci && !c.modeHttp, modeHttp: c.modeHttp,
+        compte: c.publicDe(s.compteLigne, ctx.cleIci), cles: c.clesDe(s.compte), sessions: c.sessionsDe(s.compte, s.id),
+        alertes: c.alertesDe(s.compte), politique: c.politique(ctx.cleIci), methodesRenfort: c.methodesRenfort(s.compteLigne, s.rp), envoiCourriel: !!this.courriel,
+        renfortJusqua: c.estRenforcee(s) ? s.renfort + 5 * 60e3 : 0, clesPossibles: ctx.cleIci && !c.modeHttp, modeHttp: c.modeHttp, sansCle: c.sansCle(ctx.cleIci),
       };
     }
 

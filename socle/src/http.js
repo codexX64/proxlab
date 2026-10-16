@@ -185,7 +185,18 @@ const TYPES = {
 export const GAMMES = ['soma', 'console', 'exploitation'];
 
 // Renvoie false si le fichier n'existe pas (l'appelant décide du 404).
-export function servirFichier(req, res, racine, chemin, { nonce, gamme = 'soma', cache = 'no-cache' } = {}) {
+// Fichiers de l'interface sous /v/<version>/ : l'adresse change avec la
+// version, si bien qu'aucun cache — navigateur, Cloudflare, relais — ne
+// rend l'ancien fichier après une mise à jour. Une version périmée (une page
+// gardée en cache) est servie quand même, sans cache durable.
+const VERSION_SURE = /^[\w.+-]{1,40}$/;
+export function cheminVersionne(chemin, version) {
+  const m = /^\/v\/([^/]{1,40})(\/.*)$/.exec(chemin);
+  if (!m) return { chemin, durable: false };
+  return { chemin: m[2], durable: VERSION_SURE.test(String(version)) && m[1] === String(version) };
+}
+
+export function servirFichier(req, res, racine, chemin, { nonce, gamme = 'soma', cache = 'no-cache', version = '' } = {}) {
   let rel;
   try { rel = decodeURIComponent(chemin); } catch { return false; }
   if (rel.includes('\0')) return false;
@@ -199,7 +210,8 @@ export function servirFichier(req, res, racine, chemin, { nonce, gamme = 'soma',
   const type = TYPES[ext];
   if (!type) return false;
   if (ext === '.html') {
-    const html = fs.readFileSync(plein, 'utf8').replaceAll('__NONCE__', nonce || '').replaceAll('__GAMME__', GAMMES.includes(gamme) ? gamme : 'soma');
+    const html = fs.readFileSync(plein, 'utf8').replaceAll('__NONCE__', nonce || '').replaceAll('__GAMME__', GAMMES.includes(gamme) ? gamme : 'soma')
+      .replaceAll('__VERSION__', VERSION_SURE.test(String(version)) ? String(version) : '0');
     res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(html) });
     res.end(req.method === 'HEAD' ? undefined : html);
     return true;

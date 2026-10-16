@@ -585,6 +585,7 @@ function blocCodes(codes, service) {
 function bandeauContexte(e) {
   if (e.modeHttp) return h('div', { class: 'note warn grpf' }, icone('alerte'), h('div', { text: 'Mode HTTP : ce service n’est pas chiffré sur le réseau et n’accepte pas de clé d’accès. À réserver à un réseau de confiance, le temps de le servir en HTTPS.' }));
   if (!e.securise && !e.cles) return h('div', { class: 'note warn grpf' }, icone('alerte'), h('div', { text: 'Connexion non chiffrée : les clés d’accès ne sont disponibles qu’en HTTPS.' }));
+  if (e.sansCle) return h('div', { class: 'note grpf' }, icone('cadenas'), h('div', { text: 'Ouvert par son adresse : connexion par mot de passe et code. Les clés d’accès s’ouvrent par le nom du service en HTTPS.' }));
   return null;
 }
 
@@ -658,7 +659,7 @@ export function pageSecurite(api, { service, confidentialite = null }) {
       d.cles.map(k => ligne('empreinte', k.nom, `Créée ${quand(k.cree)} · ${k.utilisee ? `utilisée ${depuis(k.utilisee)}` : 'jamais utilisée'}${k.sauvegardee ? ' · synchronisée' : ''}`, [
         action('Renommer', 'flat cache-s', async () => { const n = await demander('Renommer la clé', k.nom); if (n) { await api.patch(`/api/compte/cles/${k.id}`, { nom: n }); toast('Clé renommée.'); } }),
         action('Retirer', 'flat danger', async () => { if (await confirmer(`Retirer « ${k.nom} » ?`, 'Cet appareil ne pourra plus ouvrir de session.', { danger: true, oui: 'Retirer' })) { await api.del(`/api/compte/cles/${k.id}`); toast('Clé retirée.'); } })], 'key')),
-      pol.cle !== 'desactive' ? ligne('plus', 'Ajouter une clé d’accès', d.clesPossibles && clesDisponibles() ? `${d.cles.length} sur 20 · Touch ID, Face ID, Windows Hello ou clé USB` : 'Disponible uniquement en HTTPS', [
+      pol.cle !== 'desactive' ? ligne('plus', 'Ajouter une clé d’accès', d.clesPossibles && clesDisponibles() ? `${d.cles.length} sur 20 · Touch ID, Face ID, Windows Hello ou clé USB` : d.sansCle && !d.modeHttp ? 'Par le nom du service en HTTPS, pas par son adresse' : 'Disponible uniquement en HTTPS', [
         d.clesPossibles && clesDisponibles() ? action('Ajouter', 'solid', () => ajouterCle(api)) : null]) : null,
       ligne('bouee', 'Codes de secours', `${c.facteurs.secours} sur 10 restants`, [action('Régénérer', '', async () => {
         if (!await confirmer('Régénérer les codes ?', 'Les anciens codes cesseront immédiatement de fonctionner.', { oui: 'Régénérer' })) return;
@@ -701,6 +702,7 @@ export function pageSecurite(api, { service, confidentialite = null }) {
     page.replaceChildren(...[
       h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Sécurité' }), h('p', { class: 'lede', text: `Connecté en tant que ${c.identifiant} (${c.role}). Chaque changement ici demande une confirmation récente et ferme tes autres sessions.` }))),
       d.modeHttp ? h('div', { class: 'note warn' }, icone('alerte'), h('div', { text: 'Mode HTTP : clés d’accès indisponibles et trafic non chiffré. Sers ce service en HTTPS pour sortir de ce mode.' })) : null,
+      !d.modeHttp && d.sansCle ? h('div', { class: 'note' }, icone('cadenas'), h('div', { text: `Ouvert par son adresse : les clés d’accès ne peuvent ni servir ni se créer ici. Ouvre ${service} par son nom en HTTPS pour ${c.cle === 'ailleurs' && !d.cles.length ? 'créer ta clé' : 'les utiliser'}.` })) : null,
       facteurs, courriel, h('div', { class: 'split' }, sessions, alertes), donnees].filter(Boolean));
     if (d.alertes.some(a => !a.vue)) api.post('/api/compte/alertes/vues').catch(() => {});
   }
