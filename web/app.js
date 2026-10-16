@@ -368,7 +368,7 @@ async function pageMachines() {
   const filtres = [['toutes', 'Toutes'], ['marche', 'En marche'], ['arretees', 'Arrêtées'], ['modeles', 'Modèles']];
   const choix = h('div', { class: 'views' });
   const corps = h('tbody', {});
-  const compte = h('span', { class: 'grow1 dim' });
+  const compte = h('span', { class: 'compte' });
   const q = h('input', { class: 'field fld-sm', type: 'search', placeholder: 'Nom, VMID, nœud, étiquette', 'aria-label': 'Chercher une machine', value: E.q });
   const peindre = () => {
     if (!E.etat.relie) { corps.replaceChildren(h('tr', {}, h('td', { colspan: 6, class: 'vide', text: 'Proxmox n\'est pas encore relié.' }))); compte.textContent = ''; return; }
@@ -387,7 +387,7 @@ async function pageMachines() {
   peindre();
   return h('div', { class: 'page' },
     h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Machines' }), h('p', { class: 'lede', text: 'Machines virtuelles et conteneurs de la grappe, sur tous les nœuds.' }))),
-    h('div', { class: 'card' }, h('div', { class: 'pad rowline pt12' }, choix, q, compte),
+    h('div', { class: 'card' }, h('div', { class: 'barre' }, choix, q, compte),
       h('div', { class: 'tw' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', { text: 'Machine' }), h('th', { class: 'cache-m', text: 'Nœud' }), h('th', { class: 'cache-l', text: 'Processeur' }), h('th', { class: 'cache-l', text: 'Mémoire' }), h('th', { class: 'cache-s', text: 'En marche depuis' }), h('th', { text: 'État' }))), corps))));
 }
 function ligneMachine(m) {
@@ -409,7 +409,7 @@ async function pageFiche(noeud, type, vmid) {
   let onglet = 'resume', term = null, ws = null;
   const fermerConsole = () => { try { ws?.close(); } catch { /* fermé */ } ws = null; term?.detruire?.(); term = null; };
   const corps = h('div', { class: 'dtpane' });
-  const tabs = h('div', { class: 'views mb16', role: 'tablist' });
+  const tabs = h('div', { class: 'views', role: 'tablist' });
   const tete = h('div', { class: 'detailhead' });
   const relire = async () => { f = await api.get(base); peindreTete(); if (onglet !== 'console' && onglet !== 'ecran') montrer(onglet); };
   const action = (act, libelle, { danger = false, question = null } = {}) => sur(async () => {
