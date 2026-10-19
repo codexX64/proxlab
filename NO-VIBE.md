@@ -165,6 +165,9 @@ Un commit d'interface et la version. 24 essais verts ; parcours du navigateur 28
 ## Suivi du 2026-10-19 (2.1.17)
 Un commit d'interface et la version. 24 essais verts ; parcours du navigateur 28 + 20 + 16, verts deux fois de suite.
 
+## Suivi du 2026-10-19 (2.1.18)
+Trois commits d'interface et la version. 24 essais verts ; parcours du navigateur 28 + 23 + 16 (plafond 4K, retour à 1280 × 800 sans réajustement, réveil proposé), verts deux fois de suite.
+
 ## Verification (chapter 49)
 - [x] Full suite passes and matches the baseline — les 83 essais de la référence, verts avant et après la passe, relancés à la génération de ce fichier ; delta 2.1 : 88 essais (21 du service, 67 du socle), verts sur l’arbre final
 - [x] Public API diff empty — inventaire de la surface publique identique ligne à ligne ; delta 2.1 : ajouts seuls, aucune route ni aucun schéma existants changés (« Behaviour freeze »)

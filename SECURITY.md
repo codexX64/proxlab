@@ -57,6 +57,8 @@ Suivi du 2026-10-19 (2.1.16) : interface seule — l'écran d'une VM peut s'ouvr
 
 Suivi du 2026-10-19 (2.1.17) : interface seule — ouvrir la fenêtre à part ferme la session d'écran de la fiche (une seule session par geste) ; aucune surface serveur.
 
+Suivi du 2026-10-19 (2.1.18) : interface seule — la taille d'écran demandée à la VM est plafonnée à la 4K et une seule demande part à la fois ; deux gestes de secours (réveiller l'écran, revenir à 1280 × 800) passent par la session d'écran existante. Aucune route, aucun droit, aucun message RFB nouveaux.
+
 ## Control status
 | ID | Severity | Status | Evidence | Notes |
 |---|---|---|---|---|
@@ -176,7 +178,7 @@ Suivi du 2026-10-19 (2.1.17) : interface seule — ouvrir la fenêtre à part fe
 | SEC-INJ-007 | HIGH | N/A | aucun analyseur XML : Proxmox parle JSON, `grep -rniE "xml2js\|sax\|libxml\|fast-xml\|DOMParser" src socle/src` → 0 |  |
 | SEC-INJ-008 | HIGH | PASS | JSON seulement ; clés de prototype refusées : `socle/src/schema.js:6` ; réponses de Proxmox lues en JSON, champ par champ |  |
 | SEC-XSS-001 | CRITICAL | PASS | interface : DOM construit par `h()`, texte seulement (`web/app.js:7`) ; graphiques construits nœud par nœud (`socle/web/graphes.js:3`) ; terminal écrit par textContent (`web/terminal.js:4`) | noms de machines, notes, descriptions et journaux de tâches de Proxmox affichés en texte brut |
-| SEC-XSS-002 | HIGH | N/A | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:1183`) |  |
+| SEC-XSS-002 | HIGH | N/A | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:1189`) |  |
 | SEC-XSS-003 | HIGH | PASS | aucun eval, setTimeout chaîne ni affectation de location depuis une donnée : `grep -rnE "eval\(\|new Function\|location\.href *=" web/app.js web/terminal.js socle/web/compte.js socle/web/graphes.js` → 0 | le hash ne choisit qu’une page connue ou une fiche au format vérifié : `web/app.js:159` |
 | SEC-XSS-004 | HIGH | PASS | voir REQ-WEB-002 |  |
 | SEC-XSS-005 | MEDIUM | PASS | seul échange : le Worker de preuve de travail, de même origine : `socle/web/compte.js:233` | aucune écoute de window message |
@@ -331,7 +333,7 @@ Suivi du 2026-10-19 (2.1.17) : interface seule — ouvrir la fenêtre à part fe
 | SEC-INJ-002 | aucun ORM : node:sqlite, requêtes préparées seulement |
 | SEC-INJ-003 | aucune base documentaire : SQLite seulement ; JSON rangé en colonne texte |
 | SEC-INJ-007 | aucun analyseur XML : Proxmox parle JSON, `grep -rniE "xml2js\|sax\|libxml\|fast-xml\|DOMParser" src socle/src` → 0 |
-| SEC-XSS-002 | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:1183`) |
+| SEC-XSS-002 | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:1189`) |
 | SEC-XSS-007 | aucune redirection pilotée par paramètre ; `curl -sI "/login?next=https://evil.example"` → aucun Location (annexe B.4) |
 | SEC-CSRF-006 | aucune redirection pilotée par paramètre : voir SEC-XSS-007 |
 | SEC-API-006 | aucun GraphQL : `grep -rniE "graphql\|apollo" src web/app.js socle/src` → 0 |
@@ -397,7 +399,7 @@ Suivi du 2026-10-19 (2.1.17) : interface seule — ouvrir la fenêtre à part fe
 | SEC-TEST-008 | ni argent, ni santé, ni large public : service auto-hébergé pour quelques comptes invités ; `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement |
 
 ## Anonymity (REQ-ANON-001 to -010)
-Arbre de travail : 0 occurrence de la liste d’anonymat propre à ce dépôt (la liste commune moins le nom de l’hyperviseur, objet du logiciel) ; les motifs de l’annexe B.1 y relèvent 1 ligne, un nom de fichier du .gitignore. Historique local complet (98 commits sur `main`, 101 avec les trois branches de Dependabot de GitHub, tous les arbres, tous les messages, auteurs et validateurs) : 0 occurrence de cette liste, une seule identité sur `main` (les branches de Dependabot portent `dependabot[bot]` et `GitHub`, comptes de service → H17), toutes les dates en UTC, aucune mention d’outil ; le motif « infrastructure personnelle » y relève 336 lignes hors des deux relevés, toutes le nom de l’hyperviseur piloté ou des mots qui contiennent le motif. Aucun binaire image ni document dans tout l’historique. Le dépôt ne contient pas l’historique de la 1.x : l’ancien dépôt publié n’a pas pu être relu d’ici (accès refusé au clonage) ; l’archive de la 1.x reçue, relue hors dépôt, ne portait aucun terme de la liste hors du nom de l’hyperviseur, mais son historique publié reste non audité et le pseudonyme y figurait en auteur → H12, détail dans le rapport d’anonymat hors dépôt. Le balayage est fait sur motifs et sur une liste finie : il ne prouve pas l’absence de ce que la liste ne nomme pas.
+Arbre de travail : 0 occurrence de la liste d’anonymat propre à ce dépôt (la liste commune moins le nom de l’hyperviseur, objet du logiciel) ; les motifs de l’annexe B.1 y relèvent 1 ligne, un nom de fichier du .gitignore. Historique local complet (103 commits sur `main`, 106 avec les trois branches de Dependabot de GitHub, tous les arbres, tous les messages, auteurs et validateurs) : 0 occurrence de cette liste, une seule identité sur `main` (les branches de Dependabot portent `dependabot[bot]` et `GitHub`, comptes de service → H17), toutes les dates en UTC, aucune mention d’outil ; le motif « infrastructure personnelle » y relève 336 lignes hors des deux relevés, toutes le nom de l’hyperviseur piloté ou des mots qui contiennent le motif. Aucun binaire image ni document dans tout l’historique. Le dépôt ne contient pas l’historique de la 1.x : l’ancien dépôt publié n’a pas pu être relu d’ici (accès refusé au clonage) ; l’archive de la 1.x reçue, relue hors dépôt, ne portait aucun terme de la liste hors du nom de l’hyperviseur, mais son historique publié reste non audité et le pseudonyme y figurait en auteur → H12, détail dans le rapport d’anonymat hors dépôt. Le balayage est fait sur motifs et sur une liste finie : il ne prouve pas l’absence de ce que la liste ne nomme pas.
 
 ## Human actions required
 Ce qu’aucun agent ne peut faire à la place de l’exploitant. Cette liste bloque la mise en production tant qu’elle n’est pas vide.
