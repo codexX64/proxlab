@@ -144,6 +144,9 @@ Commits de la passe :
 - `e057ce5 journal : la liaison dit si un jeton d'API est posé, sous une clé que le filtre des secrets laisse passer`
 - `4bedc07 essais : « .. » au milieu d'un segment, taille hors bornes avant une valide, chaque motif de refus de console, base refermée à l'ouverture`
 
+## Suivi du 2026-10-19 (2.1.11)
+Un commit de correction : la garde des paramètres de requête devient commune à toutes les routes (`api.js`, après le gestionnaire). 22 essais du service, verts ; retirer la garde fait échouer « paramètres : un paramètre inconnu est refusé ». Surface publique inchangée.
+
 ## Verification (chapter 49)
 - [x] Full suite passes and matches the baseline — les 83 essais de la référence, verts avant et après la passe, relancés à la génération de ce fichier ; delta 2.1 : 88 essais (21 du service, 67 du socle), verts sur l’arbre final
 - [x] Public API diff empty — inventaire de la surface publique identique ligne à ligne ; delta 2.1 : ajouts seuls, aucune route ni aucun schéma existants changés (« Behaviour freeze »)
