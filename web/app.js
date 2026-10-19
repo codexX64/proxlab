@@ -740,6 +740,9 @@ function ecranMachine(f, garder, relire) {
         { texte: 'Échap', inactif: off, agir: dansVm(() => ecran.combo('Escape')) },
         { texte: 'Impr. écran', inactif: off, agir: dansVm(() => ecran.combo('PrintScreen')) },
       ] },
+      { titre: 'Clavier de la VM', items: Object.entries(DISPOSITIONS).map(([k, d]) => ({
+        texte: d.nom, ic: k === disposition ? 'verifie' : null, agir: () => { disposition = k; poserLocal('proxlab-disposition', k); choixDispo.value = k; toast(`Clavier de la VM : ${d.nom}. Coller tapera avec cette disposition.`); ecran?.toile.focus(); },
+      })) },
       { items: [
         { texte: panneau.hidden ? 'Afficher le presse-papiers' : 'Masquer le presse-papiers', ic: 'presse', agir: () => montrerPanneau() },
         { texte: document.fullscreenElement ? 'Quitter le plein écran' : 'Plein écran', ic: 'agrandir', inactif: off, agir: plein },

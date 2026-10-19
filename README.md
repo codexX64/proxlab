@@ -100,7 +100,8 @@ texte est pris par le collage du navigateur, sans demande d'autorisation, et
 ⌘+lettre sur Mac devient Ctrl+lettre dans la VM (même touche physique). Le
 bouton « Actions » de l'écran reprend tout cela à la souris : copier, couper,
 coller, tout sélectionner, taper un texte, annuler, rétablir, Ctrl+Alt+Suppr,
-Super, Alt+Tab, Échap, Impr. écran, presse-papiers, plein écran ; celui de la
+Super, Alt+Tab, Échap, Impr. écran, clavier de la VM (AZERTY ou QWERTY : une
+VM installée en live est souvent en QWERTY), presse-papiers, plein écran ; celui de la
 console : copier la sélection, coller, tout sélectionner, Ctrl+C, Ctrl+D,
 Ctrl+L, Ctrl+Z, Tab, Échap.
 

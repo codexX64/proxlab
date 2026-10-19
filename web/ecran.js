@@ -277,10 +277,15 @@ export class Ecran {
       if (!this.actif || this.ws.readyState !== 1) break;
       const suite = carte[caracteres[i]];
       if (!suite) { sautes++; continue; }
-      for (const [code, maj, altgr] of suite) {
+      for (const [j, [code, maj, altgr]] of suite.entries()) {
         if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, true);
         if (altgr) this.touche({ code: 'AltRight', key: 'AltGraph' }, true);
-        const key = code.startsWith('Key') ? code.slice(3).toLowerCase() : code.startsWith('Digit') ? code.slice(5) : code === 'Space' ? ' ' : code;
+        // La casse du keysym doit suivre Maj : QEMU (lock_key_sync) prend une
+        // lettre minuscule avec Maj enfoncée pour un Verr. Maj à corriger, et
+        // ajoute un appui sur Verr. Maj — le texte sortait en minuscules.
+        const ch = caracteres[i];
+        const key = j === suite.length - 1 && [...ch].length === 1 && ch > ' ' ? ch
+          : code.startsWith('Key') ? (maj ? code.slice(3) : code.slice(3).toLowerCase()) : code.startsWith('Digit') ? code.slice(5) : code === 'Space' ? ' ' : code;
         this.touche({ code, key }, true); this.touche({ code, key }, false);
         if (altgr) this.touche({ code: 'AltRight', key: 'AltGraph' }, false);
         if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, false);
@@ -300,7 +305,8 @@ export class Ecran {
   combinaison(lettre, maj = false, code = `Key${lettre.toUpperCase()}`) {
     this.touche({ code: 'ControlLeft', key: 'Control' }, true);
     if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, true);
-    this.touche({ code, key: lettre }, true); this.touche({ code, key: lettre }, false);
+    const k = maj ? lettre.toUpperCase() : lettre;
+    this.touche({ code, key: k }, true); this.touche({ code, key: k }, false);
     if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, false);
     this.touche({ code: 'ControlLeft', key: 'Control' }, false);
   }
