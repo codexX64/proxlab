@@ -533,6 +533,7 @@ test('clavier de la VM : demandé à l\'agent QEMU par un script fixe, dispositi
   assert.deepEqual(lireSortie("gnome [('xkb', 'us'), ('xkb', 'fr+oss')]\n"), { brut: 'us', source: 'gnome' });
   assert.deepEqual(lireSortie('x11 fr\nvariante oss\nvc fr\n'), { brut: 'fr+oss', source: 'système' });
   assert.deepEqual(lireSortie('vc fr-latin9\n'), { brut: 'fr-latin9', source: 'console' });
+  for (const forme of ['x11 ', 'vc ', "gnome [('xkb', '"]) assert.ok(lireSortie(forme + 'x'.repeat(5000) + "')]\nvariante " + 'y'.repeat(5000)).brut.length <= 129, `sortie ${forme.trim()} bornée`);
   const refuse = { get: async () => ({ agent: '1' }), post: async () => { throw new Error('Permission check failed (/vms/101, VM.GuestAgent.Unrestricted)'); } };
   const sansDroit = await detecterClavier(refuse, '/nodes/pve1/qemu/101');
   assert.equal(sansDroit.raison, 'droit');
