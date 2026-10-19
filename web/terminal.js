@@ -102,6 +102,7 @@ export class Terminal {
   }
 
   mesurer() {
+    if (!this.ecran.isConnected || !this.ecran.clientWidth) return;   // onglet caché : garder la taille
     const sonde = document.createElement('span');
     sonde.className = 'terminal-sonde';
     sonde.textContent = '0'.repeat(80);

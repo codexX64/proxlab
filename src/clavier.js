@@ -5,7 +5,8 @@
 // Un seul script, fixe, lu sur l'entrée standard de `sh` : rien de ce que
 // demande le navigateur n'entre dans la commande. Il lit les sources de saisie
 // de la session GNOME ouverte (la disposition réellement utilisée), sinon la
-// disposition du système (localectl).
+// disposition du système (localectl), sinon ses fichiers (xorg.conf.d,
+// vconsole.conf, /etc/default/keyboard) quand l'agent n'a pas accès à D-Bus.
 
 export const SCRIPT_CLAVIER = `for d in /run/user/*; do
   [ -S "$d/bus" ] || continue
@@ -16,7 +17,16 @@ export const SCRIPT_CLAVIER = `for d in /run/user/*; do
     case "$v" in *xkb*) echo "gnome $v"; exit 0;; esac
   done
 done
-localectl status 2>/dev/null | sed -n 's/.*X11 Layout: *\\(.*\\)/x11 \\1/p;s/.*X11 Variant: *\\(.*\\)/variante \\1/p;s/.*VC Keymap: *\\(.*\\)/vc \\1/p'
+l=$(localectl status 2>/dev/null | sed -n 's/.*X11 Layout: *\\(.*\\)/x11 \\1/p;s/.*X11 Variant: *\\(.*\\)/variante \\1/p;s/.*VC Keymap: *\\(.*\\)/vc \\1/p')
+[ -n "$l" ] && { echo "$l"; exit 0; }
+f=/etc/X11/xorg.conf.d/00-keyboard.conf
+k=$(sed -n 's/.*"XkbLayout" *"\\([^"]*\\)".*/\\1/p' $f 2>/dev/null | head -n 1)
+v=$(sed -n 's/.*"XkbVariant" *"\\([^"]*\\)".*/\\1/p' $f 2>/dev/null | head -n 1)
+[ -n "$k" ] && { echo "x11 $k"; [ -n "$v" ] && echo "variante $v"; exit 0; }
+k=$(sed -n 's/^KEYMAP="*\\([^"]*\\)"*.*/\\1/p' /etc/vconsole.conf /etc/default/keyboard 2>/dev/null | head -n 1)
+[ -n "$k" ] && { echo "vc $k"; exit 0; }
+k=$(sed -n 's/^XKBLAYOUT="*\\([^"]*\\)"*.*/\\1/p' /etc/default/keyboard 2>/dev/null | head -n 1)
+[ -n "$k" ] && echo "x11 $k"
 `;
 
 const SANS_TOUCHE_MORTE_FR = new Set(['', 'oss', 'latin9', 'azerty', 'nodeadkeys', 'oss_latin9', 'oss_nodeadkeys', 'latin9_nodeadkeys', 'oss_sundeadkeys', 'sundeadkeys', 'latin9_sundeadkeys']);
@@ -71,7 +81,10 @@ export async function detecterClavier(proxmox, base, { essais = 12, attente = 25
     if (!st?.exited) continue;
     const { brut, source } = lireSortie(st['out-data']);
     const disposition = dispositionDe(brut);
-    return disposition ? { disposition, brut, source } : { disposition: null, brut, source, raison: brut ? 'inconnue' : 'vide', message: brut ? `Disposition « ${brut} » : pas encore prise en charge, choisis-en une à la main.` : 'La VM n\'a pas dit sa disposition.' };
+    if (disposition) return { disposition, brut, source };
+    if (brut) return { disposition: null, brut, source, raison: 'inconnue', message: `Disposition « ${brut} » : pas encore prise en charge, choisis-en une à la main.` };
+    const err = String(st['err-data'] || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    return { disposition: null, raison: 'vide', message: `La VM n'a pas dit sa disposition (code ${st.exitcode ?? '?'}${err ? ` : ${err}` : ''}). Choisis-la à la main.` };
   }
   return { disposition: null, raison: 'delai', message: 'La VM a mis trop de temps à répondre.' };
 }

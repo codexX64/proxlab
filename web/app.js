@@ -421,12 +421,28 @@ async function pageFiche(noeud, type, vmid) {
   const base = `/api/machines/${encodeURIComponent(noeud)}/${type}/${vmid}`;
   let f = await api.get(base);
   const onglets = [['resume', 'Résumé'], ['instantanes', 'Instantanés'], ['sauvegardes', 'Sauvegardes'], ['configuration', 'Configuration'], ...(membre && type === 'qemu' ? [['ecran', 'Écran']] : []), ...(membre ? [['console', 'Console']] : [])];
-  let onglet = 'resume', term = null, ws = null;
-  const fermerConsole = () => { try { ws?.close(); } catch { /* fermé */ } ws = null; term?.detruire?.(); term = null; };
-  const corps = h('div', { class: 'dtpane' });
+  let onglet = 'resume';
+  // L'écran et la console restent ouverts quand on change d'onglet : ils sont
+  // cachés, pas fermés. Ils ne se ferment qu'en quittant la fiche.
+  const vivants = {};
+  const fermerVivant = k => { vivants[k]?.fermer(); vivants[k]?.el.remove(); delete vivants[k]; };
+  const fermerConsole = () => { for (const k of Object.keys(vivants)) fermerVivant(k); };
+  const vivant = (k, creer) => {
+    if (!vivants[k]) {
+      const slot = { term: null, ws: null };
+      const fermer = () => { try { slot.ws?.close(); } catch { /* fermé */ } slot.term?.detruire?.(); slot.term = slot.ws = null; };
+      vivants[k] = { el: creer((t, w) => { fermer(); slot.term = t; slot.ws = w; }), fermer };
+      corps.append(vivants[k].el);
+    }
+    return vivants[k].el;
+  };
+  const statique = h('div', {});
+  const corps = h('div', { class: 'dtpane' }, statique);
   const tabs = h('div', { class: 'views', role: 'tablist' });
   const tete = h('div', { class: 'detailhead' });
   const relire = async () => { f = await api.get(base); peindreTete(); if (onglet !== 'console' && onglet !== 'ecran') montrer(onglet); };
+  // Après un changement (port série, presse-papiers, agent) : l'onglet refait avec la nouvelle configuration.
+  const refaire = k => relire().then(() => { fermerVivant(k); montrer(k); });
   const action = (act, libelle, { danger = false, question = null } = {}) => sur(async () => {
     if (question && !await confirmer(question, `${genreMachine(f)} ${f.vmid} sur ${f.node}.`, { danger, oui: libelle })) return;
     await api.post(base + '/alimentation', { action: act });
@@ -455,16 +471,20 @@ async function pageFiche(noeud, type, vmid) {
   async function montrer(k) {
     onglet = k;
     for (const b of tabs.children) { const on = b.dataset.k === k; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); }
-    fermerConsole();
     history.replaceState(null, '', `#fiche/${noeud}/${type}/${vmid}`);
+    const cible = { noeud: f.node, type: f.type, vmid: String(f.vmid) };
     try {
-      if (k === 'resume') corps.replaceChildren(resumeMachine(f, base));
-      else if (k === 'instantanes') corps.replaceChildren(instantanes(f, base, relire));
-      else if (k === 'sauvegardes') corps.replaceChildren(await sauvegardes(f, base));
-      else if (k === 'configuration') corps.replaceChildren(configuration(f, base, relire));
-      else if (k === 'console') corps.replaceChildren(consoleMachine({ noeud: f.node, type: f.type, vmid: String(f.vmid) }, (t, w) => { fermerConsole(); term = t; ws = w; }, { f, relire: () => relire().then(() => montrer('console')) }));
-      else if (k === 'ecran') corps.replaceChildren(ecranMachine(f, (t, w) => { fermerConsole(); term = t; ws = w; }, () => relire().then(() => montrer('ecran'))));
-    } catch (e) { corps.replaceChildren(h('p', { class: 'vide', text: e.message })); }
+      let el = null;
+      if (k === 'console') el = vivant('console', garder => consoleMachine(cible, garder, { f, relire: () => refaire('console'), auto: true }));
+      else if (k === 'ecran') el = vivant('ecran', garder => ecranMachine(f, garder, () => refaire('ecran'), { auto: true }));
+      for (const v of Object.values(vivants)) v.el.hidden = v.el !== el;
+      statique.hidden = !!el;
+      if (el) { el.dispatchEvent(new CustomEvent('montre')); return; }
+      if (k === 'resume') statique.replaceChildren(resumeMachine(f, base));
+      else if (k === 'instantanes') statique.replaceChildren(instantanes(f, base, relire));
+      else if (k === 'sauvegardes') statique.replaceChildren(await sauvegardes(f, base));
+      else if (k === 'configuration') statique.replaceChildren(configuration(f, base, relire));
+    } catch (e) { statique.hidden = false; statique.replaceChildren(h('p', { class: 'vide', text: e.message })); }
   }
   tabs.replaceChildren(...onglets.map(([k, l]) => h('button', { class: 'view', type: 'button', role: 'tab', text: l, dataset: { k }, onclick: () => montrer(k) })));
   peindreTete();
@@ -663,7 +683,7 @@ function menuActions(groupes, { titre = 'Actions' } = {}) {
   return { ancre, bouton, fermer };
 }
 
-function ecranMachine(f, garder, relire) {
+function ecranMachine(f, garder, relire, { auto = false } = {}) {
   const cible = { noeud: f.node, type: f.type, vmid: String(f.vmid) }, enMarche = f.status === 'running';
   const agent = /clipboard=vnc/.test(f.config?.vga || '');
   const agentPrevu = !agent && (f.enAttente || []).includes('vga');
@@ -831,9 +851,13 @@ function ecranMachine(f, garder, relire) {
     bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
   });
   const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: () => { reprise = false; ouvrir(); } }, icone('ecran', 14), 'Ouvrir');
+  // Ouvert dès le premier affichage de l'onglet ; ensuite il reste ouvert.
+  if (auto && enMarche) setTimeout(() => { reprise = false; ouvrir(); }, 0);
   hote.append(h('p', { class: 'vide', text: enMarche ? `L'écran de la machine, avec le clavier et la souris. Clique dans l'image pour lui donner le clavier ; ${MOD}C et ${MOD}V copient et collent. Chaque ouverture est journalisée.` : 'La machine est arrêtée : démarre-la pour voir son écran.' }));
   if (!enMarche) bouton.disabled = true;
-  return h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Écran' }), etat, outils, bouton), panneau, hote);
+  const carteEcran = h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Écran' }), etat, outils, bouton), panneau, hote);
+  carteEcran.addEventListener('montre', () => { if (ecran?.actif) ecran.toile.focus({ preventScroll: true }); });
+  return carteEcran;
 }
 
 // La console d'une VM sans port série : ce qu'il faut, et le bouton pour l'ajouter.
@@ -854,7 +878,7 @@ function sansPortSerie(f, relire) {
         h('span', { class: 'cmd' }, h('code', { text: cmd }), h('button', { class: 'btn flat sm', type: 'button', 'aria-label': 'Copier la commande', onclick: async () => { try { await navigator.clipboard.writeText(cmd); toast('Commande copiée.'); } catch { toast(cmd); } } }, icone('copie', 12))))));
 }
 
-function consoleMachine(cible, garder, { f = null, relire = null } = {}) {
+function consoleMachine(cible, garder, { f = null, relire = null, auto = false } = {}) {
   const hote = h('div', { class: 'console-hote' });
   const etat = h('span', { class: 'note', text: 'fermée' });
   let term = null;
@@ -894,7 +918,12 @@ function consoleMachine(cible, garder, { f = null, relire = null } = {}) {
     });
     garder(term, ws);
     etat.textContent = 'connexion…';
-    ws.addEventListener('open', () => { etat.textContent = 'ouverte'; ws.send(JSON.stringify({ r: [term.cols, term.lignes] })); term.focus(); });
+    ws.addEventListener('open', () => {
+      etat.textContent = 'ouverte'; ws.send(JSON.stringify({ r: [term.cols, term.lignes] })); term.focus();
+      // Port série d'une VM : l'invite de connexion a été écrite avant notre arrivée ;
+      // un Entrée la fait réapparaître (sans effet ailleurs qu'une ligne vide).
+      if (cible.type === 'qemu') setTimeout(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ i: '\r' })); }, 400);
+    });
     ws.addEventListener('message', ev => { if (typeof ev.data === 'string') term.ecrire(ev.data); });
     ws.addEventListener('close', () => { etat.textContent = 'fermée'; });
     bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
@@ -903,6 +932,8 @@ function consoleMachine(cible, garder, { f = null, relire = null } = {}) {
   const serie = cible.type !== 'qemu' || !f || Object.keys(f.config || {}).some(k => /^serial\d$/.test(k));
   if (serie) hote.append(h('p', { class: 'vide', text: cible.type === 'node' ? 'Shell du nœud, en administrateur : chaque ouverture est journalisée.' : `Console texte de la machine. Sélectionne pour copier (${estMac() ? '⌘C' : 'Ctrl+Maj+C'}), ${estMac() ? '⌘V' : 'Ctrl+Maj+V'} pour coller. Chaque ouverture est journalisée.` }));
   else { hote.append(sansPortSerie(f, relire)); bouton.disabled = true; actions.ancre.hidden = true; }
+  if (auto && serie && (!f || f.status === 'running')) setTimeout(ouvrir, 0);
+  carte.addEventListener('montre', () => { if (term && ws?.readyState === 1) term.focus(); });
   carte.append(h('header', {}, h('h2', { text: cible.type === 'node' ? `Shell de ${cible.noeud}` : 'Console' }), etat, h('div', { class: 'ecran-outils' }, actions.ancre), bouton), hote);
   return carte;
 }

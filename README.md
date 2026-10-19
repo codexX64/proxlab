@@ -109,6 +109,11 @@ ou du système ; un choix à la main pour une VM reste prioritaire ; celui de la
 console : copier la sélection, coller, tout sélectionner, Ctrl+C, Ctrl+D,
 Ctrl+L, Ctrl+Z, Tab, Échap.
 
+**Onglets.** L'écran et la console s'ouvrent au premier affichage de leur
+onglet et restent ouverts quand on passe de l'un à l'autre ; ils se ferment en
+quittant la fiche. À l'ouverture de la console d'une VM, un Entrée fait
+réapparaître l'invite de connexion du port série.
+
 **Console d'une VM.** Elle passe par le port série de la VM : sans `serial0`,
 ProxLab le dit avant d'appeler Proxmox et propose de l'ajouter
 (`serial0: socket`, administrateur, au prochain redémarrage), puis
