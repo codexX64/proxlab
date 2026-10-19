@@ -48,9 +48,25 @@ const PP = { TEXTE: 1, CAPS: 1 << 24, REQUEST: 1 << 25, PEEK: 1 << 26, NOTIFY: 1
 const PRESSE_MAX = 64 * 1024 - 64;      // ProxLab refuse au-delà de 64 Kio
 export const FRAPPE_MAX = 4000;
 
-async function zlib(octets, sens) {
-  const flux = new Blob([octets]).stream().pipeThrough(sens === 'in' ? new DecompressionStream('deflate') : new CompressionStream('deflate'));
+async function deflate(octets) {
+  const flux = new Blob([octets]).stream().pipeThrough(new CompressionStream('deflate'));
   return new Uint8Array(await new Response(flux).arrayBuffer());
+}
+// Le texte vient de la VM : décompressé morceau par morceau, et abandonné au-delà
+// de max octets (une bombe de décompression ne remplit pas la mémoire de l'onglet).
+async function inflate(octets, max) {
+  const lecteur = new Blob([octets]).stream().pipeThrough(new DecompressionStream('deflate')).getReader();
+  const morceaux = []; let total = 0;
+  for (;;) {
+    const { done, value } = await lecteur.read();
+    if (done) break;
+    total += value.length;
+    if (total > max) { lecteur.cancel().catch(() => {}); throw new Error('presse-papiers démesuré'); }
+    morceaux.push(value);
+  }
+  const sortie = new Uint8Array(total); let k = 0;
+  for (const m of morceaux) { sortie.set(m, k); k += m.length; }
+  return sortie;
 }
 
 // Caractère → touches physiques, par disposition. [code, maj, altgr] ; une
@@ -228,7 +244,7 @@ export class Ecran {
     if (flags & PP.PEEK) { this.coupe(PP.NOTIFY | (this.aFournir !== null ? PP.TEXTE : 0)); return; }
     if (flags & PP.NOTIFY) { if (flags & PP.TEXTE) this.coupe(PP.REQUEST | PP.TEXTE); return; }
     if (flags & PP.PROVIDE && flags & PP.TEXTE) {
-      zlib(p.subarray(4), 'in').then(z => {
+      inflate(p.subarray(4), PRESSE_MAX + 8).then(z => {
         const n = new DataView(z.buffer).getUint32(0);
         this.presseRecu(new TextDecoder().decode(z.subarray(4, 4 + Math.min(n, z.length - 4))).replace(/\0+$/, '').replace(/\r\n/g, '\n'));
       }).catch(() => {});
@@ -243,7 +259,7 @@ export class Ecran {
     if (this.aFournir === null) return;
     const t = new TextEncoder().encode(this.aFournir.replace(/\r?\n/g, '\r\n') + '\0');
     const brut = new Uint8Array(4 + t.length); new DataView(brut.buffer).setUint32(0, t.length); brut.set(t, 4);
-    this.coupe(PP.PROVIDE | PP.TEXTE, await zlib(brut, 'out'));
+    this.coupe(PP.PROVIDE | PP.TEXTE, await deflate(brut));
   }
   // Le texte devient le presse-papiers de l'invité (il le colle avec Ctrl+V).
   envoyerPresse(texte) {
