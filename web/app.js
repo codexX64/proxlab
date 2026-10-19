@@ -920,10 +920,12 @@ function consoleMachine(cible, garder, { f = null, relire = null, auto = false }
     etat.textContent = 'connexion…';
     ws.addEventListener('open', () => {
       etat.textContent = 'ouverte'; ws.send(JSON.stringify({ r: [term.cols, term.lignes] })); term.focus();
-      // Port série d'une VM : l'invite de connexion a été écrite avant notre arrivée ;
-      // un Entrée la fait réapparaître (sans effet ailleurs qu'une ligne vide).
-      if (cible.type === 'qemu') setTimeout(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ i: '\r' })); }, 400);
+      // Port série d'une VM : l'invite de connexion a été écrite avant notre arrivée.
+      // Rien n'est tapé à la place de l'opérateur (une ligne laissée à moitié par un
+      // autre partirait) : on lui dit seulement quoi faire.
+      if (cible.type === 'qemu') etat.textContent = 'ouverte · Entrée pour afficher l\'invite';
     });
+    hote.addEventListener('keydown', () => { if (/Entrée/.test(etat.textContent) && ws?.readyState === 1) etat.textContent = 'ouverte'; }, true);
     ws.addEventListener('message', ev => { if (typeof ev.data === 'string') term.ecrire(ev.data); });
     ws.addEventListener('close', () => { etat.textContent = 'fermée'; });
     bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
