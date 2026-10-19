@@ -89,7 +89,12 @@ ont leur bouton ; en plein écran, l'image remplit l'écran sans être déformé
 **Taille de l'écran.** « Ajuster la VM à la fenêtre » (menu Actions, activé par
 défaut, retenu par le navigateur) demande à la VM la résolution de la place
 visible, puis celle de l'écran entier en plein écran, et la suit quand la
-fenêtre change (ExtendedDesktopSize de VNC). Il faut l'affichage VirtIO-GPU, le
+fenêtre change (ExtendedDesktopSize de VNC). En « Qualité nette » (activée par
+défaut), la VM reçoit les pixels réels de l'écran qui la regarde (le double sur
+un écran Retina) et l'image n'est pas agrandie : nette comme un écran local ; si
+le texte devient trop petit, l'échelle se règle dans la VM (GNOME : Paramètres →
+Écrans → Échelle 200 %). Coupée, un pixel de la VM par point : moins de données
+à transmettre. Il faut l'affichage VirtIO-GPU, le
 seul dont QEMU transmet la taille à l'invité : Linux (GNOME, KDE) suit seul,
 Windows avec le pilote VirtIO-GPU de virtio-win. Une VM en « std » le refuse,
 et ProxLab le dit une fois ; « Passer en VirtIO-GPU… » (administrateur, avec

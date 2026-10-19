@@ -697,16 +697,24 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
   const genreVga = String(f.config?.vga || '').split(',')[0] || 'std';
   const virtioPrevu = !/^virtio/.test(genreVga) && /^virtio/.test(f.vgaSuivant || '');
   let ajusterTaille = lireLocal('proxlab-ajuster', '1') === '1', refusSignale = false, minuteurTaille = null;
+  // Nette : la VM reçoit les pixels réels de cet écran (×2 sur un écran Retina)
+  // et l'image est affichée sans agrandissement ; sinon, un pixel de la VM par
+  // point CSS (moins de pixels à transmettre, image adoucie sur un écran dense).
+  let nette = lireLocal('proxlab-ajuster-nette', '1') === '1';
+  const densite = () => (nette ? Math.min(3, Math.max(1, window.devicePixelRatio || 1)) : 1);
   const hote = h('div', { class: 'ecran-hote' });
   const cibleTaille = () => document.fullscreenElement === hote
     ? [hote.clientWidth, hote.clientHeight]
     : [hote.clientWidth, Math.max(320, Math.min(innerHeight * 0.75, innerHeight - Math.max(0, hote.getBoundingClientRect().top) - 24))];
   const reajuster = () => {
     clearTimeout(minuteurTaille);
-    minuteurTaille = setTimeout(() => { if (ajusterTaille && ecran?.etendu && hote.isConnected) ecran.ajuster(...cibleTaille()); }, 250);
+    minuteurTaille = setTimeout(() => { if (ajusterTaille && ecran?.etendu && hote.isConnected) ecran.ajuster(...cibleTaille().map(v => Math.round(v * densite()))); }, 250);
   };
   new ResizeObserver(reajuster).observe(hote);
   hote.addEventListener('fullscreenchange', reajuster);
+  // Fenêtre passée d'un écran à un autre de densité différente.
+  const suivreDensite = () => matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`).addEventListener('change', () => { reajuster(); suivreDensite(); }, { once: true });
+  suivreDensite();
   const etat = h('span', { class: 'note', text: 'fermé' });
   let ecran = null, ouvertA = 0, reprise = false;
   // Le clavier de la VM : choisi à la main pour cette VM, sinon demandé à la VM
@@ -837,6 +845,11 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
           if (!ajusterTaille) return toast('La VM garde sa résolution.');
           if (!/^virtio/.test(genreVga)) return toast(`L'affichage de cette VM (${genreVga}) ne change pas de taille : il faut VirtIO-GPU${admin ? ' (« Passer en VirtIO-GPU… »)' : ' : demande-le à un administrateur'}.`, true);
           toast('La VM prend la taille de la fenêtre, et la suit.'); reajuster();
+        } },
+        { texte: 'Qualité nette (pixels de cet écran)', ic: nette ? 'verifie' : null, inactif: !ajusterTaille, agir: () => {
+          nette = !nette; poserLocal('proxlab-ajuster-nette', nette ? '1' : '0');
+          toast(nette ? 'La VM reçoit les pixels réels de cet écran. Si le texte est trop petit : dans la VM, Paramètres → Écrans → Échelle 200 %.' : 'Un pixel de la VM par point : plus léger, image adoucie sur un écran dense.');
+          reajuster();
         } },
         ...(admin && !/^virtio/.test(genreVga) && !virtioPrevu ? [{ texte: 'Passer en VirtIO-GPU…', ic: 'ecran', agir: passerVirtio }] : []),
       ] },
