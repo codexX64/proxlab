@@ -1,7 +1,7 @@
 # Code quality record — ProxLab
 
 Method: Project Baseline Requirements & Security Manual, Part III (chapters 37-49)
-Reviewed: 2026-10-12   ·   Owner: Codex64
+Reviewed: 2026-10-12 (2.0), 2026-10-19 (delta 2.1, `v2.1.2..v2.1.10`)   ·   Owner: Codex64
 
 ## Behaviour freeze
 Point de départ de la passe : `c66719a`, dernier commit de code de la phase de sécurité. Ensemble de référence relevé avant la passe : 83 essais — 17 du service (`test/proxlab.test.js`, faux Proxmox en HTTPS aux certificats tirés à la volée, vraie console WebSocket, vrai récepteur d’alertes, ligne de commande lancée pour de bon) et 66 du socle embarqué — tous verts. Relancés à la génération de ce fichier : les mêmes, un à un, tous verts ; la passe n’a ajouté ni retiré aucun essai, elle en a renforcé trois de quatre assertions (voir « Tests »). Depuis, 1 de plus : « écran d'une VM : poignée VNC faite par ProxLab, le ticket ne sort jamais, seuls les messages d'un client RFB passent » (`fccd211`), essai de l’écran des machines virtuelles, fonction ajoutée après la passe (2.1.0). Aucun essai de caractérisation n’a été nécessaire : l’essai « autorisation » balaie déjà chaque route du routeur sans session, avec le jeton du Hub, en lecture et en membre, et chaque route a son parcours.
@@ -9,6 +9,8 @@ Point de départ de la passe : `c66719a`, dernier commit de code de la phase de 
 Diff de l’API publique sur la passe : vide. L’inventaire de la surface publique (`proxlab/surface.mjs`, hors dépôt) est identique ligne à ligne entre `c66719a` et `4bedc07`, fin de la passe, et identique à celui relevé avant la passe : 34 routes avec leurs options et leurs schémas de requête, 16 schémas de corps, le chemin WebSocket de la console, 6 variables de configuration, 18 réglages, 2 déclencheurs, 3 actions et 5 sondes du manifeste du Hub, 4 commandes de la ligne de commande — 89 lignes. Après la passe, 2 lignes changées, déclarées : étiquette d’image par défaut du manifeste alignée sur la version (2.1.1) (`3db545f`) ; champ « mode » (texte ou écran) de la console, pour l’écran des machines virtuelles (`fccd211`).
 
 Démarrage et parcours de bout en bout, sur l’arbre final, le 2026-10-12 : `outils/exercice-rotation.mjs` → 21 vérifications réussies ; `outils/exercice-incident.mjs` → 22 vérifications réussies ; `outils/parcours-navigateur.mjs` contre `outils/vitrine.mjs` (installation par clé d’accès virtuelle, liaison par l’interface avec lecture du certificat et empreinte épinglée, vue d’ensemble, machines, fiche et ses onglets, écran d’une machine virtuelle ouvert et saisi au clavier, dialogue d’instantané, console ouverte et saisie, nœuds et shell, stockage et son contenu, tâches et journal, événements, sécurité, comptes ; vingt écrans à sept largeurs, de 360 à 1920 pixels), en gamme SOMA et en gamme Exploitation → 140 écrans×largeurs chacune, 0 défaut de mise en page, 0 erreur de console ; sondage exploratoire de SECURITY.md → rejoué sur une instance neuve à chaque génération de ce relevé-là.
+
+Delta 2.1 (`v2.1.2..v2.1.10`), le 2026-10-19 : 21 essais du service et 67 du socle, tous verts, et 28 vérifications dans un vrai navigateur sur le faux Proxmox (écran, presse-papiers dans les deux sens, frappe AZERTY et QWERTY, raccourcis Mac, console, onglets gardés ouverts, presse-papiers démesuré ; `ps2.mjs`, hors dépôt). Déclarations de routes et de schémas comparées entre `v2.1.2` et l’arbre final : deux routes ajoutées (`POST …/acces`, `GET …/clavier`) et le schéma `acces`, aucune route ni aucun schéma existants changés ; la fiche gagne `config` et `enAttente`. Changement de comportement voulu : `POST /api/console` d’une VM sans port série répond 409 avant Proxmox.
 
 ## Layer status
 | Chapter | Subject | Status | What changed |
@@ -24,7 +26,9 @@ Démarrage et parcours de bout en bout, sur l’arbre final, le 2026-10-12 : `ou
 | 47 | Tests | DONE | 23 cassures volontaires, chacune détectée (ci-dessous) ; quatre passaient d’abord inaperçues et ont renforcé un essai : « .. » au milieu d’un segment, une taille de terminal démesurée (l’essai la vérifiait avant qu’elle n’arrive), la base remise dans le volume avec d’autres droits, et un refus de console sans trace — ce dernier a révélé deux défauts réels, corrigés dans leurs propres commits : un refus par adresse et par minute seulement, et des détails de journal vidés par le filtre des secrets du socle (« motif » et « jeton » y passent pour des secrets) |
 | 48 | Documentation, furniture and version control | DONE | README, `.gitignore`, `.dockerignore`, `LICENSE`, `Dockerfile`, Compose, manifeste du Hub, vérification CI et en-tête des outils relus ; un sujet par commit, sans mention d’outil, en UTC |
 
-`catch` restants, par raison :
+Delta 2.1, chapitre par chapitre : 39, commentaires des nouveaux modules relus, chacun dit une raison (protocole RFB, agent QEMU, `lock_key_sync` de QEMU), aucun ne raconte le code ; 40, vocabulaire du dépôt gardé (`presse`, `disposition`, `passe`, `vivant`), noms du protocole gardés là où ils traversent (`ClientCutText`, `keysym`) ; 41, `git diff --check` propre ; 42, l’adresse versionnée `/v/<version>/` réécrite dans `src/main.js` remplacée par `cheminVersionne` du socle, qui la portait déjà ; 43, 27 `catch` nouveaux classés ci-dessous, un qui avalait un presse-papiers refusé le dit maintenant ; 44, la route du clavier lisait ses paramètres sous condition et laissait passer un paramètre inconnu : lus en tête, comme partout ; 45, un seul contrat d’erreur conservé (`ErreurHttp`, raisons de détection rendues en `{ disposition: null, raison, message }`) ; 46, aucune dépendance ajoutée, décompression par `DecompressionStream` du navigateur ; 47, 15 cassures volontaires du delta, toutes détectées ; 48, README (droits de l’agent, console sans Entrée automatique) et SECURITY.md mis à jour, un sujet par commit.
+
+`catch` restants, par raison (2.0 ; le delta 2.1 suit le tableau) :
 
 | Raison | Nombre | Où |
 |---|---|---|
@@ -36,6 +40,8 @@ Démarrage et parcours de bout en bout, sur l’arbre final, le 2026-10-12 : `ou
 | journalisée, ou portée dans l’état du service | 5 | `socle/`, `src/main.js` |
 | connexion rompue : fermée ou retirée, rien d’autre à faire | 4 | `src/main.js`, `src/websocket.js`, `web/ecran.js` |
 | rapportée dans le résultat de l’étape | 2 | `socle/` |
+
+Delta 2.1 : `rg -o 'catch\s*\(\s*\w*\s*\)\s*\{|catch\s*\{|\.catch\(' . -g '!SECURITY.md' -g '!NO-VIBE.md' | wc -l` → 123 à `4bedc07`, 150 sur l’arbre final ; les 27 nouveaux : montrée à l’écran ou rendue au demandeur avec sa cause, 9 (`src/clavier.js`, `web/app.js`, `web/ecran.js`, `web/terminal.js`) ; connexion rompue, fermée ou retirée, 5 (`src/ecran.js`) ; tâche facultative dont l’échec n’a rien à montrer, 4 (plein écran, copie différée vers le presse-papiers local, abandon d’un flux) ; relevée ou transmise, 3 (`src/api.js`, `src/ecran.js`) ; valeur de repli explicite, 3 (statut de l’agent illisible, stockage du navigateur absent, message illisible) ; sans effet voulu, raison écrite, 3.
 
 ## Tests
 Cassures volontaires (REQ-CODE-005) : chacune posée seule, la suite du service lancée en entier, le fichier rétabli (`mutations_proxlab.py`, hors dépôt), sur l’arbre de la passe.
@@ -66,6 +72,26 @@ Cassures volontaires (REQ-CODE-005) : chacune posée seule, la suite du service 
 | la réponse VNC oublie l’inversion des bits de la clé | `src/des.js` | 1 | « écran d'une VM : poignée VNC faite par ProxLab, le ticket ne sort jamais, seuls les messages d'un client RFB passent » |
 | un conteneur ouvre un écran VNC | `src/api.js` | 1 | « écran d'une VM : poignée VNC faite par ProxLab, le ticket ne sort jamais, seuls les messages d'un client RFB passent » |
 
+Delta 2.1 (`mutations21.py`, hors dépôt), sur l’arbre final : 15 cassures, 15 détectées ; une passait d’abord inaperçue (la sortie de la VM sous sa forme « système » n’était plus bornée) et a ajouté un essai.
+
+| Cassure | Fichier | Essais en échec | Premier essai qui échoue |
+|---|---|---|---|
+| un presse-papiers étendu démesuré passe vers Proxmox | `src/ecran.js` | 2 | « écran d'une VM : poignée VNC faite par ProxLab, le ticket ne sort jamais, seuls les messages d'un client RFB passent » |
+| un message envoyé avant ClientInit atteint Proxmox | `src/ecran.js` | 1 | « écran d'une VM : poignée VNC faite par ProxLab, le ticket ne sort jamais, seuls les messages d'un client RFB passent » |
+| le ticket VNC est demandé avec le jeton du service, pas au nom de l’utilisateur | `src/ecran.js` | 2 | « écran d'une VM : poignée VNC faite par ProxLab, le ticket ne sort jamais, seuls les messages d'un client RFB passent » |
+| la console texte d’une VM sans port série part vers Proxmox | `src/api.js` | 1 | « console d'une VM sans port série : refus clair avant Proxmox, ajout par l'administrateur, presse-papiers branché sur l'affichage » |
+| un administrateur sans renfort change l’accès d’une VM | `src/api.js` | 1 | « console d'une VM sans port série : refus clair avant Proxmox, ajout par l'administrateur, presse-papiers branché sur l'affichage » |
+| le presse-papiers est branché sur un affichage qxl | `src/api.js` | 1 | « console d'une VM sans port série : refus clair avant Proxmox, ajout par l'administrateur, presse-papiers branché sur l'affichage » |
+| l’écriture de l’accès ne porte plus l’empreinte de la configuration lue | `src/api.js` | 1 | « clavier de la VM : demandé à l'agent QEMU par un script fixe, disposition reconnue, agent ajouté par l'administrateur » |
+| la lecture seule lit le clavier de la VM | `src/api.js` | 2 | « autorisation : chaque route refuse l'anonyme, la lecture et le membre selon son rôle déclaré, et le Hub ne vaut jamais session » |
+| le clavier se relit sans attendre cinq secondes | `src/api.js` | 1 | « clavier de la VM : demandé à l'agent QEMU par un script fixe, disposition reconnue, agent ajouté par l'administrateur » |
+| une lecture du clavier échappe au journal | `src/api.js` | 1 | « clavier de la VM : demandé à l'agent QEMU par un script fixe, disposition reconnue, agent ajouté par l'administrateur » |
+| un paramètre de requête inconnu passe sur le clavier | `src/api.js` | 1 | « clavier de la VM : demandé à l'agent QEMU par un script fixe, disposition reconnue, agent ajouté par l'administrateur » |
+| la sortie de la VM n’est plus bornée | `src/clavier.js` | 1 | « clavier de la VM : demandé à l'agent QEMU par un script fixe, disposition reconnue, agent ajouté par l'administrateur » |
+| une variante à touches mortes passe pour l’AZERTY | `src/clavier.js` | 1 | « clavier de la VM : demandé à l'agent QEMU par un script fixe, disposition reconnue, agent ajouté par l'administrateur » |
+| un droit Proxmox manquant passe pour un agent absent | `src/clavier.js` | 1 | « clavier de la VM : demandé à l'agent QEMU par un script fixe, disposition reconnue, agent ajouté par l'administrateur » |
+| un fichier d’une autre version est gardé un an | `src/main.js` | 1 | « en-têtes de sécurité, nonce, sonde publique minimale, security.txt » |
+
 Le faux Proxmox est un vrai serveur HTTPS à autorité et feuille tirées à la volée, qui parle l’API et le termproxy ; les essais passent par les routes, avec de vraies sessions, de vrais renforts, le vrai jeton du Hub, un vrai récepteur d’alertes. Ils portent sur les frontières et les chemins d’erreur : chaque route par rôle et par jeton, segments de chemin piégés, champs et paramètres inconnus, corps géants, CSRF et origine, empreinte fausse, secrets jamais rendus, passe rejouée ou volée, refus journalisés, rotation de la clé, sauvegarde et restauration, retrait de la liaison.
 
 ## Repository style profile
@@ -86,8 +112,8 @@ Relancé à chaque génération de ce fichier (bash, LC_ALL=C.UTF-8) ; un résul
 | B.5.8 | `rg -n '\b(def\|function\|func\|fn)\s+\w*(process\|handle\|manage\|perform\|execute\|do)_?\w*\s*\(' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne |  |
 | B.5.9 | `rg -o '\b\w+(Manager\|Service\|Handler\|Provider\|Factory\|Helper\|Util\|Wrapper\|Processor\|Engine)\b' . -g '!SECURITY.md' -g '!NO-VIBE.md' \| cut -d: -f2- \| sort -u` | 0 ligne |  |
 | B.5.10 | `find . -path ./node_modules -prune -o -type f -regextype posix-extended -regex '.*/(utils?\|helpers?\|common\|misc\|shared)\.(py\|ts\|js\|go\|rb\|java)' -print` | 0 ligne |  |
-| B.5.11 | `rg -n '\b(data\|result\|output\|temp\|tmp\|res\|ret\|val\|obj\|item)\b\s*=' . -g '!SECURITY.md' -g '!NO-VIBE.md' \| wc -l` | `4` | `res`, la réponse HTTP de Node dans les rappels de `https.request` (client de Proxmox, émetteur d’alertes) ; `ev.data`, la donnée d’un message WebSocket du navigateur (API du DOM) |
-| B.5.12 | `rg -n 'catch\s*\(\s*(e\|err\|error)\s*\)\|catch\s*\{' . -g '!SECURITY.md' -g '!NO-VIBE.md' \| wc -l` | `88` | relus un à un avec les `.catch(` : 133 au total, par raison ci-dessous |
+| B.5.11 | `rg -n '\b(data\|result\|output\|temp\|tmp\|res\|ret\|val\|obj\|item)\b\s*=' . -g '!SECURITY.md' -g '!NO-VIBE.md' \| wc -l` | `4` | `res`, la réponse HTTP de Node dans les rappels de `https.request` (client de Proxmox, émetteur d’alertes) ; `ev.data`, la donnée d’un message WebSocket du navigateur (API du DOM) ; `res`, la réponse simulée d’un essai du socle |
+| B.5.12 | `rg -n 'catch\s*\(\s*(e\|err\|error)\s*\)\|catch\s*\{' . -g '!SECURITY.md' -g '!NO-VIBE.md' \| wc -l` | `99` | relus un à un avec les `.catch(` : 133 au total en 2.0, 27 de plus en 2.1, par raison ci-dessus |
 | B.5.13 | `rg -n 'An error occurred\|Something went wrong\|Unexpected error\|Une erreur est survenue\|Quelque chose s.est mal passé' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne |  |
 | B.5.14 | `rg -n 'except\s*:\|except Exception\s*:' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne | aucun Python dans le dépôt |
 | B.5.15 | `rg -n 'logger\.(info\|debug)\(f?["\x27](Starting\|Entering\|Finished\|Exiting\|Called)' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne |  |
@@ -96,7 +122,7 @@ Relancé à chaque génération de ce fichier (bash, LC_ALL=C.UTF-8) ; un résul
 | 45.1.1 | `rg -n ':\s*any\b\|as unknown as' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne | JavaScript sans TypeScript |
 | 47.1.1 | `rg -n 'assert\.ok\(true\)\|toBeDefined\(\)\|assert\(true\)\|assertTrue\(True\)' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne |  |
 | 48.3.1 | `rg -n -i 'your-api-key-here\|TODO: implement\|FIXME: AI\|lorem ipsum\|example\.com/api' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne |  |
-| 48.3.2 | `rg -n -i 'placeholder' . -g '!SECURITY.md' -g '!NO-VIBE.md' \| wc -l` | `19` | attributs `placeholder` des champs de l’interface et du socle, leur style, et le champ `placeholder` du manifeste du Hub (une adresse de la plage de documentation) |
+| 48.3.2 | `rg -n -i 'placeholder' . -g '!SECURITY.md' -g '!NO-VIBE.md' \| wc -l` | `20` | attributs `placeholder` des champs (dont la zone d’envoi du presse-papiers de l’écran) de l’interface et du socle, leur style, et le champ `placeholder` du manifeste du Hub (une adresse de la plage de documentation) |
 | 48.3.3 | `rg -n '\b(TODO\|FIXME\|XXX\|HACK)\b' . -g '!SECURITY.md' -g '!NO-VIBE.md'` | 0 ligne |  |
 | 48.4.1 | `git log --all --format='%B' \| rg -i 'co-authored-by\|generated with'` | 0 ligne | tout l’historique |
 
@@ -119,10 +145,10 @@ Commits de la passe :
 - `4bedc07 essais : « .. » au milieu d'un segment, taille hors bornes avant une valide, chaque motif de refus de console, base refermée à l'ouverture`
 
 ## Verification (chapter 49)
-- [x] Full suite passes and matches the baseline — les 83 essais de la référence, verts avant et après la passe, relancés à la génération de ce fichier
-- [x] Public API diff empty — inventaire de la surface publique identique ligne à ligne
+- [x] Full suite passes and matches the baseline — les 83 essais de la référence, verts avant et après la passe, relancés à la génération de ce fichier ; delta 2.1 : 88 essais (21 du service, 67 du socle), verts sur l’arbre final
+- [x] Public API diff empty — inventaire de la surface publique identique ligne à ligne ; delta 2.1 : ajouts seuls, aucune route ni aucun schéma existants changés (« Behaviour freeze »)
 - [x] Characterisation tests deleted after use — aucun n’a été écrit
-- [x] Read-aloud test passed — les 5 fichiers de code touchés par la passe, relus aux endroits touchés, autour de chaque fonction dont une instruction a changé
+- [x] Read-aloud test passed — les 5 fichiers de code touchés par la passe, relus aux endroits touchés, autour de chaque fonction dont une instruction a changé ; delta 2.1 : les fichiers touchés par les commits de l’audit (`src/api.js`, `src/clavier.js`, `src/main.js`, `web/app.js`, `web/ecran.js`), relus de la même façon
 - [x] Blind-comparison test passed — les passages touchés, commentaires compris, ont la forme de ceux qui les entourent et du socle : même langue, phrases courtes, raisons plutôt que descriptions
 - [x] Commit history: one concern per commit, repository style, no attribution trailers
 - [x] REQ-CODE-001 to REQ-CODE-006 all PASS
