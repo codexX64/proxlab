@@ -81,7 +81,7 @@ const COMMUNES = { ' ': [T('Space')], '\n': [T('Enter')], '\t': [T('Tab')] };
 export const DISPOSITIONS = { fr: { nom: 'AZERTY (français)', carte: { ...carteFr(), ...COMMUNES } }, us: { nom: 'QWERTY (US)', carte: { ...carteUs(), ...COMMUNES } } };
 // Les caractères qu'une disposition ne sait pas taper.
 export const intapables = (texte, d) => [...new Set([...texte.replace(/\r\n?/g, '\n')].filter(ch => !DISPOSITIONS[d]?.carte[ch]))];
-export const estMac = () => /Mac|iPhone|iPad/.test(navigator.userAgentData?.platform || navigator.platform || '');
+export const estMac = () => /mac|iphone|ipad/i.test(navigator.userAgentData?.platform || navigator.platform || '');
 
 export class Ecran {
   constructor(hote, ws, { surEtat = () => {}, surPresse = () => {}, surColler = null } = {}) {
@@ -98,7 +98,13 @@ export class Ecran {
     this.toile.setAttribute('role', 'img');
     this.toile.setAttribute('aria-label', 'Écran de la machine : cliquer pour lui donner le clavier');
     this.ctx = this.toile.getContext('2d', { alpha: false });
-    hote.replaceChildren(this.toile);
+    // ⌘V / Ctrl+V : le collage du navigateur est dirigé dans ce champ caché,
+    // le temps d'une touche : le texte arrive sans demande d'autorisation.
+    this.piege = document.createElement('textarea');
+    this.piege.className = 'ecran-piege';
+    this.piege.tabIndex = -1;
+    this.piege.setAttribute('aria-hidden', 'true');
+    hote.replaceChildren(this.toile, this.piege);
     this.brancher();
   }
 
@@ -284,9 +290,14 @@ export class Ecran {
     surAvance(caracteres.length, caracteres.length);
     return { tapes: caracteres.length - sautes, sautes };
   }
+  pieger(maj) {
+    this.piege.value = '';
+    // Sans collage natif (navigateur qui ne le fait pas) : la lecture du presse-papiers, par l'appelant.
+    this.collage = { maj, minuterie: setTimeout(() => { if (!this.collage) return; this.collage = null; this.toile.focus({ preventScroll: true }); this.surColler({ maj, texte: null }); }, 500) };
+    this.piege.focus({ preventScroll: true });
+  }
   // Une combinaison Ctrl(+Maj)+lettre envoyée à l'invité.
-  combinaison(lettre, maj = false) {
-    const code = `Key${lettre.toUpperCase()}`;
+  combinaison(lettre, maj = false, code = `Key${lettre.toUpperCase()}`) {
     this.touche({ code: 'ControlLeft', key: 'Control' }, true);
     if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, true);
     this.touche({ code, key: lettre }, true); this.touche({ code, key: lettre }, false);
@@ -335,15 +346,24 @@ export class Ecran {
     // ⌘+lettre devient Ctrl+lettre dans l'invité ; ⌘ seul reste la touche Super.
     const mod = e => (this.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey;
     t.addEventListener('keydown', e => {
+      // La lettre selon la disposition d'ici (⌘A en AZERTY est la touche KeyQ) ;
+      // rejouée dans l'invité sur la même touche physique.
+      const lettre = e.key.length === 1 ? e.key.toLowerCase() : '';
+      if (mod(e) && lettre === 'v' && this.surColler) {
+        // Pas de preventDefault : le collage natif doit avoir lieu, dans le piège.
+        if (e.repeat) return;
+        if (this.mac) this.metaSeul = null;
+        this.relacher();
+        this.pieger(e.shiftKey);
+        return;
+      }
       e.preventDefault();
       if (this.mac && /^Meta/.test(e.code)) { this.metaSeul = e.code; return; }
-      if (mod(e) && /^Key[VCXAZY]$/.test(e.code)) {
+      if (mod(e) && /^[cxazy]$/.test(lettre) && /^Key/.test(e.code)) {
         if (e.repeat) return;
-        const l = e.code.slice(3).toLowerCase();
         if (this.mac) this.metaSeul = null;
-        if (l === 'v' && this.surColler) { const maj = e.shiftKey; this.relacher(); this.surColler({ maj }); return; }
-        if (l === 'c' || l === 'x') this.armerCopie();
-        if (this.mac) this.combinaison(l, e.shiftKey);
+        if (lettre === 'c' || lettre === 'x') this.armerCopie();
+        if (this.mac) this.combinaison(lettre, e.shiftKey, e.code);
         else { this.enfoncees.set(e.code, e.key); this.touche(e, true); }
         return;
       }
@@ -361,6 +381,15 @@ export class Ecran {
       this.touche({ code: e.code, key }, false);
     });
     t.addEventListener('blur', () => this.relacher());
+    this.piege.addEventListener('paste', e => {
+      e.preventDefault();
+      const c = this.collage; this.collage = null;
+      if (!c) return;
+      clearTimeout(c.minuterie);
+      this.toile.focus({ preventScroll: true });
+      this.surColler({ maj: c.maj, texte: e.clipboardData?.getData('text/plain') ?? '' });
+    });
+    this.piege.addEventListener('keydown', e => { if (!/^(Meta|Control|Shift)/.test(e.key) && !(e.metaKey || e.ctrlKey)) { e.preventDefault(); this.toile.focus({ preventScroll: true }); } });
     const masque = e => (e.buttons & 1 ? 1 : 0) | (e.buttons & 4 ? 2 : 0) | (e.buttons & 2 ? 4 : 0);
     t.addEventListener('pointerdown', e => { t.focus(); t.setPointerCapture?.(e.pointerId); this.boutons = masque(e); this.pointeur(...this.position(e), this.boutons); e.preventDefault(); });
     t.addEventListener('pointerup', e => { this.boutons = masque(e); this.pointeur(...this.position(e), this.boutons); });

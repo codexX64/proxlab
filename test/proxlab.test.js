@@ -483,15 +483,27 @@ test('console d\'une VM sans port série : refus clair avant Proxmox, ajout par 
   const r = await admin.post(acces, { portSerie: true, pressePapiers: true });
   assert.equal(r.status, 200, JSON.stringify(r.json));
   assert.deepEqual(r.json.champs.sort(), ['serial0', 'vga']);
-  const conf = pve.etat.machines.find(m => m.vmid === 102).conf;
-  assert.deepEqual([conf.serial0, conf.vga], ['socket', 'std,clipboard=vnc']);
+  const vm102 = pve.etat.machines.find(m => m.vmid === 102);
+  assert.deepEqual([vm102.attente.serial0, vm102.attente.vga], ['socket', 'std,clipboard=vnc'], 'en attente du prochain démarrage');
   assert.equal((await admin.post(acces, { portSerie: true, pressePapiers: true })).json.deja, true, 'rien à refaire');
+  // Tant que la VM n'a pas redémarré : rien d'actif, et la fiche le dit.
+  const enAttente = await membre.get(machine('pve-a', 'qemu', 102));
+  assert.equal(enAttente.json.config.serial0, undefined, 'la fiche montre la configuration en vigueur');
+  assert.deepEqual(enAttente.json.enAttente.sort(), ['serial0', 'vga']);
+  const avant = await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '102' });
+  assert.equal(avant.status, 409);
+  assert.equal(avant.json.details?.prevu, true);
+  assert.match(avant.json.error, /redémarre/);
+  assert.equal((await membre.post(machine('pve-a', 'qemu', 102) + '/alimentation', { action: 'reboot' })).status, 200);
+  assert.deepEqual([vm102.conf.serial0, vm102.conf.vga], ['socket', 'std,clipboard=vnc']);
+  assert.deepEqual((await membre.get(machine('pve-a', 'qemu', 102))).json.enAttente, []);
   // Un affichage SPICE (qxl) ne prend pas le presse-papiers VNC ; les options existantes sont gardées.
   pve.etat.machines.find(m => m.vmid === 130).conf = { vga: 'qxl,memory=32' };
   assert.equal((await admin.post(machine('pve-b', 'qemu', 130) + '/acces', { pressePapiers: true })).status, 409);
   pve.etat.machines.find(m => m.vmid === 130).conf = { vga: 'virtio,memory=32,clipboard=foo' };
   await admin.post(machine('pve-b', 'qemu', 130) + '/acces', { pressePapiers: true });
-  assert.equal(pve.etat.machines.find(m => m.vmid === 130).conf.vga, 'virtio,memory=32,clipboard=vnc');
+  const vm130 = pve.etat.machines.find(m => m.vmid === 130);
+  assert.equal(vm130.attente?.vga ?? vm130.conf.vga, 'virtio,memory=32,clipboard=vnc');
   // Avec le port série, la console s'ouvre.
   const p = await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '102' });
   assert.equal(p.status, 200);

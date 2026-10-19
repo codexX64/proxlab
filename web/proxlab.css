@@ -129,12 +129,14 @@ canvas.ecran:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .sans-serie p{margin:0 0 10px}
 .sans-serie .etapes{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:10px;font-size:13px}
 .sans-serie .cmd{display:inline-flex;align-items:center;gap:4px;margin-top:4px;max-width:100%}
+.sans-serie li.fait{color:var(--muted)}
+.presse-mode{margin-left:0}
 .sans-serie code{font-family:var(--mono);font-size:12px;background:var(--well);padding:3px 7px;border-radius:6px;overflow-wrap:anywhere}
 .terminal{height:min(62vh,560px);min-height:260px;overflow:hidden;user-select:text;-webkit-user-select:text;cursor:text;background:#0D1014;color:#D7DCE3;border-radius:var(--r-ctl);padding:10px;font-family:var(--mono);font-size:13px;line-height:1.3;white-space:pre;outline:none}
 .terminal:focus-within,.terminal:focus{box-shadow:0 0 0 2px var(--accent)}
 .terminal-ligne{height:1.3em}
 .terminal-sonde{position:absolute;visibility:hidden;white-space:pre}
-.terminal-saisie{position:absolute;opacity:0;width:1px;height:1px;left:-9999px}
+.terminal-saisie,.ecran-piege{position:absolute;opacity:0;width:1px;height:1px;left:-9999px}
 .t-gras{font-weight:600}.t-pale{opacity:.7}
 .t-curseur{background:#D7DCE3;color:#0D1014}
 .t-inv{color:#0D1014}.t-bfond{background:#D7DCE3}

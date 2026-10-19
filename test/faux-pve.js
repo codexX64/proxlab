@@ -146,13 +146,15 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
           const cle = `${m.type}/${m.vmid}`;
           const reste = s.slice(4).join('/');
           if (reste === 'status/current') return repondre(200, { ...m, qmpstatus: m.status });
-          if (reste === 'config' && req.method === 'GET') return repondre(200, { name: m.name, cores: 2, sockets: 1, memory: Math.round(m.maxmem / 1048576), ostype: 'l26', onboot: 1, net0: 'virtio=02:00:00:00:01:01,bridge=vmbr0', scsi0: 'local-lvm:vm-' + m.vmid + '-disk-0,size=32G', cipassword: '**********', sshkeys: 'ssh-ed25519%20AAAA', ciuser: 'essai', digest: 'abc', description: 'Machine fabriquée pour les essais.', ...m.conf });
-          if (reste === 'config' && req.method === 'PUT') { if (params.name) m.name = params.name; if (params.hostname) m.name = params.hostname; if (params.memory) m.maxmem = Number(params.memory) * 1048576; for (const k of ['serial0', 'vga']) if (params[k]) (m.conf ||= {})[k] = params[k]; return repondre(200, null); }
+          if (reste === 'config' && req.method === 'GET') return repondre(200, { name: m.name, cores: 2, sockets: 1, memory: Math.round(m.maxmem / 1048576), ostype: 'l26', onboot: 1, net0: 'virtio=02:00:00:00:01:01,bridge=vmbr0', scsi0: 'local-lvm:vm-' + m.vmid + '-disk-0,size=32G', cipassword: '**********', sshkeys: 'ssh-ed25519%20AAAA', ciuser: 'essai', digest: 'abc', description: 'Machine fabriquée pour les essais.', ...m.conf, ...(params.current ? {} : m.attente) });
+          if (reste === 'config' && req.method === 'PUT') { if (params.name) m.name = params.name; if (params.hostname) m.name = params.hostname; if (params.memory) m.maxmem = Number(params.memory) * 1048576; for (const k of ['serial0', 'vga']) if (params[k]) (m.status === 'running' ? (m.attente ||= {}) : (m.conf ||= {}))[k] = params[k]; return repondre(200, null); }
           if (reste === 'rrddata') return repondre(200, rrd(m.vmid));
           if (s[4] === 'status' && req.method === 'POST') {
             const action = s[5];
             if (action === 'start' && m.status === 'running') return repondre(500, null, `VM ${m.vmid} already running`);
             m.status = ['start', 'resume', 'reboot', 'reset'].includes(action) ? 'running' : action === 'suspend' ? 'paused' : 'stopped';
+            // Comme Proxmox : le matériel en attente prend effet au démarrage (ou au redémarrage demandé à Proxmox).
+            if (['start', 'reboot'].includes(action) && m.attente) { m.conf = { ...m.conf, ...m.attente }; delete m.attente; }
             m.mem = m.status === 'running' ? Math.round(m.maxmem / 3) : 0;
             return repondre(200, tache(node, `qm${action}`, m.vmid));
           }

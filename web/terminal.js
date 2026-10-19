@@ -29,7 +29,7 @@ export class Terminal {
   constructor(hote, { surSaisie, surTaille, surCopie = () => {}, surRefus = () => {} } = {}) {
     this.surSaisie = surSaisie; this.surTaille = surTaille; this.surCopie = surCopie; this.surRefus = surRefus;
     this.encadre = false; this.glisse = false;
-    this.mac = /Mac|iPhone|iPad/.test(navigator.userAgentData?.platform || navigator.platform || '');
+    this.mac = /mac|iphone|ipad/i.test(navigator.userAgentData?.platform || navigator.platform || '');
     this.cols = 80; this.lignes = 24; this.x = 0; this.y = 0;
     this.attr = vierge(); this.etat = 'texte'; this.params = ''; this.haut = 0; this.bas = 23;
     this.sauve = null; this.alt = null; this.sale = new Set(); this.prevu = false;
@@ -144,7 +144,8 @@ export class Terminal {
     this.ecran.addEventListener('keydown', e => {
       const r = clavier(e);
       if (r === true) return;
-      if (r === 'coller') { e.preventDefault(); this.collerPressePapiers(); return; }
+      // Le collage natif va dans la saisie : pas de demande d'autorisation.
+      if (r === 'coller') { window.getSelection?.()?.removeAllRanges(); this.saisie.focus(); return; }
       if (/^(Shift|Control|Alt|Meta)/.test(e.key) || e.metaKey) return;
       window.getSelection?.()?.removeAllRanges();
       this.saisie.focus();

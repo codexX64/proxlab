@@ -612,6 +612,11 @@ const MOD = estMac() ? '⌘' : 'Ctrl+';
 function ecranMachine(f, garder, relire) {
   const cible = { noeud: f.node, type: f.type, vmid: String(f.vmid) }, enMarche = f.status === 'running';
   const agent = /clipboard=vnc/.test(f.config?.vga || '');
+  const agentPrevu = !agent && (f.enAttente || []).includes('vga');
+  // ⌘V dans l'écran : taper le texte (marche partout, même à l'écran de
+  // connexion) ou passer par le presse-papiers de la VM (spice-vdagent, qui ne
+  // relaie rien sous une session GNOME Wayland — Fedora par défaut).
+  let modeColler = lireLocal('proxlab-coller', 'taper');
   const hote = h('div', { class: 'ecran-hote' });
   const etat = h('span', { class: 'note', text: 'fermé' });
   let ecran = null, ouvertA = 0, reprise = false;
@@ -651,7 +656,8 @@ function ecranMachine(f, garder, relire) {
       h('div', { class: 'presse-tete' }, h('b', { text: 'Copié dans la VM' }), copierIci),
       recu,
       agent ? h('p', { class: 'hint', text: `Copie dans la VM : le texte arrive ici. ${MOD}C dans l'écran le met directement dans ton presse-papiers.` })
-        : h('div', { class: 'note-bloc' }, h('p', { class: 'hint', text: 'Le presse-papiers de cette VM n\'est pas branché : ce qu\'elle copie ne peut pas sortir. Le coller fonctionne quand même, en tapant le texte.' }), branche)),
+        : agentPrevu ? h('p', { class: 'hint', text: 'Presse-papiers branché, actif au prochain redémarrage de la VM (bouton Redémarrer, en haut). D\'ici là, coller tape le texte.' })
+          : h('div', { class: 'note-bloc' }, h('p', { class: 'hint', text: 'Le presse-papiers de cette VM n\'est pas branché : ce qu\'elle copie ne peut pas sortir. Le coller fonctionne quand même, en tapant le texte.' }), branche)),
     h('div', { class: 'presse-col' },
       h('div', { class: 'presse-tete' }, h('b', { text: 'Envoyer à la VM' }), avance),
       aEnvoyer,
@@ -659,7 +665,10 @@ function ecranMachine(f, garder, relire) {
         agent ? h('button', { class: 'btn sm solid', type: 'button', onclick: () => coller(aEnvoyer.value) }, icone('presse', 13), 'Coller dans la VM') : null,
         h('button', { class: 'btn sm' + (agent ? '' : ' solid'), type: 'button', onclick: () => taper(aEnvoyer.value) }, icone('clavier', 13), 'Taper dans la VM'),
         h('label', { class: 'presse-label' }, h('span', { class: 'cache-s', text: 'Clavier de la VM' }), choixDispo)),
-      h('p', { class: 'hint', text: agent ? `${MOD}V dans l'écran colle ton presse-papiers dans la VM.` : `${MOD}V dans l'écran tape ton presse-papiers, touche par touche, au clavier ${DISPOSITIONS[disposition].nom}. Pratique aussi pour un mot de passe à l'écran de connexion.` })));
+      agent ? h('label', { class: 'presse-label presse-mode' }, h('span', { text: `${MOD}V dans l'écran` }),
+        h('select', { class: 'presse-dispo', onchange: e => { modeColler = e.target.value; poserLocal('proxlab-coller', modeColler); } },
+          h('option', { value: 'taper', text: 'tape le texte', selected: modeColler !== 'agent' }), h('option', { value: 'agent', text: 'colle par le presse-papiers de la VM', selected: modeColler === 'agent' }))) : null,
+      h('p', { class: 'hint', text: `${MOD}V dans l'écran tape ton presse-papiers touche par touche, au clavier choisi : ça marche partout, même pour un mot de passe à l'écran de connexion.${agent ? ' Le presse-papiers de la VM demande spice-vdagent, qui ne relaie rien sous GNOME Wayland (Fedora par défaut).' : ''}` })));
   const btnPresse = h('button', { class: 'btn sm', type: 'button', 'aria-expanded': 'false', onclick: () => {
     panneau.hidden = !panneau.hidden; btnPresse.setAttribute('aria-expanded', String(!panneau.hidden)); btnPresse.classList.remove('signal');
   } }, icone('presse', 14), h('span', { class: 'cache-s', text: 'Presse-papiers' }));
@@ -682,12 +691,14 @@ function ecranMachine(f, garder, relire) {
         if (panneau.hidden) btnPresse.classList.add('signal');
       },
       // ⌘V / Ctrl+V dans l'écran : le presse-papiers d'ici, collé (agent) ou tapé.
-      surColler: ({ maj }) => {
+      surColler: ({ maj, texte }) => {
+        const envoyer = t => {
+          if (!t) return toast('Le presse-papiers est vide.');
+          if (agent && modeColler === 'agent') { ecran.envoyerPresse(t); setTimeout(() => ecran?.combinaison('v', maj), 150); } else taper(t);
+        };
+        if (texte !== null && texte !== undefined) return envoyer(texte);
         if (!navigator.clipboard?.readText) { panneau.hidden = false; aEnvoyer.focus(); return toast('Colle ton texte dans le panneau, puis « Taper dans la VM ».'); }
-        navigator.clipboard.readText().then(texte => {
-          if (!texte) return;
-          if (agent) { ecran.envoyerPresse(texte); setTimeout(() => ecran?.combinaison('v', maj), 150); } else taper(texte);
-        }, () => { panneau.hidden = false; btnPresse.setAttribute('aria-expanded', 'true'); aEnvoyer.focus(); toast(`Le navigateur n'a pas donné le presse-papiers : colle-le ici (${MOD}V), puis envoie-le.`, true); });
+        navigator.clipboard.readText().then(envoyer, () => { panneau.hidden = false; btnPresse.setAttribute('aria-expanded', 'true'); aEnvoyer.focus(); toast(`Le navigateur n'a pas donné le presse-papiers : colle-le ici (${MOD}V), puis envoie-le.`, true); });
       },
     });
     garder({ detruire: () => ecran?.relacher() }, ws);
@@ -714,11 +725,12 @@ function ecranMachine(f, garder, relire) {
 
 // La console d'une VM sans port série : ce qu'il faut, et le bouton pour l'ajouter.
 function sansPortSerie(f, relire) {
+  const prevu = (f.enAttente || []).includes('serial0');
   const cmd = 'sudo systemctl enable --now serial-getty@ttyS0.service';
   return h('div', { class: 'pad sans-serie' },
-    h('p', { text: 'La console texte d\'une VM passe par son port série, et celle-ci n\'en a pas. L\'onglet Écran marche sans lui.' }),
+    h('p', { text: prevu ? 'Le port série est ajouté mais pas encore actif : redémarre la VM depuis ProxLab (Redémarrer, en haut), puis ouvre la console.' : 'La console texte d\'une VM passe par son port série, et celle-ci n\'en a pas. L\'onglet Écran marche sans lui.' }),
     h('ol', { class: 'etapes' },
-      h('li', {}, admin ? h('span', {}, 'Ajouter le port série : ', h('button', { class: 'btn sm', type: 'button', onclick: sur(async () => {
+      prevu ? h('li', { class: 'fait', text: 'Port série ajouté : il sera actif au prochain démarrage.' }) : h('li', {}, admin ? h('span', {}, 'Ajouter le port série : ', h('button', { class: 'btn sm', type: 'button', onclick: sur(async () => {
         if (!await confirmer('Ajouter un port série à cette VM ?', 'Proxmox ajoute « serial0: socket ». Il est pris en compte au prochain démarrage complet : Redémarrer depuis ProxLab suffit.', { oui: 'Ajouter' })) return;
         await api.post(`/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/acces`, { portSerie: true });
         toast('Port série ajouté : redémarre la VM.');

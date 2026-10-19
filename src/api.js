@@ -158,12 +158,16 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
   r.get('/api/machines/:noeud/:type/:vmid', async ctx => {
     session(ctx);
     const m = machine(ctx.params);
-    const [statut, config, instantanes] = await pve(() => Promise.all([
-      proxmox.get(m.base + '/status/current'), proxmox.get(m.base + '/config'), proxmox.get(m.base + '/snapshot').catch(() => []),
+    // La configuration en vigueur (current=1) ; sans lui, Proxmox rend les
+    // valeurs en attente du prochain démarrage, et un port série ou un
+    // presse-papiers tout juste ajoutés passeraient pour actifs.
+    const [statut, config, attente, instantanes] = await pve(() => Promise.all([
+      proxmox.get(m.base + '/status/current'), proxmox.get(m.base + '/config', { current: 1 }), proxmox.get(m.base + '/config'), proxmox.get(m.base + '/snapshot').catch(() => []),
     ]));
     return {
       ...machinePublique({ ...statut, node: m.noeud, type: m.type, vmid: m.vmid }),
       config: Object.fromEntries(Object.entries(config || {}).filter(([k]) => CONFIG_VISIBLE.test(k)).map(([k, v]) => [k, String(v).slice(0, 2000)])),
+      enAttente: ['serial0', 'vga'].filter(k => String(attente?.[k] ?? '') !== String(config?.[k] ?? '')),
       instantanes: (instantanes || []).filter(s => s.name !== 'current').map(s => ({ name: s.name, description: String(s.description || '').slice(0, 500), snaptime: nombre(s.snaptime), parent: s.parent || '', vmstate: !!s.vmstate })),
     };
   }, { role: 'lecture' });
@@ -413,8 +417,13 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     // La console texte d'une VM passe par son port série : sans lui, Proxmox
     // ne répond que « unable to find a serial interface ». On le dit avant.
     if (mode === 'texte' && b.type === 'qemu') {
-      const config = await pve(() => proxmox.get(machine({ noeud: b.noeud, type: 'qemu', vmid: b.vmid }).base + '/config'));
-      if (!Object.keys(config || {}).some(k => /^serial\d$/.test(k))) throw new ErreurHttp(409, 'Cette VM n\'a pas de port série : sa console texte passe par lui. Utilise l\'Écran, ou ajoute un port série.', { sansSerie: true });
+      const base = machine({ noeud: b.noeud, type: 'qemu', vmid: b.vmid }).base;
+      const config = await pve(() => proxmox.get(base + '/config', { current: 1 }));
+      if (!Object.keys(config || {}).some(k => /^serial\d$/.test(k))) {
+        const attente = await pve(() => proxmox.get(base + '/config'));
+        const prevu = Object.keys(attente || {}).some(k => /^serial\d$/.test(k));
+        throw new ErreurHttp(409, prevu ? 'Le port série est ajouté mais pas encore actif : redémarre la VM depuis ProxLab.' : 'Cette VM n\'a pas de port série : sa console texte passe par lui. Utilise l\'Écran, ou ajoute un port série.', { sansSerie: true, prevu });
+      }
     }
     const passe = crypto.randomBytes(24).toString('base64url');
     const t = Date.now();

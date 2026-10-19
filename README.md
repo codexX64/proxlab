@@ -88,13 +88,16 @@ ont leur bouton.
 
 **Presse-papiers de l'écran.** Dans les deux sens, par le presse-papiers étendu
 de VNC (UTF-8, 64 Kio au plus) : ⌘C/Ctrl+C dans l'écran rapporte ici ce que la
-VM a copié, ⌘V/Ctrl+V y colle le presse-papiers d'ici, et le panneau
-« Presse-papiers » montre et envoie le texte à la main. Il faut à la VM
-`clipboard=vnc` sur son affichage (bouton « Brancher le presse-papiers »,
-administrateur ; pris en compte au prochain redémarrage ; une VM ainsi réglée ne
-migre plus à chaud) et `spice-vdagent` dans l'invité. Sans cela, coller tape le
-texte touche par touche, à la disposition choisie (AZERTY ou QWERTY) : utile
-aussi pour un mot de passe à l'écran de connexion.
+VM a copié, et le panneau « Presse-papiers » montre et envoie le texte à la
+main. Il faut à la VM `clipboard=vnc` sur son affichage (bouton « Brancher le
+presse-papiers », administrateur ; pris en compte au prochain redémarrage ; une
+VM ainsi réglée ne migre plus à chaud) et `spice-vdagent` dans l'invité, qui ne
+relaie rien sous une session GNOME Wayland. ⌘V/Ctrl+V dans l'écran tape par
+défaut le presse-papiers d'ici touche par touche, à la disposition choisie
+(AZERTY ou QWERTY) : ça marche partout, même à l'écran de connexion ; le
+panneau permet de le faire passer plutôt par le presse-papiers de la VM. Le
+texte est pris par le collage du navigateur, sans demande d'autorisation, et
+⌘+lettre sur Mac devient Ctrl+lettre dans la VM (même touche physique).
 
 **Console d'une VM.** Elle passe par le port série de la VM : sans `serial0`,
 ProxLab le dit avant d'appeler Proxmox et propose de l'ajouter
