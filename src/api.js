@@ -332,7 +332,9 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     }
     if (b.agent && !agentActif(config?.agent)) params.agent = ['enabled=1', ...String(config?.agent || '').split(',').filter(o => o && !/^(enabled=|[01]$)/.test(o))].join(',');
     if (!Object.keys(params).length) return { ok: true, deja: true };
-    await pve(() => proxmox.put(m.base + '/config', params));
+    // Lue puis réécrite : l'empreinte de la configuration lue fait refuser
+    // l'écriture par Proxmox si quelqu'un l'a changée entre-temps.
+    await pve(() => proxmox.put(m.base + '/config', { ...params, ...(config?.digest ? { digest: String(config.digest) } : {}) }));
     clavierConnu.delete(m.cible);
     const qui = acteur(ctx);
     const quoi = [params.serial0 && 'port série', params.vga && 'presse-papiers', params.agent && 'agent QEMU'].filter(Boolean).join(', ');

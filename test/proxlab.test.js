@@ -552,6 +552,7 @@ test('clavier de la VM : demandé à l\'agent QEMU par un script fixe, dispositi
   assert.equal((await membre.post(machine('pve-a', 'qemu', 102) + '/acces', { agent: true })).status, 403);
   assert.equal((await admin.post(machine('pve-a', 'qemu', 102) + '/acces', { agent: true })).status, 200);
   assert.equal(vm.attente.agent, 'enabled=1,fstrim_cloned_disks=1');
+  assert.equal(pve.appels.findLast(a => a.methode === 'PUT' && a.chemin.endsWith('/qemu/102/config')).params.digest, 'abc', 'écriture liée à la configuration lue');
   await membre.post(machine('pve-a', 'qemu', 102) + '/alimentation', { action: 'reboot' });
   // Agent coché mais absent de la VM : la raison, pas une erreur.
   const absent = await membre.get(url);
