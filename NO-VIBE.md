@@ -153,6 +153,9 @@ Deux commits de fonction (plein écran qui remplit l'écran ; VM ajustée à la 
 ## Suivi du 2026-10-19 (2.1.13)
 Deux commits (qualité nette ; borne de trame selon le sens) et la version. 23 essais du service, verts ; parcours du navigateur : 28 + 17 vérifications (trois nouvelles sur un écran ×2 : VM aux pixels réels, plein écran, option coupée), vertes. Surface publique inchangée.
 
+## Suivi du 2026-10-19 (2.1.14)
+Un commit d'interface et la version. 23 essais verts ; parcours du navigateur 28 + 20 vérifications (taille fixe affichée, bouton dans la barre), vertes.
+
 ## Verification (chapter 49)
 - [x] Full suite passes and matches the baseline — les 83 essais de la référence, verts avant et après la passe, relancés à la génération de ce fichier ; delta 2.1 : 88 essais (21 du service, 67 du socle), verts sur l’arbre final
 - [x] Public API diff empty — inventaire de la surface publique identique ligne à ligne ; delta 2.1 : ajouts seuls, aucune route ni aucun schéma existants changés (« Behaviour freeze »)
