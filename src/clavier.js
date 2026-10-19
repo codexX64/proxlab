@@ -47,14 +47,14 @@ export function dispositionDe(brut) {
 // Sortie du script → { brut, source } ; brut est la première disposition trouvée.
 export function lireSortie(sortie) {
   const t = String(sortie || '');
-  const g = /^gnome .*?\('xkb', '([^']+)'\)/m.exec(t);
+  const g = /^gnome .*?\('xkb', '([^']{1,64})'\)/m.exec(t);
   if (g) return { brut: g[1], source: 'gnome' };
-  const x = /^x11 ([^\s,]+)/m.exec(t);
+  const x = /^x11 ([^\s,]{1,64})/m.exec(t);
   if (x) {
-    const v = /^variante ([^\s,]+)/m.exec(t);
+    const v = /^variante ([^\s,]{1,64})/m.exec(t);
     return { brut: v ? `${x[1]}+${v[1]}` : x[1], source: 'système' };
   }
-  const c = /^vc (\S+)/m.exec(t);
+  const c = /^vc (\S{1,64})/m.exec(t);
   if (c) return { brut: c[1], source: 'console' };
   return { brut: '', source: '' };
 }

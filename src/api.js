@@ -271,6 +271,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     if (m.type === 'lxc' && ['reset'].includes(action)) throw new ErreurHttp(400, 'Action indisponible sur un conteneur.');
     if (['shutdown', 'stop'].includes(action)) surveillance.arretVoulu(m.cible);
     const upid = await pve(() => proxmox.post(`${m.base}/status/${action}`, {}));
+    clavierConnu.delete(m.cible);   // le système qui redémarre peut changer de clavier, ou d'agent
     const [genre, verbe] = ACTIONS[action];
     const qui = acteur(ctx);
     evenements.noter({ genre, niveau: FORCEES.has(action) ? 'avertissement' : 'info', titre: `${m.type === 'qemu' ? 'VM' : 'CT'} ${m.vmid} ${verbe}`, corps: `Depuis ProxLab, par ${qui.acteur}.`, cible: m.cible, noeud: m.noeud, ...qui });
@@ -342,17 +343,26 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
 
   // La disposition du clavier de la VM, demandée à son agent QEMU (script fixe,
   // voir src/clavier.js), gardée deux minutes.
+  // Une lecture fait tourner un script dans la VM : une seule à la fois par VM,
+  // pas plus d'une toutes les cinq secondes même relancée, et chacune au journal
+  // (une ligne par VM et par minute).
   const clavierConnu = new Map();
   r.get('/api/machines/:noeud/:type/:vmid/clavier', async ctx => {
     session(ctx, { role: 'membre' });
     const m = machine(ctx.params);
     if (m.type !== 'qemu') throw new ErreurHttp(400, 'Réservé aux machines virtuelles.');
-    const deja = clavierConnu.get(m.cible);
-    if (deja && deja.expire > Date.now() && !ctx.q.relire) return deja.r;
-    const r = await pve(() => detecterClavier(proxmox, m.base));
+    const t = Date.now(), deja = clavierConnu.get(m.cible);
+    if (deja?.encours) return deja.encours;
+    if (deja && (t < deja.expire && !ctx.q.relire || t - deja.lu < 5000)) return deja.r;
+    journal.rare(`clavier:${m.cible}`, { acteur: acteur(ctx).acteurCompte, action: 'machine.clavier', objet: m.cible, ip: ctx.ip });
+    const encours = pve(() => detecterClavier(proxmox, m.base));
     if (clavierConnu.size > 500) clavierConnu.clear();
-    if (r.disposition) clavierConnu.set(m.cible, { r, expire: Date.now() + 120e3 });
-    return r;
+    clavierConnu.set(m.cible, { ...deja, encours });
+    try {
+      const r = await encours;
+      clavierConnu.set(m.cible, { r, lu: Date.now(), expire: Date.now() + (r.disposition ? 120e3 : 15e3) });
+      return r;
+    } catch (e) { clavierConnu.delete(m.cible); throw e; }
   }, { role: 'membre', requete: { relire: { type: 'chaine', parmi: ['1'] } } });
 
   r.post('/api/machines/:noeud/:type/:vmid/instantanes', async ctx => {

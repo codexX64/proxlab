@@ -528,7 +528,7 @@ test('console d\'une VM sans port série : refus clair avant Proxmox, ajout par 
   assert.equal(tp.auth, 'ticket', 'termproxy demandé avec le ticket de session');
 });
 
-test('clavier de la VM : demandé à l\'agent QEMU par un script fixe, disposition reconnue, agent ajouté par l\'administrateur', async () => {
+test('clavier de la VM : demandé à l\'agent QEMU par un script fixe, disposition reconnue, agent ajouté par l\'administrateur', async t => {
   for (const [brut, d] of [['fr', 'fr'], ['fr+oss', 'fr'], ['fr+latin9', 'fr'], ['fr-latin9', 'fr'], ['us', 'us'], ['us+altgr-intl', 'us'], ['fr+bepo', null], ['us+intl', null], ['de', null], ['', null]]) assert.equal(dispositionDe(brut), d, brut);
   assert.deepEqual(lireSortie("gnome [('xkb', 'us'), ('xkb', 'fr+oss')]\n"), { brut: 'us', source: 'gnome' });
   assert.deepEqual(lireSortie('x11 fr\nvariante oss\nvc fr\n'), { brut: 'fr+oss', source: 'système' });
@@ -551,8 +551,15 @@ test('clavier de la VM : demandé à l\'agent QEMU par un script fixe, dispositi
   // Agent coché mais absent de la VM : la raison, pas une erreur.
   const absent = await membre.get(url);
   assert.deepEqual([absent.json.disposition, absent.json.raison], [null, 'injoignable']);
-  // Une session GNOME en QWERTY : reconnue.
+  // Relancée trop vite : la VM n'est pas interrogée de nouveau.
+  const n0 = pve.appels.filter(a => /agent\/exec$/.test(a.chemin)).length;
   vm.clavierInvite = 'us';
+  assert.equal((await membre.get(url + '?relire=1')).json.raison, 'injoignable');
+  assert.equal(pve.appels.filter(a => /agent\/exec$/.test(a.chemin)).length, n0, 'cinq secondes entre deux lectures');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const plusTard = () => t.mock.timers.tick(6000);
+  plusTard();
+  // Une session GNOME en QWERTY : reconnue.
   const us = await membre.get(url + '?relire=1');
   assert.deepEqual([us.json.disposition, us.json.brut, us.json.source], ['us', 'us', 'gnome']);
   const appel = pve.appels.filter(a => /agent\/exec$/.test(a.chemin)).at(-1);
@@ -563,11 +570,21 @@ test('clavier de la VM : demandé à l\'agent QEMU par un script fixe, dispositi
   vm.clavierInvite = 'fr+oss';
   assert.equal((await membre.get(url)).json.disposition, 'us');
   assert.ok(!pve.appels.slice(n).some(a => /agent\/exec$/.test(a.chemin)));
+  plusTard();
   assert.equal((await membre.get(url + '?relire=1')).json.disposition, 'fr');
   vm.clavierInvite = 'fr+bepo';
+  plusTard();
   const bepo = await membre.get(url + '?relire=1');
   assert.deepEqual([bepo.json.disposition, bepo.json.raison, bepo.json.brut], [null, 'inconnue', 'fr+bepo']);
   assert.equal((await membre.get(url + '?relire=2')).status, 400, 'paramètre borné');
+  // Une sortie démesurée de la VM n'est pas reprise telle quelle.
+  vm.clavierInvite = 'x'.repeat(5000);
+  plusTard();
+  const long = await membre.get(url + '?relire=1');
+  assert.equal(long.json.disposition, null);
+  assert.ok(String(long.json.brut || '').length <= 64);
+  t.mock.timers.reset();
+  assert.ok(s.db.prepare("SELECT count(*) n FROM socle_journal WHERE action = 'machine.clavier'").get().n >= 1, 'lecture du clavier au journal');
 });
 
 test('surveillance : une machine tombée est un événement et un ticket signé ; un arrêt depuis ProxLab ne sonne pas', async () => {
