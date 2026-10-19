@@ -841,7 +841,7 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
         { texte: panneau.hidden ? 'Afficher le presse-papiers' : 'Masquer le presse-papiers', ic: 'presse', agir: () => montrerPanneau() },
         { texte: document.fullscreenElement ? 'Quitter le plein écran' : 'Plein écran', ic: 'agrandir', inactif: off, agir: plein },
         { texte: 'Ajuster la VM à la fenêtre', ic: ajusterTaille ? 'verifie' : null, agir: () => {
-          ajusterTaille = !ajusterTaille; poserLocal('proxlab-ajuster', ajusterTaille ? '1' : '0'); refusSignale = false;
+          ajusterTaille = !ajusterTaille; poserLocal('proxlab-ajuster', ajusterTaille ? '1' : '0'); refusSignale = false; if (tailleVue) peindreEtat();
           if (!ajusterTaille) return toast('La VM garde sa résolution.');
           if (!/^virtio/.test(genreVga)) return toast(`L'affichage de cette VM (${genreVga}) ne change pas de taille : il faut VirtIO-GPU${admin ? ' (« Passer en VirtIO-GPU… »)' : ' : demande-le à un administrateur'}.`, true);
           toast('La VM prend la taille de la fenêtre, et la suit.'); reajuster();
@@ -856,7 +856,15 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
     ];
   });
 
+  // Taille fixe (affichage sans redimensionnement) : dit en permanence à côté
+  // de la résolution, avec le geste qui la débloque à portée de main.
+  let fixe = false, tailleVue = '';
+  const peindreEtat = () => { etat.textContent = `ouvert · ${tailleVue}${fixe && ajusterTaille ? ` · taille fixe : affichage ${virtioPrevu ? 'VirtIO-GPU au prochain démarrage' : genreVga}` : ''}`; };
+  const boutonVirtio = admin && !/^virtio/.test(genreVga) && !virtioPrevu
+    ? h('button', { class: 'btn sm', type: 'button', hidden: true, title: 'L\'écran de la VM suivra la taille de la fenêtre', onclick: () => passerVirtio() }, icone('ecran', 14), 'Passer en VirtIO-GPU')
+    : null;
   const outils = h('div', { class: 'ecran-outils' },
+    boutonVirtio,
     actions.ancre,
     h('button', { class: 'btn sm', type: 'button', disabled: true, 'aria-label': 'Plein écran', title: 'Plein écran', onclick: plein }, icone('agrandir', 14)));
   const activer = on => { for (const b of outils.querySelectorAll(':scope > button')) b.disabled = !on; copierIci.disabled = !on || !ecran?.dernierPresse; };
@@ -874,9 +882,11 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
           const cle = `proxlab-ajuster-refus:${f.node}/${f.vmid}`;
           if (!refusSignale && lireLocal(cle, '') !== genreVga) toast(`L'affichage de cette VM (${genreVga}) ne change pas de taille${/^virtio/.test(genreVga) ? '' : ' : il faut VirtIO-GPU (menu Actions)'}.`, true);
           refusSignale = true; poserLocal(cle, genreVga);
-          return;
+          fixe = true; if (boutonVirtio) boutonVirtio.hidden = false;
+          return peindreEtat();
         }
-        etat.textContent = q === 'taille' ? `ouvert · ${d}` : q === 'pret' ? 'ouvert' : q;
+        if (q === 'taille') { tailleVue = d; return peindreEtat(); }
+        etat.textContent = q === 'pret' ? 'ouvert' : q;
       },
       surPresse: texte => {
         recu.textContent = texte || '(vide)'; recu.classList.toggle('vide-doux', !texte); copierIci.disabled = !texte;

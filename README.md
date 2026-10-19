@@ -96,8 +96,9 @@ le texte devient trop petit, l'échelle se règle dans la VM (GNOME : Paramètre
 Écrans → Échelle 200 %). Coupée, un pixel de la VM par point : moins de données
 à transmettre. Il faut l'affichage VirtIO-GPU, le
 seul dont QEMU transmet la taille à l'invité : Linux (GNOME, KDE) suit seul,
-Windows avec le pilote VirtIO-GPU de virtio-win. Une VM en « std » le refuse,
-et ProxLab le dit une fois ; « Passer en VirtIO-GPU… » (administrateur, avec
+Windows avec le pilote VirtIO-GPU de virtio-win. Une VM en « std » le refuse :
+ProxLab l'écrit à côté de la résolution (« taille fixe : affichage std ») tant
+que l'écran est ouvert, avec le bouton dans la barre de l'écran ; « Passer en VirtIO-GPU… » (administrateur, avec
 renfort) change l'affichage en gardant ses options, presse-papiers compris,
 pour le prochain démarrage complet.
 
