@@ -14,7 +14,7 @@ import { ouvrirTermproxy, relayer } from './console.js';
 import { ouvrirVnc, relayerEcran } from './ecran.js';
 import {
   Debit, ErreurHttp, demarrerSocle, entetesSecurite, envelopper, nonceCsp, politiqueContenu,
-  repondreErreur, repondreJson, servirFichier, origineDe, adresseClient,
+  repondreErreur, repondreJson, servirFichier, cheminVersionne, origineDe, adresseClient,
 } from '../socle/src/index.js';
 
 const RACINE = path.resolve(import.meta.dirname, '..');
@@ -72,9 +72,8 @@ export async function demarrer(env = process.env, { log = CONSOLE } = {}) {
       // l'adresse de chaque fichier, et aucun cache (navigateur, mandataire)
       // ne peut garder l'ancien script face à la nouvelle page. Sous la bonne
       // version, les fichiers ne changent plus : gardés un an.
-      const v = /^\/v\/([0-9A-Za-z.-]{1,40})(\/.+)$/.exec(url.pathname);
-      const chemin = v ? v[2] : url.pathname;
-      const cache = v && v[1] === VERSION ? 'public, max-age=31536000, immutable' : null;
+      const { chemin, durable } = cheminVersionne(url.pathname, VERSION);
+      const cache = durable ? 'public, max-age=31536000, immutable' : null;
       if (chemin.startsWith('/socle/') && servirFichier(req, res, path.join(RACINE, 'socle', 'web'), chemin.slice(6), { nonce, cache: cache || 'no-cache' })) return;
       const fichier = chemin === '/' ? '/index.html' : chemin;
       if (servirFichier(req, res, path.join(RACINE, 'web'), fichier, { nonce, gamme: socle.cfg.gamme, version: VERSION, ...(cache ? { cache } : {}) })) return;
