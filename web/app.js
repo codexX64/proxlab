@@ -703,7 +703,7 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
   let nette = lireLocal('proxlab-ajuster-nette', '1') === '1';
   const densite = () => (nette ? Math.min(3, Math.max(1, window.devicePixelRatio || 1)) : 1);
   const hote = h('div', { class: 'ecran-hote' });
-  const cibleTaille = () => document.fullscreenElement === hote
+  const cibleTaille = () => document.fullscreenElement === hote || hote.classList.contains('fenetre')
     ? [hote.clientWidth, hote.clientHeight]
     : [hote.clientWidth, Math.max(320, Math.min(innerHeight * 0.75, innerHeight - Math.max(0, hote.getBoundingClientRect().top) - 24))];
   const reajuster = () => {
@@ -806,7 +806,26 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
   };
   // Une combinaison envoyée à la VM, puis le clavier lui revient.
   const dansVm = fn => () => { if (!ecran?.actif) return; fn(); ecran.toile.focus(); };
-  const plein = () => (document.fullscreenElement ? document.exitFullscreen() : hote.requestFullscreen?.())?.catch(() => {});
+  // Deux pleins écrans. Celui du navigateur (l'écran entier), et l'écran de la
+  // VM étendu à toute la fenêtre : Safari floute une page en plein écran qui
+  // reçoit beaucoup de frappes (protection contre les faux écrans), et Échap y
+  // fait quitter au lieu de partir dans la VM. Sur Safari, le second par
+  // défaut ; la fenêtre elle-même se met en plein écran (⌃⌘F).
+  const safari = /^((?!chrome|chromium|android|crios|fxios|edg|opr).)*safari/i.test(navigator.userAgent || '');
+  let modePlein = lireLocal('proxlab-plein', safari ? 'fenetre' : 'ecran');
+  const sortieFenetre = h('button', { class: 'btn sm sortie-fenetre', type: 'button', title: 'Revenir à la fiche', onclick: () => fenetre(false) }, icone('croix', 14), 'Réduire');
+  const fenetre = on => {
+    hote.classList.toggle('fenetre', on);
+    document.documentElement.classList.toggle('ecran-fenetre', on);
+    if (on) hote.append(sortieFenetre); else sortieFenetre.remove();
+    ecran?.toile.focus({ preventScroll: true });
+  };
+  const pleinEcran = () => (document.fullscreenElement ? document.exitFullscreen() : hote.requestFullscreen?.())?.catch(() => {});
+  const plein = () => {
+    if (hote.classList.contains('fenetre')) return fenetre(false);
+    if (document.fullscreenElement) return pleinEcran();
+    return modePlein === 'fenetre' ? fenetre(true) : pleinEcran();
+  };
   const actions = menuActions(() => {
     const off = !ecran?.actif;
     const r = (l, maj = false) => dansVm(() => ecran.raccourci(l, { maj, disposition }));
@@ -839,7 +858,8 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
       ] },
       { items: [
         { texte: panneau.hidden ? 'Afficher le presse-papiers' : 'Masquer le presse-papiers', ic: 'presse', agir: () => montrerPanneau() },
-        { texte: document.fullscreenElement ? 'Quitter le plein écran' : 'Plein écran', ic: 'agrandir', inactif: off, agir: plein },
+        { texte: document.fullscreenElement ? 'Quitter le plein écran' : 'Plein écran (écran entier)', ic: 'agrandir', inactif: off, agir: () => { modePlein = 'ecran'; poserLocal('proxlab-plein', 'ecran'); pleinEcran(); } },
+        { texte: 'Plein écran dans la fenêtre', ic: modePlein === 'fenetre' ? 'verifie' : 'agrandir', inactif: off, agir: () => { modePlein = 'fenetre'; poserLocal('proxlab-plein', 'fenetre'); fenetre(true); } },
         { texte: 'Ajuster la VM à la fenêtre', ic: ajusterTaille ? 'verifie' : null, agir: () => {
           ajusterTaille = !ajusterTaille; poserLocal('proxlab-ajuster', ajusterTaille ? '1' : '0'); refusSignale = false; if (tailleVue) peindreEtat();
           if (!ajusterTaille) return toast('La VM garde sa résolution.');
@@ -895,7 +915,8 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
       // ⌘V / Ctrl+V dans l'écran : le texte du collage natif, sinon la lecture du presse-papiers.
       surColler: ({ maj, texte }) => (texte !== null && texte !== undefined ? collerTexte(texte, maj) : collerDepuisIci(maj)),
     });
-    garder({ detruire: () => ecran?.relacher() }, ws);
+    if (hote.classList.contains('fenetre')) hote.append(sortieFenetre);
+    garder({ detruire: () => { ecran?.relacher(); fenetre(false); } }, ws);
     etat.textContent = 'connexion…';
     ws.addEventListener('message', ev => {
       if (typeof ev.data !== 'string') return ecran.recevoir(ev.data);
