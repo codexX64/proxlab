@@ -712,6 +712,16 @@ test('données d\'un compte : ses gestes exportés, neutralisés à sa suppressi
   assert.ok((await lecteur.get('/api/evenements?limite=10')).json.some(e => e.by === 'compte supprimé'));
 });
 
+test('paramètres : un paramètre inconnu est refusé, même quand la route rend avant de le lire', async () => {
+  // Une route d'essai qui rend sans lire ses paramètres, retirée ensuite.
+  const routes = s.api.routeur.routes;
+  s.api.routeur.get('/api/essai-parametres', () => ({ ok: true }), { role: 'lecture', requete: { a: { type: 'chaine', max: 4 } } });
+  try {
+    assert.equal((await lecteur.get('/api/essai-parametres?a=x')).status, 200);
+    assert.equal((await lecteur.get('/api/essai-parametres?a=x&script=id')).status, 400);
+  } finally { routes.pop(); }
+});
+
 test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont rescellés, Proxmox reste joignable', async () => {
   await s.arreter();
   const neuve = crypto.randomBytes(32).toString('base64');

@@ -644,6 +644,8 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
       if (!schema && ctx.url.search) throw new ErreurHttp(400, 'Paramètres de requête inattendus.');
       Object.defineProperty(ctx, 'q', { configurable: true, get: () => valider(Object.fromEntries(ctx.url.searchParams), schema) });
       const reponse = await t.route.gestionnaire(ctx);
+      // Une route qui n'a pas lu ses paramètres (une branche qui rend tôt) les fait valider ici, avant de répondre.
+      if (schema && ctx.url.search && !ctx.res.headersSent) void ctx.q;
       if (reponse !== undefined) repondreJson(ctx.res, 200, reponse);
       return true;
     },
