@@ -97,7 +97,12 @@ défaut le presse-papiers d'ici touche par touche, à la disposition choisie
 (AZERTY ou QWERTY) : ça marche partout, même à l'écran de connexion ; le
 panneau permet de le faire passer plutôt par le presse-papiers de la VM. Le
 texte est pris par le collage du navigateur, sans demande d'autorisation, et
-⌘+lettre sur Mac devient Ctrl+lettre dans la VM (même touche physique).
+⌘+lettre sur Mac devient Ctrl+lettre dans la VM (même touche physique). Le
+bouton « Actions » de l'écran reprend tout cela à la souris : copier, couper,
+coller, tout sélectionner, taper un texte, annuler, rétablir, Ctrl+Alt+Suppr,
+Super, Alt+Tab, Échap, Impr. écran, presse-papiers, plein écran ; celui de la
+console : copier la sélection, coller, tout sélectionner, Ctrl+C, Ctrl+D,
+Ctrl+L, Ctrl+Z, Tab, Échap.
 
 **Console d'une VM.** Elle passe par le port série de la VM : sans `serial0`,
 ProxLab le dit avant d'appeler Proxmox et propose de l'ajouter

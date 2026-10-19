@@ -331,6 +331,17 @@ export class Ecran {
     const r = this.toile.getBoundingClientRect();
     return [(e.clientX - r.left) * this.toile.width / r.width, (e.clientY - r.top) * this.toile.height / r.height];
   }
+  // Une combinaison quelconque : les touches enfoncées dans l'ordre, relâchées à rebours.
+  combo(...codes) {
+    const nom = c => ({ ControlLeft: 'Control', AltLeft: 'Alt', ShiftLeft: 'Shift', MetaLeft: 'Meta', AltRight: 'AltGraph' })[c] || (c.startsWith('Key') ? c.slice(3).toLowerCase() : c);
+    for (const c of codes) this.touche({ code: c, key: nom(c) }, true);
+    for (const c of [...codes].reverse()) this.touche({ code: c, key: nom(c) }, false);
+  }
+  // Ctrl(+Maj)+lettre sur la touche qui porte cette lettre dans la disposition de l'invité.
+  raccourci(lettre, { maj = false, disposition = 'fr' } = {}) {
+    const code = DISPOSITIONS[disposition]?.carte[lettre]?.[0]?.[0] || `Key${lettre.toUpperCase()}`;
+    this.combinaison(lettre, maj, code);
+  }
   // Ctrl+Alt+Suppr : la combinaison que le navigateur garde pour lui.
   ctrlAltSuppr() {
     const seq = [['ControlLeft', 'Control'], ['AltLeft', 'Alt'], ['Delete', 'Delete']];

@@ -75,6 +75,13 @@ export class Terminal {
     if (!sel || sel.isCollapsed || !sel.rangeCount || !this.ecran.contains(sel.getRangeAt(0).commonAncestorContainer)) return '';
     return sel.toString().split('\n').map(l => l.replace(/\s+$/, '')).join('\n').replace(/\n+$/, '');
   }
+  toutSelectionner() {
+    const sel = window.getSelection?.(); if (!sel) return;
+    const r = document.createRange(); r.selectNodeContents(this.ecran);
+    sel.removeAllRanges(); sel.addRange(r);
+    this.ecran.focus({ preventScroll: true });
+  }
+  envoyer(s) { this.surSaisie?.(s); this.saisie.focus(); }
   async copier() {
     const t = this.selection();
     if (!t) { this.surCopie(0); return; }

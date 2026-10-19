@@ -23,6 +23,10 @@ const admin = moi.role === 'admin';
 const membre = moi.role !== 'lecture';
 
 ajouterPictos({
+  ciseaux: '<circle cx="6.5" cy="17.5" r="2.6"/><circle cx="17.5" cy="17.5" r="2.6"/><path d="M8.4 15.6 18 4M15.6 15.6 6 4"/>',
+  annuler: '<path d="M9 7 4.5 11.5 9 16"/><path d="M5 11.5h9.5a5 5 0 0 1 0 10H12"/>',
+  retablir: '<path d="M15 7l4.5 4.5L15 16"/><path d="M19 11.5H9.5a5 5 0 0 0 0 10H12"/>',
+  selection: '<path d="M4 8V5.5C4 4.7 4.7 4 5.5 4H8M16 4h2.5c.8 0 1.5.7 1.5 1.5V8M20 16v2.5c0 .8-.7 1.5-1.5 1.5H16M8 20H5.5C4.7 20 4 19.3 4 18.5V16"/><path d="M8.5 12h7"/>',
   presse: '<rect x="5.5" y="4.5" width="13" height="16" rx="2"/><path d="M9 4.5V3.6c0-.6.4-1 1-1h4c.6 0 1 .4 1 1v.9M9 10h6M9 13.5h6M9 17h3.5"/>',
   clavier: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M6 13.5h.01M18 13.5h.01M8.5 14.5h7"/>',
   grappe: '<rect x="3.5" y="4" width="17" height="5" rx="1.6"/><rect x="3.5" y="10" width="17" height="5" rx="1.6"/><rect x="3.5" y="16" width="17" height="4.5" rx="1.6"/><path d="M7 6.5h.01M7 12.5h.01M7 18.2h.01"/>',
@@ -608,6 +612,38 @@ async function migrer(f, base) {
 const lireLocal = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
 const poserLocal = (k, v) => { try { localStorage.setItem(k, v); } catch { /* navigation privée */ } };
 const MOD = estMac() ? '⌘' : 'Ctrl+';
+const T_MAJ = estMac() ? '⇧⌘' : 'Ctrl+Maj+';
+
+// Un menu déroulant « Actions » : groupes d'actions avec leur raccourci,
+// recalculés à chaque ouverture ; l'action part dans le clic (le presse-papiers
+// du navigateur l'exige). Échap ferme, les flèches parcourent.
+function menuActions(groupes, { titre = 'Actions' } = {}) {
+  const liste = h('div', { class: 'menu-actions', role: 'menu', hidden: true });
+  const bouton = h('button', { class: 'btn sm', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false' }, icone('actions', 14), h('span', { text: titre }));
+  const ancre = h('span', { class: 'menu-ancre' }, bouton, liste);
+  const dehors = e => { if (!ancre.contains(e.target)) fermer(); };
+  function fermer(rendre = false) { liste.hidden = true; bouton.setAttribute('aria-expanded', 'false'); document.removeEventListener('pointerdown', dehors, true); if (rendre) bouton.focus(); }
+  bouton.addEventListener('click', () => {
+    if (!liste.hidden) return fermer();
+    liste.replaceChildren(...groupes().filter(g => g.items.length).flatMap((g, i) => [
+      i ? h('div', { class: 'menu-sep', role: 'separator' }) : null,
+      g.titre ? h('div', { class: 'menu-titre', text: g.titre }) : null,
+      ...g.items.map(it => h('button', { class: 'menu-item', type: 'button', role: 'menuitem', 'aria-label': it.texte, ...(it.touche ? { 'aria-keyshortcuts': it.touche.replace(/⌘/g, 'Meta+').replace(/⇧/g, 'Shift+').replace(/Maj/g, 'Shift') } : {}), disabled: !!it.inactif, onclick: () => { fermer(); it.agir(); } },
+        it.ic ? icone(it.ic, 14) : h('span', { class: 'menu-ic' }), h('span', { class: 'menu-texte', text: it.texte }), it.touche ? h('kbd', { text: it.touche }) : null)),
+    ]).filter(Boolean));
+    liste.hidden = false; bouton.setAttribute('aria-expanded', 'true'); bouton.classList.remove('signal');
+    document.addEventListener('pointerdown', dehors, true);
+    liste.querySelector('.menu-item:not([disabled])')?.focus();
+  });
+  liste.addEventListener('keydown', e => {
+    const items = [...liste.querySelectorAll('.menu-item:not([disabled])')], i = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); fermer(true); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length]?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
+    else if (e.key === 'Tab') fermer();
+  });
+  return { ancre, bouton, fermer };
+}
 
 function ecranMachine(f, garder, relire) {
   const cible = { noeud: f.node, type: f.type, vmid: String(f.vmid) }, enMarche = f.status === 'running';
@@ -669,15 +705,52 @@ function ecranMachine(f, garder, relire) {
         h('select', { class: 'presse-dispo', onchange: e => { modeColler = e.target.value; poserLocal('proxlab-coller', modeColler); } },
           h('option', { value: 'taper', text: 'tape le texte', selected: modeColler !== 'agent' }), h('option', { value: 'agent', text: 'colle par le presse-papiers de la VM', selected: modeColler === 'agent' }))) : null,
       h('p', { class: 'hint', text: `${MOD}V dans l'écran tape ton presse-papiers touche par touche, au clavier choisi : ça marche partout, même pour un mot de passe à l'écran de connexion.${agent ? ' Le presse-papiers de la VM demande spice-vdagent, qui ne relaie rien sous GNOME Wayland (Fedora par défaut).' : ''}` })));
-  const btnPresse = h('button', { class: 'btn sm', type: 'button', 'aria-expanded': 'false', onclick: () => {
-    panneau.hidden = !panneau.hidden; btnPresse.setAttribute('aria-expanded', String(!panneau.hidden)); btnPresse.classList.remove('signal');
-  } }, icone('presse', 14), h('span', { class: 'cache-s', text: 'Presse-papiers' }));
+  const montrerPanneau = (ouvert = panneau.hidden) => { panneau.hidden = !ouvert; if (ouvert) actions.bouton.classList.remove('signal'); };
+  // Coller : le texte d'ici, tapé ou passé par le presse-papiers de la VM.
+  const collerTexte = (t, maj = false) => {
+    if (!t) return toast('Le presse-papiers est vide.');
+    if (agent && modeColler === 'agent') { ecran.envoyerPresse(t); setTimeout(() => ecran?.combinaison('v', maj), 150); } else taper(t);
+  };
+  const collerDepuisIci = (maj = false) => {
+    if (!navigator.clipboard?.readText) { montrerPanneau(true); aEnvoyer.focus(); return toast('Colle ton texte dans le panneau, puis « Taper dans la VM ».'); }
+    navigator.clipboard.readText().then(t => { ecran?.toile.focus(); collerTexte(t, maj); }, () => { montrerPanneau(true); aEnvoyer.focus(); toast(`Le navigateur n'a pas donné le presse-papiers : colle-le ici (${MOD}V), puis envoie-le.`, true); });
+  };
+  // Une combinaison envoyée à la VM, puis le clavier lui revient.
+  const dansVm = fn => () => { if (!ecran?.actif) return; fn(); ecran.toile.focus(); };
+  const plein = () => (document.fullscreenElement ? document.exitFullscreen() : hote.requestFullscreen?.())?.catch(() => {});
+  const actions = menuActions(() => {
+    const off = !ecran?.actif;
+    const r = (l, maj = false) => dansVm(() => ecran.raccourci(l, { maj, disposition }));
+    return [
+      { titre: 'Presse-papiers', items: [
+        { texte: 'Copier', ic: 'copie', touche: `${MOD}C`, inactif: off, agir: dansVm(() => { ecran.armerCopie(); ecran.raccourci('c', { disposition }); }) },
+        { texte: 'Couper', ic: 'ciseaux', touche: `${MOD}X`, inactif: off, agir: dansVm(() => { ecran.armerCopie(); ecran.raccourci('x', { disposition }); }) },
+        { texte: 'Coller', ic: 'presse', touche: `${MOD}V`, inactif: off, agir: () => collerDepuisIci() },
+        { texte: 'Tout sélectionner', ic: 'selection', touche: `${MOD}A`, inactif: off, agir: r('a') },
+        { texte: 'Taper un texte…', ic: 'clavier', agir: () => { montrerPanneau(true); aEnvoyer.focus(); } },
+      ] },
+      { titre: 'Édition', items: [
+        { texte: 'Annuler', ic: 'annuler', touche: `${MOD}Z`, inactif: off, agir: r('z') },
+        { texte: 'Rétablir', ic: 'retablir', touche: `${T_MAJ}Z`, inactif: off, agir: r('z', true) },
+      ] },
+      { titre: 'Touches', items: [
+        { texte: 'Ctrl+Alt+Suppr', inactif: off, agir: dansVm(() => ecran.ctrlAltSuppr()) },
+        { texte: 'Touche Super (Windows)', inactif: off, agir: dansVm(() => ecran.combo('MetaLeft')) },
+        { texte: 'Alt+Tab', inactif: off, agir: dansVm(() => ecran.combo('AltLeft', 'Tab')) },
+        { texte: 'Échap', inactif: off, agir: dansVm(() => ecran.combo('Escape')) },
+        { texte: 'Impr. écran', inactif: off, agir: dansVm(() => ecran.combo('PrintScreen')) },
+      ] },
+      { items: [
+        { texte: panneau.hidden ? 'Afficher le presse-papiers' : 'Masquer le presse-papiers', ic: 'presse', agir: () => montrerPanneau() },
+        { texte: document.fullscreenElement ? 'Quitter le plein écran' : 'Plein écran', ic: 'agrandir', inactif: off, agir: plein },
+      ] },
+    ];
+  });
 
   const outils = h('div', { class: 'ecran-outils' },
-    btnPresse,
-    h('button', { class: 'btn sm', type: 'button', disabled: true, onclick: () => { ecran?.ctrlAltSuppr(); ecran?.toile.focus(); } }, 'Ctrl+Alt+Suppr'),
-    h('button', { class: 'btn sm', type: 'button', disabled: true, 'aria-label': 'Plein écran', onclick: () => (document.fullscreenElement ? document.exitFullscreen() : hote.requestFullscreen?.())?.catch(() => {}) }, icone('agrandir', 14), h('span', { class: 'cache-s', text: 'Plein écran' })));
-  const activer = on => { for (const b of outils.querySelectorAll('button')) if (b !== btnPresse) b.disabled = !on; copierIci.disabled = !on || !ecran?.dernierPresse; };
+    actions.ancre,
+    h('button', { class: 'btn sm', type: 'button', disabled: true, 'aria-label': 'Plein écran', title: 'Plein écran', onclick: plein }, icone('agrandir', 14)));
+  const activer = on => { for (const b of outils.querySelectorAll(':scope > button')) b.disabled = !on; copierIci.disabled = !on || !ecran?.dernierPresse; };
 
   const ouvrir = sur(async () => {
     const { passe } = await api.post('/api/console', { ...cible, mode: 'ecran' });
@@ -688,18 +761,10 @@ function ecranMachine(f, garder, relire) {
       surEtat: (q, d) => { etat.textContent = q === 'taille' ? `ouvert · ${d}` : q === 'pret' ? 'ouvert' : q; },
       surPresse: texte => {
         recu.textContent = texte || '(vide)'; recu.classList.toggle('vide-doux', !texte); copierIci.disabled = !texte;
-        if (panneau.hidden) btnPresse.classList.add('signal');
+        if (panneau.hidden) actions.bouton.classList.add('signal');
       },
-      // ⌘V / Ctrl+V dans l'écran : le presse-papiers d'ici, collé (agent) ou tapé.
-      surColler: ({ maj, texte }) => {
-        const envoyer = t => {
-          if (!t) return toast('Le presse-papiers est vide.');
-          if (agent && modeColler === 'agent') { ecran.envoyerPresse(t); setTimeout(() => ecran?.combinaison('v', maj), 150); } else taper(t);
-        };
-        if (texte !== null && texte !== undefined) return envoyer(texte);
-        if (!navigator.clipboard?.readText) { panneau.hidden = false; aEnvoyer.focus(); return toast('Colle ton texte dans le panneau, puis « Taper dans la VM ».'); }
-        navigator.clipboard.readText().then(envoyer, () => { panneau.hidden = false; btnPresse.setAttribute('aria-expanded', 'true'); aEnvoyer.focus(); toast(`Le navigateur n'a pas donné le presse-papiers : colle-le ici (${MOD}V), puis envoie-le.`, true); });
-      },
+      // ⌘V / Ctrl+V dans l'écran : le texte du collage natif, sinon la lecture du presse-papiers.
+      surColler: ({ maj, texte }) => (texte !== null && texte !== undefined ? collerTexte(texte, maj) : collerDepuisIci(maj)),
     });
     garder({ detruire: () => ecran?.relacher() }, ws);
     etat.textContent = 'connexion…';
@@ -745,8 +810,25 @@ function consoleMachine(cible, garder, { f = null, relire = null } = {}) {
   const hote = h('div', { class: 'console-hote' });
   const etat = h('span', { class: 'note', text: 'fermée' });
   let term = null;
-  const copier = h('button', { class: 'btn sm', type: 'button', disabled: true, title: `Copier la sélection (${estMac() ? '⌘C' : 'Ctrl+Maj+C'})`, onclick: () => term?.copier() }, icone('copie', 13), h('span', { class: 'cache-s', text: 'Copier' }));
-  const coller = h('button', { class: 'btn sm', type: 'button', disabled: true, title: `Coller (${estMac() ? '⌘V' : 'Ctrl+Maj+V'})`, onclick: () => term?.collerPressePapiers() }, icone('presse', 13), h('span', { class: 'cache-s', text: 'Coller' }));
+  const tC = estMac() ? '⌘C' : 'Ctrl+Maj+C', tV = estMac() ? '⌘V' : 'Ctrl+Maj+V';
+  const vivant = () => term && ws?.readyState === 1;
+  const ctrl = s => () => term?.envoyer(s);
+  const actions = menuActions(() => [
+    { titre: 'Presse-papiers', items: [
+      { texte: 'Copier la sélection', ic: 'copie', touche: tC, inactif: !term, agir: () => term.copier() },
+      { texte: 'Coller', ic: 'presse', touche: tV, inactif: !vivant(), agir: () => term.collerPressePapiers() },
+      { texte: 'Tout sélectionner', ic: 'selection', inactif: !term, agir: () => term.toutSelectionner() },
+    ] },
+    { titre: 'Envoyer', items: [
+      { texte: 'Interrompre', touche: 'Ctrl+C', inactif: !vivant(), agir: ctrl('\x03') },
+      { texte: 'Fin de saisie', touche: 'Ctrl+D', inactif: !vivant(), agir: ctrl('\x04') },
+      { texte: 'Effacer l\'écran', touche: 'Ctrl+L', inactif: !vivant(), agir: ctrl('\x0c') },
+      { texte: 'Suspendre', touche: 'Ctrl+Z', inactif: !vivant(), agir: ctrl('\x1a') },
+      { texte: 'Complétion', touche: 'Tab', inactif: !vivant(), agir: ctrl('\t') },
+      { texte: 'Échap', inactif: !vivant(), agir: ctrl('\x1b') },
+    ] },
+  ]);
+  let ws = null;
   const carte = h('div', { class: 'card' });
   const ouvrir = sur(async () => {
     let passe;
@@ -755,7 +837,7 @@ function consoleMachine(cible, garder, { f = null, relire = null } = {}) {
       throw e;
     }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/ws/console?passe=${encodeURIComponent(passe)}`);
+    ws = new WebSocket(`${proto}//${location.host}/ws/console?passe=${encodeURIComponent(passe)}`);
     term = new Terminal(hote, {
       surSaisie: s => { if (ws.readyState === 1) ws.send(JSON.stringify({ i: s })); },
       surTaille: (c, l) => { if (ws.readyState === 1) ws.send(JSON.stringify({ r: [c, l] })); },
@@ -764,16 +846,16 @@ function consoleMachine(cible, garder, { f = null, relire = null } = {}) {
     });
     garder(term, ws);
     etat.textContent = 'connexion…';
-    ws.addEventListener('open', () => { etat.textContent = 'ouverte'; copier.disabled = coller.disabled = false; ws.send(JSON.stringify({ r: [term.cols, term.lignes] })); term.focus(); });
+    ws.addEventListener('open', () => { etat.textContent = 'ouverte'; ws.send(JSON.stringify({ r: [term.cols, term.lignes] })); term.focus(); });
     ws.addEventListener('message', ev => { if (typeof ev.data === 'string') term.ecrire(ev.data); });
-    ws.addEventListener('close', () => { etat.textContent = 'fermée'; coller.disabled = true; });
+    ws.addEventListener('close', () => { etat.textContent = 'fermée'; });
     bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
   });
   const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: ouvrir }, icone('terminal', 14), 'Ouvrir');
   const serie = cible.type !== 'qemu' || !f || Object.keys(f.config || {}).some(k => /^serial\d$/.test(k));
   if (serie) hote.append(h('p', { class: 'vide', text: cible.type === 'node' ? 'Shell du nœud, en administrateur : chaque ouverture est journalisée.' : `Console texte de la machine. Sélectionne pour copier (${estMac() ? '⌘C' : 'Ctrl+Maj+C'}), ${estMac() ? '⌘V' : 'Ctrl+Maj+V'} pour coller. Chaque ouverture est journalisée.` }));
-  else { hote.append(sansPortSerie(f, relire)); bouton.disabled = true; copier.hidden = coller.hidden = true; }
-  carte.append(h('header', {}, h('h2', { text: cible.type === 'node' ? `Shell de ${cible.noeud}` : 'Console' }), etat, h('div', { class: 'ecran-outils' }, copier, coller), bouton), hote);
+  else { hote.append(sansPortSerie(f, relire)); bouton.disabled = true; actions.ancre.hidden = true; }
+  carte.append(h('header', {}, h('h2', { text: cible.type === 'node' ? `Shell de ${cible.noeud}` : 'Console' }), etat, h('div', { class: 'ecran-outils' }, actions.ancre), bouton), hote);
   return carte;
 }
 
