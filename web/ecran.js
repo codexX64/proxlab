@@ -274,6 +274,15 @@ export class Ecran {
     return true;
   }
 
+  // Un écran éteint par l'invité (veille) : un mouvement de souris et Maj.
+  reveiller() {
+    if (!this.actif) return;
+    this.pointeur(Math.min(10, this.toile.width - 1), Math.min(10, this.toile.height - 1), 0);
+    this.touche({ code: 'ShiftLeft', key: 'Shift' }, true);
+    this.touche({ code: 'ShiftLeft', key: 'Shift' }, false);
+    this.demander(false);
+  }
+
   // ── Presse-papiers ──
   coupe(flags, donnees = new Uint8Array(0)) {
     const b = new Uint8Array(12 + donnees.length), v = new DataView(b.buffer);

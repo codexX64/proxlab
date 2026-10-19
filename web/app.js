@@ -891,6 +891,12 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
           if (!/^virtio/.test(genreVga)) return toast(`L'affichage de cette VM (${genreVga}) ne change pas de taille : il faut VirtIO-GPU${admin ? ' (« Passer en VirtIO-GPU… »)' : ' : demande-le à un administrateur'}.`, true);
           toast('La VM prend la taille de la fenêtre, et la suit.'); reajuster();
         } },
+        { texte: 'Réveiller l\'écran', ic: 'ecran', inactif: off, agir: dansVm(() => ecran.reveiller()) },
+        { texte: 'Revenir à 1280 × 800', inactif: off, agir: () => {
+          ajusterTaille = false; poserLocal('proxlab-ajuster', '0');
+          ecran.ajuster(1280, 800, { libre: true });
+          toast('La VM revient à 1280 × 800 ; l\'ajustement à la fenêtre est coupé (menu Actions pour le remettre).');
+        } },
         { texte: 'Qualité nette (pixels de cet écran)', ic: nette ? 'verifie' : null, inactif: !ajusterTaille, agir: () => {
           nette = !nette; poserLocal('proxlab-ajuster-nette', nette ? '1' : '0');
           toast(nette ? 'La VM reçoit les pixels réels de cet écran. Si le texte est trop petit : dans la VM, Paramètres → Écrans → Échelle 200 %.' : 'Un pixel de la VM par point : plus léger, image adoucie sur un écran dense.');
