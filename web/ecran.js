@@ -227,10 +227,7 @@ export class Ecran {
         if (r.x === 1 && r.y !== 0 && r.y !== 4) { this.surEtat('ajustement-refuse', r.y); this.demandee = null; }
         else this.taille(r.l, r.h);
         // La VM a répondu (ou changé de taille) : la demande suivante peut partir.
-        if (r.x !== 2 && this.enAttente) {
-          this.enAttente = 0;
-          if (this.prochaine) { const [pl, ph] = this.prochaine; this.prochaine = null; setTimeout(() => this.ajuster(pl, ph, { libre: true }), 0); }
-        }
+        if (r.x !== 2 && this.enAttente) setTimeout(() => this.liberer(), 0);
         if (premier) this.surEtat('ajustable');
       }
       else if (r.enc === -258) this.qemu = true;
@@ -264,7 +261,12 @@ export class Ecran {
     }
     l = Math.max(320, Math.min(8192, Math.floor(l / 2) * 2)); h = Math.max(200, Math.min(8192, Math.floor(h / 2) * 2));
     if ((l === this.toile.width && h === this.toile.height) || (this.demandee && this.demandee[0] === l && this.demandee[1] === h)) return true;
-    if (this.enAttente && Date.now() - this.enAttente < 3000) { this.prochaine = [l, h]; return true; }
+    if (this.enAttente && Date.now() - this.enAttente < 3000) {
+      this.prochaine = [l, h];
+      clearTimeout(this.relance);
+      this.relance = setTimeout(() => this.liberer(), 3000 - (Date.now() - this.enAttente));
+      return true;
+    }
     this.enAttente = Date.now(); this.prochaine = null;
     this.demandee = [l, h];
     const b = new DataView(new ArrayBuffer(24));
@@ -272,6 +274,15 @@ export class Ecran {
     b.setUint32(8, this.ecranId); b.setUint16(16, l); b.setUint16(18, h);
     this.envoyer(b.buffer);
     return true;
+  }
+
+  // Réponse de la VM, ou trois secondes sans elle : la demande en file part.
+  liberer() {
+    clearTimeout(this.relance);
+    this.enAttente = 0;
+    if (!this.prochaine) return;
+    const [l, h] = this.prochaine; this.prochaine = null;
+    this.ajuster(l, h, { libre: true });
   }
 
   // Un écran éteint par l'invité (veille) : un mouvement de souris et Maj.
