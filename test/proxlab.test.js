@@ -6,6 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import { demarrer } from '../src/main.js';
 import { Client } from '../socle/essai/client.js';
 import { adminComplet, membreInvite } from '../socle/essai/inscription.js';
@@ -388,8 +389,10 @@ test('écran d\'une VM : poignée VNC faite par ProxLab, le ticket ne sort jamai
   // Un message coupé en deux trames arrive entier.
   ws.conn.envoyerBinaire(Buffer.concat([pf, enc, demande.subarray(0, 4)]));
   ws.conn.envoyerBinaire(demande.subarray(4));
-  await attendre(() => ws.octets().length >= init.length + 48);
-  const image = ws.octets().subarray(init.length);
+  await attendre(() => ws.octets().length >= init.length + 16 + 48);
+  const ack = ws.octets().subarray(init.length, init.length + 16);
+  assert.equal(ack.readInt32BE(12), -258, 'QEMU accuse la touche étendue');
+  const image = ws.octets().subarray(init.length + 16);
   assert.deepEqual([image[0], image.readUInt16BE(2), image.readInt32BE(12)], [0, 1, 0], 'une image brute de 4 × 2');
   const touche = Buffer.alloc(12); touche[0] = 255; touche.writeUInt16BE(1, 2); touche.writeUInt32BE(0x61, 4); touche.writeUInt32BE(0x10, 8);
   ws.conn.envoyerBinaire(touche);
@@ -402,6 +405,101 @@ test('écran d\'une VM : poignée VNC faite par ProxLab, le ticket ne sort jamai
   assert.equal(e.messages.length, 4, 'le message refusé n\'atteint pas Proxmox');
   const ligne = s.db.prepare("SELECT details FROM socle_journal WHERE action = 'console.ouverte' ORDER BY rowid DESC LIMIT 1").get();
   assert.equal(JSON.parse(ligne.details).mode, 'ecran');
+});
+
+test('écran : presse-papiers étendu dans les deux sens, ancien presse-papiers, reprise quand Proxmox coupe la poignée, ticket demandé au nom de l\'utilisateur', async () => {
+  // Filtre : le ClientCutText étendu (longueur négative) passe, borné.
+  const etendu = Buffer.alloc(16); etendu[0] = 6; etendu.writeInt32BE(-8, 4);
+  assert.equal(longueurMessageClient(etendu, false), 16);
+  const enorme = Buffer.alloc(8); enorme[0] = 6; enorme.writeInt32BE(-(1 << 20), 4);
+  assert.equal(longueurMessageClient(enorme, false), -1);
+  const court = Buffer.alloc(8); court[0] = 6; court.writeInt32BE(-2, 4);
+  assert.equal(longueurMessageClient(court, false), -1, 'un message étendu a au moins ses drapeaux');
+
+  pve.coupures.ecran = 1;   // la première connexion est coupée pendant la poignée
+  const p = await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '101', mode: 'ecran' });
+  const ws = await ouvrirWs(membre, p.json.passe);
+  await attendre(() => ws.recu.some(t => t.includes('"pret":true')));
+  assert.equal(pve.coupures.ecran, 0, 'la seconde tentative a pris');
+  const vnc = pve.appels.filter(a => /vncproxy$/.test(a.chemin)).at(-1);
+  assert.equal(vnc.auth, 'ticket', 'vncproxy demandé avec le ticket de session, pas le jeton : sinon Proxmox refuse le WebSocket');
+  const e = pve.ecrans.at(-1);
+  ws.conn.envoyerBinaire(Buffer.from([1]));
+  await attendre(() => ws.octets().length >= 24);
+  const n0 = ws.octets().length;
+  const enc = Buffer.alloc(12); enc[0] = 2; enc.writeUInt16BE(2, 2); enc.writeInt32BE(-258, 4); enc.writeInt32BE(0xC0A1E5CE | 0, 8);
+  ws.conn.envoyerBinaire(enc);
+  // L'accusé de la touche étendue, puis les capacités du serveur.
+  await attendre(() => ws.octets().length >= n0 + 16 + 16);
+  const caps = ws.octets().subarray(n0 + 16);
+  assert.equal(caps[0], 3);
+  assert.ok(caps.readInt32BE(4) < 0, 'ServerCutText étendu');
+  assert.ok(caps.readUInt32BE(8) & (1 << 24), 'capacités');
+  const coupe = (flags, donnees = Buffer.alloc(0)) => { const t = Buffer.alloc(12); t[0] = 6; t.writeInt32BE(-(4 + donnees.length), 4); t.writeUInt32BE(flags >>> 0, 8); return Buffer.concat([t, donnees]); };
+  // Invité → navigateur : avis, demande, fourniture (zlib, UTF-8).
+  const n1 = ws.octets().length;
+  e.copierInvite('bonjour é → ok\nligne 2');
+  await attendre(() => ws.octets().length >= n1 + 12);
+  assert.equal(ws.octets().readUInt32BE(n1 + 8), (1 << 27) | 1, 'avis : du texte est copié');
+  const n2 = ws.octets().length;
+  ws.conn.envoyerBinaire(coupe((1 << 25) | 1));
+  await attendre(() => ws.octets().length > n2 + 12);
+  await attendre(() => { const o = ws.octets().subarray(n2); return o.length >= 8 && o.length >= 8 + Math.abs(o.readInt32BE(4)); });
+  const fourni = ws.octets().subarray(n2);
+  assert.equal(fourni.readUInt32BE(8), (1 << 28) | 1);
+  const z = zlib.inflateSync(fourni.subarray(12, 8 + Math.abs(fourni.readInt32BE(4))));
+  assert.equal(z.subarray(4, 4 + z.readUInt32BE(0)).toString('utf8'), 'bonjour é → ok\r\nligne 2\0');
+  // Navigateur → invité : avis, le serveur demande, le navigateur fournit.
+  const n3 = ws.octets().length;
+  ws.conn.envoyerBinaire(coupe((1 << 27) | 1));
+  await attendre(() => ws.octets().length >= n3 + 12);
+  assert.equal(ws.octets().readUInt32BE(n3 + 8), (1 << 25) | 1, 'le serveur demande le texte');
+  const texte = Buffer.from('mot de passe : Été-2026!\r\n\0');
+  const brut = Buffer.alloc(4); brut.writeUInt32BE(texte.length);
+  ws.conn.envoyerBinaire(coupe((1 << 28) | 1, zlib.deflateSync(Buffer.concat([brut, texte]))));
+  await attendre(() => e.presse !== null);
+  assert.equal(e.presse, 'mot de passe : Été-2026!\n');
+  // L'ancien ClientCutText (Latin-1) passe aussi.
+  const ancien = Buffer.from('ancien'); const ent = Buffer.alloc(8); ent[0] = 6; ent.writeUInt32BE(ancien.length, 4);
+  ws.conn.envoyerBinaire(Buffer.concat([ent, ancien]));
+  await attendre(() => e.presse === 'ancien');
+  ws.conn.close();
+});
+
+test('console d\'une VM sans port série : refus clair avant Proxmox, ajout par l\'administrateur, presse-papiers branché sur l\'affichage', async () => {
+  const sans = await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '102' });
+  assert.equal(sans.status, 409);
+  assert.equal(sans.json.details?.sansSerie, true);
+  assert.match(sans.json.error, /port série/);
+  assert.ok(!pve.appels.some(a => a.chemin === '/nodes/pve-a/qemu/102/termproxy'), 'Proxmox n\'est pas appelé pour rien');
+  const fiche = await membre.get(machine('pve-a', 'qemu', 101));
+  assert.equal(fiche.json.config.serial0, 'socket');
+  assert.equal(fiche.json.config.vga, 'std,clipboard=vnc');
+  const acces = machine('pve-a', 'qemu', 102) + '/acces';
+  assert.equal((await membre.post(acces, { portSerie: true })).status, 403);
+  assert.equal((await sansRenfort(() => admin.post(acces, { portSerie: true }))).status, 403);
+  assert.equal((await admin.post(acces, {})).status, 400);
+  assert.equal((await admin.post(machine('pve-a', 'lxc', 110) + '/acces', { portSerie: true })).status, 400);
+  const r = await admin.post(acces, { portSerie: true, pressePapiers: true });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.deepEqual(r.json.champs.sort(), ['serial0', 'vga']);
+  const conf = pve.etat.machines.find(m => m.vmid === 102).conf;
+  assert.deepEqual([conf.serial0, conf.vga], ['socket', 'std,clipboard=vnc']);
+  assert.equal((await admin.post(acces, { portSerie: true, pressePapiers: true })).json.deja, true, 'rien à refaire');
+  // Un affichage SPICE (qxl) ne prend pas le presse-papiers VNC ; les options existantes sont gardées.
+  pve.etat.machines.find(m => m.vmid === 130).conf = { vga: 'qxl,memory=32' };
+  assert.equal((await admin.post(machine('pve-b', 'qemu', 130) + '/acces', { pressePapiers: true })).status, 409);
+  pve.etat.machines.find(m => m.vmid === 130).conf = { vga: 'virtio,memory=32,clipboard=foo' };
+  await admin.post(machine('pve-b', 'qemu', 130) + '/acces', { pressePapiers: true });
+  assert.equal(pve.etat.machines.find(m => m.vmid === 130).conf.vga, 'virtio,memory=32,clipboard=vnc');
+  // Avec le port série, la console s'ouvre.
+  const p = await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '102' });
+  assert.equal(p.status, 200);
+  const ws = await ouvrirWs(membre, p.json.passe);
+  await attendre(() => ws.texte().includes('invite-102:~#'));
+  ws.conn.close();
+  const tp = pve.appels.filter(a => /termproxy$/.test(a.chemin)).at(-1);
+  assert.equal(tp.auth, 'ticket', 'termproxy demandé avec le ticket de session');
 });
 
 test('surveillance : une machine tombée est un événement et un ticket signé ; un arrêt depuis ProxLab ne sonne pas', async () => {

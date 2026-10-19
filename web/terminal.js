@@ -3,6 +3,11 @@
 // <div>, une suite de cellules de même apparence un <span> dont le texte est
 // posé par textContent. Les seize couleurs de base sont des classes ; les
 // couleurs 256 et RVB passent par le CSSOM, jamais par un attribut de style.
+//
+// Copier : sélectionner à la souris (le rendu attend la fin du geste), puis
+// ⌘C, Ctrl+Maj+C, le bouton Copier ou le menu du navigateur. Coller : ⌘V,
+// Ctrl+Maj+V ou le bouton Coller ; en mode « collage encadré » (2004) le
+// texte part entre ses balises, comme dans un vrai terminal.
 function xterm256(n) {
   if (n < 16) return null;
   if (n < 232) { n -= 16; const lv = [0, 95, 135, 175, 215, 255]; return `rgb(${lv[Math.floor(n / 36) % 6]},${lv[Math.floor(n / 6) % 6]},${lv[n % 6]})`; }
@@ -21,8 +26,10 @@ const TOUCHES = {
 const vierge = () => ({ f: null, b: null, gras: false, inv: false, pale: false });
 
 export class Terminal {
-  constructor(hote, { surSaisie, surTaille } = {}) {
-    this.surSaisie = surSaisie; this.surTaille = surTaille;
+  constructor(hote, { surSaisie, surTaille, surCopie = () => {}, surRefus = () => {} } = {}) {
+    this.surSaisie = surSaisie; this.surTaille = surTaille; this.surCopie = surCopie; this.surRefus = surRefus;
+    this.encadre = false; this.glisse = false;
+    this.mac = /Mac|iPhone|iPad/.test(navigator.userAgentData?.platform || navigator.platform || '');
     this.cols = 80; this.lignes = 24; this.x = 0; this.y = 0;
     this.attr = vierge(); this.etat = 'texte'; this.params = ''; this.haut = 0; this.bas = 23;
     this.sauve = null; this.alt = null; this.sale = new Set(); this.prevu = false;
@@ -39,8 +46,16 @@ export class Terminal {
     this.tampon = this.nouveauTampon(this.lignes, this.cols);
     this.rangs = [];
     this.lier();
-    this.ecran.addEventListener('mousedown', () => setTimeout(() => this.saisie.focus(), 0));
-    this.ecran.addEventListener('focus', () => this.saisie.focus());
+    // Un clic donne le clavier ; un glissé sélectionne, et la sélection reste.
+    this.ecran.addEventListener('mousedown', e => { if (e.button === 0) this.glisse = true; });
+    document.addEventListener('mouseup', this.finGlisse = () => {
+      if (!this.glisse) return;
+      this.glisse = false;
+      if (!this.selection()) this.saisie.focus(); else this.ecran.focus({ preventScroll: true });
+      this.prevoir();
+    });
+    this.ecran.addEventListener('focus', () => { if (!this.glisse && !this.selection()) this.saisie.focus(); });
+    this.ecran.addEventListener('copy', e => { const t = this.selection(); if (t) { e.preventDefault(); e.clipboardData.setData('text/plain', t); this.surCopie([...t].length); } });
     this.observateur = new ResizeObserver(() => this.mesurer());
     this.observateur.observe(this.ecran);
     this.mesurer();
@@ -52,7 +67,32 @@ export class Terminal {
   nouveauTampon(l, c) { return Array.from({ length: l }, () => this.nouvelleLigne(c)); }
   toutSale() { for (let y = 0; y < this.lignes; y++) this.sale.add(y); }
   focus() { this.saisie.focus(); }
-  detruire() { this.observateur.disconnect(); }
+  detruire() { this.observateur.disconnect(); document.removeEventListener('mouseup', this.finGlisse); }
+
+  // Le texte sélectionné dans l'écran du terminal, lignes sans leurs blancs de fin.
+  selection() {
+    const sel = window.getSelection?.();
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !this.ecran.contains(sel.getRangeAt(0).commonAncestorContainer)) return '';
+    return sel.toString().split('\n').map(l => l.replace(/\s+$/, '')).join('\n').replace(/\n+$/, '');
+  }
+  async copier() {
+    const t = this.selection();
+    if (!t) { this.surCopie(0); return; }
+    try { await navigator.clipboard.writeText(t); this.surCopie([...t].length); } catch {
+      if (document.execCommand?.('copy')) return;
+      this.surRefus('Le navigateur refuse d\'écrire le presse-papiers : utilise le menu Copier.');
+    }
+  }
+  coller(texte) {
+    if (!texte) return;
+    const t = String(texte).replace(/\r?\n/g, '\r');
+    this.surSaisie?.(this.encadre ? `\x1b[200~${t.replace(/\x1b\[20[01]~/g, '')}\x1b[201~` : t);
+    window.getSelection?.()?.removeAllRanges();
+    this.saisie.focus();
+  }
+  async collerPressePapiers() {
+    try { this.coller(await navigator.clipboard.readText()); } catch { this.surRefus(`Le navigateur n'a pas donné le presse-papiers : clique dans la console puis ${this.mac ? '⌘V' : 'Ctrl+Maj+V'}.`); }
+  }
 
   mesurer() {
     const sonde = document.createElement('span');
@@ -80,17 +120,37 @@ export class Terminal {
 
   lier() {
     const envoyer = s => this.surSaisie?.(s);
-    this.saisie.addEventListener('input', () => { if (this.saisie.value) { envoyer(this.saisie.value); this.saisie.value = ''; } });
-    this.saisie.addEventListener('keydown', e => {
+    // Une touche : rend vrai si elle a été traitée (et son défaut empêché).
+    const clavier = e => {
+      const l = e.key.length === 1 ? e.key.toLowerCase() : '';
+      // Copier / coller : ⌘ sur Mac, Ctrl+Maj ailleurs (Ctrl+C reste l'interruption).
+      if ((this.mac ? e.metaKey : e.ctrlKey && e.shiftKey) && !e.altKey && l === 'c') { e.preventDefault(); this.copier(); return true; }
+      if ((this.mac ? e.metaKey : e.ctrlKey && e.shiftKey) && !e.altKey && l === 'v') return 'coller'; // l'événement paste suit
+      if (e.metaKey) return false;
       if (e.ctrlKey && !e.altKey && e.key.length === 1) {
-        const c = e.key.toLowerCase().charCodeAt(0);
-        if (c >= 97 && c <= 122) { e.preventDefault(); envoyer(String.fromCharCode(c - 96)); return; }
-        if (e.key === ' ') { e.preventDefault(); envoyer('\x00'); return; }
+        const c = l.charCodeAt(0);
+        if (c >= 97 && c <= 122) { e.preventDefault(); envoyer(String.fromCharCode(c - 96)); return true; }
+        if (e.key === ' ') { e.preventDefault(); envoyer('\x00'); return true; }
       }
-      if (e.altKey && e.key.length === 1) { e.preventDefault(); envoyer('\x1b' + e.key); return; }
-      if (TOUCHES[e.key]) { e.preventDefault(); envoyer(TOUCHES[e.key]); }
+      if (e.altKey && !e.ctrlKey && e.key.length === 1 && !this.mac) { e.preventDefault(); envoyer('\x1b' + e.key); return true; }
+      if (TOUCHES[e.key]) { e.preventDefault(); envoyer(TOUCHES[e.key]); return true; }
+      return false;
+    };
+    this.saisie.addEventListener('input', () => { if (this.saisie.value) { envoyer(this.saisie.value); this.saisie.value = ''; } });
+    this.saisie.addEventListener('keydown', clavier);
+    this.saisie.addEventListener('paste', e => { e.preventDefault(); this.coller(e.clipboardData.getData('text')); });
+    // L'écran garde le clavier tant qu'une sélection existe : copier la prend,
+    // toute autre touche la lâche et repart dans la saisie.
+    this.ecran.addEventListener('keydown', e => {
+      const r = clavier(e);
+      if (r === true) return;
+      if (r === 'coller') { e.preventDefault(); this.collerPressePapiers(); return; }
+      if (/^(Shift|Control|Alt|Meta)/.test(e.key) || e.metaKey) return;
+      window.getSelection?.()?.removeAllRanges();
+      this.saisie.focus();
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey) { e.preventDefault(); envoyer(e.key); }
     });
-    this.saisie.addEventListener('paste', e => { e.preventDefault(); envoyer(e.clipboardData.getData('text')); });
+    this.ecran.addEventListener('paste', e => { e.preventDefault(); this.coller(e.clipboardData.getData('text')); });
   }
 
   ecrire(texte) {
@@ -169,8 +229,8 @@ export class Terminal {
       case 's': this.sauve = { x: this.x, y: this.y, attr: { ...this.attr } }; break;
       case 'u': if (this.sauve) { this.x = this.sauve.x; this.y = this.sauve.y; this.attr = { ...this.sauve.attr }; } break;
       case 'm': this.sgr(this.params.split(';')); break;
-      case 'h': if (prive && p.includes(1049)) this.entrerAlt(); break;
-      case 'l': if (prive && p.includes(1049)) this.sortirAlt(); break;
+      case 'h': if (prive && p.includes(1049)) this.entrerAlt(); if (prive && p.includes(2004)) this.encadre = true; break;
+      case 'l': if (prive && p.includes(1049)) this.sortirAlt(); if (prive && p.includes(2004)) this.encadre = false; break;
       default: break;
     }
     this.sale.add(this.y);
@@ -217,7 +277,7 @@ export class Terminal {
   }
 
   prevoir() {
-    if (this.prevu) return;
+    if (this.prevu || this.glisse) return;
     this.prevu = true;
     requestAnimationFrame(() => { this.prevu = false; this.peindre(); });
   }

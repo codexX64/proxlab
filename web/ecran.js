@@ -4,6 +4,11 @@
 // CopyRect, changement de taille, et la touche étendue de QEMU : le code
 // physique de chaque touche part avec elle, si bien que la disposition du
 // clavier est celle de la machine invitée (AZERTY reste AZERTY).
+//
+// Presse-papiers dans les deux sens : le protocole étendu de VNC (celui de
+// QEMU avec « clipboard=vnc », relayé dans l'invité par spice-vdagent), en
+// UTF-8 et compressé en zlib ; sans agent, « taper » le texte touche par
+// touche selon la disposition du clavier de l'invité.
 
 // event.code → code XT (préfixe E0 noté 0xE0xx).
 const XT = {
@@ -37,11 +42,52 @@ export function keysym(e) {
 // Code envoyé à QEMU : un code étendu E0xx devient xx | 0x80.
 export const codeQemu = xt => ((xt >> 8) === 0xe0 && (xt & 0xff) < 0x7f ? (xt & 0xff) | 0x80 : xt);
 
-const ENCODAGES = [1, 0, -223, -258];   // CopyRect, Raw, DesktopSize, touche étendue QEMU
+const PRESSE_EXT = 0xC0A1E5CE | 0;       // pseudo-encodage du presse-papiers étendu
+const ENCODAGES = [1, 0, -223, -258, PRESSE_EXT];   // CopyRect, Raw, DesktopSize, touche étendue QEMU, presse-papiers
+const PP = { TEXTE: 1, CAPS: 1 << 24, REQUEST: 1 << 25, PEEK: 1 << 26, NOTIFY: 1 << 27, PROVIDE: 1 << 28 };
+const PRESSE_MAX = 64 * 1024 - 64;      // ProxLab refuse au-delà de 64 Kio
+export const FRAPPE_MAX = 4000;
+
+async function zlib(octets, sens) {
+  const flux = new Blob([octets]).stream().pipeThrough(sens === 'in' ? new DecompressionStream('deflate') : new CompressionStream('deflate'));
+  return new Uint8Array(await new Response(flux).arrayBuffer());
+}
+
+// Caractère → touches physiques, par disposition. [code, maj, altgr] ; une
+// suite pour les touches mortes (^ puis e → ê).
+const T = (code, maj = false, altgr = false) => [code, maj, altgr];
+function carteUs() {
+  const c = {};
+  for (let i = 0; i < 26; i++) { const l = String.fromCharCode(97 + i), code = `Key${l.toUpperCase()}`; c[l] = [T(code)]; c[l.toUpperCase()] = [T(code, true)]; }
+  '0123456789'.split('').forEach(d => { c[d] = [T(`Digit${d}`)]; });
+  ')!@#$%^&*('.split('').forEach((x, i) => { c[x] = [T(`Digit${i}`, true)]; });
+  for (const [code, bas, haut] of [['Minus', '-', '_'], ['Equal', '=', '+'], ['BracketLeft', '[', '{'], ['BracketRight', ']', '}'], ['Backslash', '\\', '|'], ['Semicolon', ';', ':'], ['Quote', "'", '"'], ['Comma', ',', '<'], ['Period', '.', '>'], ['Slash', '/', '?'], ['Backquote', '`', '~']]) { c[bas] = [T(code)]; c[haut] = [T(code, true)]; }
+  return c;
+}
+function carteFr() {
+  const c = {};
+  const lettres = { a: 'KeyQ', z: 'KeyW', q: 'KeyA', w: 'KeyZ', m: 'Semicolon' };
+  for (let i = 0; i < 26; i++) { const l = String.fromCharCode(97 + i), code = lettres[l] || `Key${l.toUpperCase()}`; c[l] = [T(code)]; c[l.toUpperCase()] = [T(code, true)]; }
+  const rang = ['&', 'é', '"', "'", '(', '-', 'è', '_', 'ç', 'à'];
+  rang.forEach((x, i) => { const code = `Digit${(i + 1) % 10}`; c[x] = [T(code)]; c[String((i + 1) % 10)] = [T(code, true)]; });
+  for (const [code, bas, haut] of [['Minus', ')', '°'], ['Equal', '=', '+'], ['BracketRight', '$', '£'], ['Quote', 'ù', '%'], ['Backslash', '*', 'µ'], ['KeyM', ',', '?'], ['Comma', ';', '.'], ['Period', ':', '/'], ['Slash', '!', '§'], ['IntlBackslash', '<', '>']]) { c[bas] = [T(code)]; c[haut] = [T(code, true)]; }
+  c['²'] = [T('Backquote')];
+  for (const [code, x] of [['Digit2', '~'], ['Digit3', '#'], ['Digit4', '{'], ['Digit5', '['], ['Digit6', '|'], ['Digit7', '`'], ['Digit8', '\\'], ['Digit9', '^'], ['Digit0', '@'], ['Minus', ']'], ['Equal', '}'], ['KeyE', '€']]) c[x] = [T(code, false, true)];
+  for (const [b, v] of [['a', 'â'], ['e', 'ê'], ['i', 'î'], ['o', 'ô'], ['u', 'û']]) c[v] = [T('BracketLeft'), ...c[b]];
+  for (const [b, v] of [['a', 'ä'], ['e', 'ë'], ['i', 'ï'], ['o', 'ö'], ['u', 'ü'], ['y', 'ÿ']]) c[v] = [T('BracketLeft', true), ...c[b]];
+  return c;
+}
+const COMMUNES = { ' ': [T('Space')], '\n': [T('Enter')], '\t': [T('Tab')] };
+export const DISPOSITIONS = { fr: { nom: 'AZERTY (français)', carte: { ...carteFr(), ...COMMUNES } }, us: { nom: 'QWERTY (US)', carte: { ...carteUs(), ...COMMUNES } } };
+// Les caractères qu'une disposition ne sait pas taper.
+export const intapables = (texte, d) => [...new Set([...texte.replace(/\r\n?/g, '\n')].filter(ch => !DISPOSITIONS[d]?.carte[ch]))];
+export const estMac = () => /Mac|iPhone|iPad/.test(navigator.userAgentData?.platform || navigator.platform || '');
 
 export class Ecran {
-  constructor(hote, ws, { surEtat = () => {} } = {}) {
-    this.ws = ws; this.surEtat = surEtat;
+  constructor(hote, ws, { surEtat = () => {}, surPresse = () => {}, surColler = null } = {}) {
+    this.ws = ws; this.surEtat = surEtat; this.surPresse = surPresse; this.surColler = surColler;
+    this.actif = false; this.capsPresse = 0; this.aFournir = null; this.dernierPresse = ''; this.copie = null;
+    this.mac = estMac(); this.metaSeul = null;
     this.morceaux = []; this.dispo = 0;
     this.etat = 'init'; this.rects = 0; this.rect = null;
     this.qemu = false; this.enfoncees = new Map(); this.boutons = 0;
@@ -104,6 +150,8 @@ export class Ecran {
       this.envoyer(enc.buffer);
       this.demander(false);
       this.etat = 'message';
+      this.actif = true;     // clavier et souris seulement maintenant : avant, ils casseraient la poignée
+      this.surEtat('pret');
       return true;
     }
     if (this.etat === 'message') {
@@ -111,7 +159,15 @@ export class Ecran {
       if (t[0] === 0) { const h = this.prendre(4); if (!h) return false; this.rects = new DataView(h.buffer).getUint16(2); this.etat = 'rect'; if (!this.rects) this.finImage(); return true; }
       if (t[0] === 1) { const h = this.regarder(6); if (!h) return false; const n = new DataView(h.buffer).getUint16(4); return !!this.prendre(6 + 6 * n); }
       if (t[0] === 2) { this.prendre(1); return true; }
-      if (t[0] === 3) { const h = this.regarder(8); if (!h) return false; const n = new DataView(h.buffer).getUint32(4); if (n > 1 << 20) throw new Error('presse-papiers démesuré'); return !!this.prendre(8 + n); }
+      if (t[0] === 3) {
+        const h = this.regarder(8); if (!h) return false;
+        const lg = new DataView(h.buffer).getInt32(4), n = Math.abs(lg);
+        if (n > 1 << 20) throw new Error('presse-papiers démesuré');
+        const m = this.prendre(8 + n); if (!m) return false;
+        if (lg >= 0) this.presseRecu(new TextDecoder('latin1').decode(m.subarray(8)));
+        else if (n >= 4) this.presseEtendu(m.subarray(8));
+        return true;
+      }
       throw new Error(`message VNC inconnu (${t[0]})`);
     }
     if (this.etat === 'rect') {
@@ -148,7 +204,98 @@ export class Ecran {
     this.surEtat('taille', `${l} × ${h}`);
   }
 
+  // ── Presse-papiers ──
+  coupe(flags, donnees = new Uint8Array(0)) {
+    const b = new Uint8Array(12 + donnees.length), v = new DataView(b.buffer);
+    v.setUint8(0, 6); v.setInt32(4, -(4 + donnees.length)); v.setUint32(8, flags >>> 0); b.set(donnees, 12);
+    this.envoyer(b);
+  }
+  presseEtendu(p) {
+    const flags = new DataView(p.buffer, p.byteOffset).getUint32(0);
+    if (flags & PP.CAPS) {
+      this.capsPresse = flags;
+      const max = new Uint8Array(4); new DataView(max.buffer).setUint32(0, PRESSE_MAX);
+      this.coupe(PP.CAPS | PP.REQUEST | PP.NOTIFY | PP.PROVIDE | PP.TEXTE, max);
+      return;
+    }
+    if (flags & PP.REQUEST && flags & PP.TEXTE) { this.fournir(); return; }
+    if (flags & PP.PEEK) { this.coupe(PP.NOTIFY | (this.aFournir !== null ? PP.TEXTE : 0)); return; }
+    if (flags & PP.NOTIFY) { if (flags & PP.TEXTE) this.coupe(PP.REQUEST | PP.TEXTE); return; }
+    if (flags & PP.PROVIDE && flags & PP.TEXTE) {
+      zlib(p.subarray(4), 'in').then(z => {
+        const n = new DataView(z.buffer).getUint32(0);
+        this.presseRecu(new TextDecoder().decode(z.subarray(4, 4 + Math.min(n, z.length - 4))).replace(/\0+$/, '').replace(/\r\n/g, '\n'));
+      }).catch(() => {});
+    }
+  }
+  presseRecu(texte) {
+    this.dernierPresse = texte;
+    if (this.copie) { this.copie.resoudre(texte); this.copie = null; }
+    this.surPresse(texte);
+  }
+  async fournir() {
+    if (this.aFournir === null) return;
+    const t = new TextEncoder().encode(this.aFournir.replace(/\r?\n/g, '\r\n') + '\0');
+    const brut = new Uint8Array(4 + t.length); new DataView(brut.buffer).setUint32(0, t.length); brut.set(t, 4);
+    this.coupe(PP.PROVIDE | PP.TEXTE, await zlib(brut, 'out'));
+  }
+  // Le texte devient le presse-papiers de l'invité (il le colle avec Ctrl+V).
+  envoyerPresse(texte) {
+    texte = String(texte).slice(0, 60000);
+    if (!this.actif) return false;
+    if (this.capsPresse) { this.aFournir = texte; this.coupe(PP.NOTIFY | PP.TEXTE); return true; }
+    const octets = Uint8Array.from([...texte].map(ch => { const c = ch.codePointAt(0); return c < 256 ? c : 63; }));
+    const b = new Uint8Array(8 + octets.length); b[0] = 6; new DataView(b.buffer).setUint32(4, octets.length); b.set(octets, 8);
+    this.envoyer(b);
+    return true;
+  }
+  // Ce que l'invité copiera dans les deux secondes ira dans le presse-papiers
+  // d'ici : l'écriture est demandée pendant le geste (Safari l'exige) et
+  // tenue par une promesse que le texte de l'invité résout.
+  armerCopie() {
+    if (!navigator.clipboard) return;
+    let resoudre, rejeter;
+    const promesse = new Promise((ok, ko) => { resoudre = ok; rejeter = ko; });
+    const minuterie = setTimeout(() => { if (this.copie?.promesse === promesse) this.copie = null; rejeter(new Error('rien copié')); }, 2500);
+    this.copie = { promesse, resoudre: t => { clearTimeout(minuterie); resoudre(t); } };
+    if (window.ClipboardItem && navigator.clipboard.write) {
+      navigator.clipboard.write([new ClipboardItem({ 'text/plain': promesse.then(t => new Blob([t], { type: 'text/plain' })) })]).catch(() => {});
+    } else promesse.then(t => navigator.clipboard.writeText(t)).catch(() => {});
+  }
+  // Taper le texte, touche par touche, selon la disposition de l'invité.
+  async taper(texte, disposition = 'fr', { surAvance = () => {} } = {}) {
+    const carte = DISPOSITIONS[disposition]?.carte || DISPOSITIONS.fr.carte;
+    const caracteres = [...String(texte).replace(/\r\n?/g, '\n')].slice(0, FRAPPE_MAX);
+    let sautes = 0;
+    for (let i = 0; i < caracteres.length; i++) {
+      if (!this.actif || this.ws.readyState !== 1) break;
+      const suite = carte[caracteres[i]];
+      if (!suite) { sautes++; continue; }
+      for (const [code, maj, altgr] of suite) {
+        if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, true);
+        if (altgr) this.touche({ code: 'AltRight', key: 'AltGraph' }, true);
+        const key = code.startsWith('Key') ? code.slice(3).toLowerCase() : code.startsWith('Digit') ? code.slice(5) : code === 'Space' ? ' ' : code;
+        this.touche({ code, key }, true); this.touche({ code, key }, false);
+        if (altgr) this.touche({ code: 'AltRight', key: 'AltGraph' }, false);
+        if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, false);
+      }
+      if (i % 8 === 7) { surAvance(i + 1, caracteres.length); await new Promise(r => setTimeout(r, 25)); }
+    }
+    surAvance(caracteres.length, caracteres.length);
+    return { tapes: caracteres.length - sautes, sautes };
+  }
+  // Une combinaison Ctrl(+Maj)+lettre envoyée à l'invité.
+  combinaison(lettre, maj = false) {
+    const code = `Key${lettre.toUpperCase()}`;
+    this.touche({ code: 'ControlLeft', key: 'Control' }, true);
+    if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, true);
+    this.touche({ code, key: lettre }, true); this.touche({ code, key: lettre }, false);
+    if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, false);
+    this.touche({ code: 'ControlLeft', key: 'Control' }, false);
+  }
+
   touche(e, bas) {
+    if (!this.actif) return;
     const xt = XT[e.code] || 0, ks = keysym(e);
     if (!xt && !ks) return;
     if (this.qemu && xt) {
@@ -162,6 +309,7 @@ export class Ecran {
     }
   }
   pointeur(x, y, masque) {
+    if (!this.actif) return;
     const b = new DataView(new ArrayBuffer(6));
     b.setUint8(0, 5); b.setUint8(1, masque);
     b.setUint16(2, Math.max(0, Math.min(this.toile.width - 1, Math.round(x))));
@@ -178,18 +326,36 @@ export class Ecran {
     for (const [code, key] of seq) this.touche({ code, key }, true);
     for (const [code, key] of seq.reverse()) this.touche({ code, key }, false);
   }
-  relacher() { for (const [code, key] of this.enfoncees) this.touche({ code, key }, false); this.enfoncees.clear(); }
+  relacher() { for (const [code, key] of this.enfoncees) this.touche({ code, key }, false); this.enfoncees.clear(); this.metaSeul = null; }
 
   brancher() {
     const t = this.toile;
+    // Raccourcis : ⌘ sur Mac, Ctrl ailleurs. Coller prend le presse-papiers
+    // d'ici ; copier et couper rapportent ici ce que l'invité a copié. Sur Mac,
+    // ⌘+lettre devient Ctrl+lettre dans l'invité ; ⌘ seul reste la touche Super.
+    const mod = e => (this.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey;
     t.addEventListener('keydown', e => {
       e.preventDefault();
+      if (this.mac && /^Meta/.test(e.code)) { this.metaSeul = e.code; return; }
+      if (mod(e) && /^Key[VCXAZY]$/.test(e.code)) {
+        if (e.repeat) return;
+        const l = e.code.slice(3).toLowerCase();
+        if (this.mac) this.metaSeul = null;
+        if (l === 'v' && this.surColler) { const maj = e.shiftKey; this.relacher(); this.surColler({ maj }); return; }
+        if (l === 'c' || l === 'x') this.armerCopie();
+        if (this.mac) this.combinaison(l, e.shiftKey);
+        else { this.enfoncees.set(e.code, e.key); this.touche(e, true); }
+        return;
+      }
+      if (this.metaSeul) { this.enfoncees.set(this.metaSeul, 'Meta'); this.touche({ code: this.metaSeul, key: 'Meta' }, true); this.metaSeul = null; }
       if (e.repeat && !this.enfoncees.has(e.code)) return;
       this.enfoncees.set(e.code, e.key);
       this.touche(e, true);
     });
     t.addEventListener('keyup', e => {
       e.preventDefault();
+      if (this.mac && /^Meta/.test(e.code) && this.metaSeul === e.code) { this.metaSeul = null; this.touche({ code: e.code, key: 'Meta' }, true); this.touche({ code: e.code, key: 'Meta' }, false); return; }
+      if (!this.enfoncees.has(e.code)) return;
       const key = this.enfoncees.get(e.code) ?? e.key;
       this.enfoncees.delete(e.code);
       this.touche({ code: e.code, key }, false);

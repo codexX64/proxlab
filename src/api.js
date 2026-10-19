@@ -27,7 +27,7 @@ const PERIODES = ['hour', 'day', 'week', 'month', 'year'];
 
 // Ce que la fiche d'une machine montre de sa configuration. Le reste (mots de
 // passe cloud-init, clés SSH, scripts d'accroche, arguments bruts) ne sort pas.
-const CONFIG_VISIBLE = /^(name|hostname|description|tags|ostype|arch|cores|sockets|cpu|vcpus|memory|swap|balloon|onboot|startup|boot|bootdisk|machine|bios|agent|scsihw|unprivileged|features|template|protection|lock|(net|scsi|virtio|ide|sata|efidisk|tpmstate|rootfs|mp|unused)\d*)$/;
+const CONFIG_VISIBLE = /^(name|hostname|description|tags|ostype|arch|cores|sockets|cpu|vcpus|memory|swap|balloon|onboot|startup|boot|bootdisk|machine|bios|agent|scsihw|unprivileged|features|template|protection|lock|vga|(serial|net|scsi|virtio|ide|sata|efidisk|tpmstate|rootfs|mp|unused)\d*)$/;
 
 const S = {
   alimentation: { action: { type: 'chaine', requis: true, parmi: ['start', 'shutdown', 'reboot', 'suspend', 'resume', 'stop', 'reset'] } },
@@ -38,6 +38,7 @@ const S = {
     coeurs: { type: 'entier', min: 1, max: 512 }, sockets: { type: 'entier', min: 1, max: 8 }, memoire: { type: 'entier', min: 16, max: 4194304 },
     demarrageAuto: { type: 'booleen' }, etiquettes: { type: 'chaine', max: 200, motif: /^[A-Za-z0-9_.;+-]*$/ },
   },
+  acces: { portSerie: { type: 'booleen', defaut: false }, pressePapiers: { type: 'booleen', defaut: false } },
   instantane: { nom: { type: 'chaine', requis: true, motif: INSTANTANE, max: 40 }, description: { type: 'chaine', max: 500, defaut: '' }, avecMemoire: { type: 'booleen', defaut: false } },
   sauvegarde: {
     stockage: { type: 'chaine', requis: true, max: 100, motif: STOCKAGE }, mode: { type: 'chaine', parmi: ['snapshot', 'suspend', 'stop'], defaut: 'snapshot' },
@@ -305,6 +306,33 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     return { ok: true };
   }, { role: 'admin' });
 
+  // Ce que la console et l'écran demandent à la VM : un port série (console
+  // texte) et le presse-papiers de l'écran (agent VNC de QEMU, relayé par
+  // spice-vdagent dans l'invité). Pris en compte au prochain démarrage complet.
+  r.post('/api/machines/:noeud/:type/:vmid/acces', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const m = machine(ctx.params);
+    if (m.type !== 'qemu') throw new ErreurHttp(400, 'Réservé aux machines virtuelles.');
+    const b = await corps(ctx, S.acces);
+    if (!b.portSerie && !b.pressePapiers) throw new ErreurHttp(400, 'Rien à ajouter.');
+    const config = await pve(() => proxmox.get(m.base + '/config'));
+    const params = {};
+    if (b.portSerie && !Object.keys(config || {}).some(k => /^serial\d$/.test(k))) params.serial0 = 'socket';
+    if (b.pressePapiers) {
+      const vga = String(config?.vga || '');
+      const [genre = '', ...options] = vga.split(',').filter(Boolean);
+      if (/^(qxl|serial|none)/.test(genre)) throw new ErreurHttp(409, `L'affichage de cette VM (${genre}) ne prend pas le presse-papiers VNC : passe-le en « std » ou « virtio » dans Proxmox.`);
+      if (!options.includes('clipboard=vnc')) params.vga = [genre || 'std', ...options.filter(o => !o.startsWith('clipboard=')), 'clipboard=vnc'].join(',');
+    }
+    if (!Object.keys(params).length) return { ok: true, deja: true };
+    await pve(() => proxmox.put(m.base + '/config', params));
+    const qui = acteur(ctx);
+    const quoi = [params.serial0 && 'port série', params.vga && 'presse-papiers'].filter(Boolean).join(' et ');
+    journal.ecrire({ acteur: qui.acteurCompte, action: 'machine.configuration', objet: m.cible, ip: ctx.ip, details: { champs: Object.keys(params).join(',') } });
+    evenements.noter({ genre: 'vm.configured', niveau: 'info', titre: `VM ${m.vmid} : ${quoi} ajouté${params.serial0 && params.vga ? 's' : ''}`, corps: `Pris en compte au prochain démarrage complet — par ${qui.acteur}.`, cible: m.cible, noeud: m.noeud, ...qui });
+    return { ok: true, champs: Object.keys(params) };
+  }, { role: 'admin' });
+
   r.post('/api/machines/:noeud/:type/:vmid/instantanes', async ctx => {
     session(ctx, { role: 'membre' });
     const m = machine(ctx.params);
@@ -382,6 +410,12 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     const mode = b.mode === 'ecran' ? 'ecran' : 'texte';
     if (mode === 'ecran' && b.type !== 'qemu') throw new ErreurHttp(400, 'L\'écran est celui d\'une machine virtuelle ; un conteneur a sa console texte.');
     if (!reglages.lire('liaison')?.utilisateur) throw new ErreurHttp(409, 'La console demande l\'utilisateur et le mot de passe Proxmox dans la liaison (Réglages).');
+    // La console texte d'une VM passe par son port série : sans lui, Proxmox
+    // ne répond que « unable to find a serial interface ». On le dit avant.
+    if (mode === 'texte' && b.type === 'qemu') {
+      const config = await pve(() => proxmox.get(machine({ noeud: b.noeud, type: 'qemu', vmid: b.vmid }).base + '/config'));
+      if (!Object.keys(config || {}).some(k => /^serial\d$/.test(k))) throw new ErreurHttp(409, 'Cette VM n\'a pas de port série : sa console texte passe par lui. Utilise l\'Écran, ou ajoute un port série.', { sansSerie: true });
+    }
     const passe = crypto.randomBytes(24).toString('base64url');
     const t = Date.now();
     for (const [k, v] of passes) if (v.expire < t) passes.delete(k);

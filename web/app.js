@@ -12,7 +12,7 @@ import {
 } from '/socle/compte.js';
 import { courbe, anneau, jauge, calendrier, capacite, tuiles } from '/socle/graphes.js';
 import { Terminal } from '/terminal.js';
-import { Ecran } from '/ecran.js';
+import { Ecran, DISPOSITIONS, FRAPPE_MAX, intapables, estMac } from '/ecran.js';
 
 appliquerTheme();
 const SERVICE = 'ProxLab';
@@ -23,6 +23,8 @@ const admin = moi.role === 'admin';
 const membre = moi.role !== 'lecture';
 
 ajouterPictos({
+  presse: '<rect x="5.5" y="4.5" width="13" height="16" rx="2"/><path d="M9 4.5V3.6c0-.6.4-1 1-1h4c.6 0 1 .4 1 1v.9M9 10h6M9 13.5h6M9 17h3.5"/>',
+  clavier: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M6 13.5h.01M18 13.5h.01M8.5 14.5h7"/>',
   grappe: '<rect x="3.5" y="4" width="17" height="5" rx="1.6"/><rect x="3.5" y="10" width="17" height="5" rx="1.6"/><rect x="3.5" y="16" width="17" height="4.5" rx="1.6"/><path d="M7 6.5h.01M7 12.5h.01M7 18.2h.01"/>',
   vm: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M9 20h6M12 16.5V20"/>',
   ct: '<path d="M12 3.5 20 8v8l-8 4.5L4 16V8z"/><path d="M4 8l8 4.5L20 8M12 12.5v8"/>',
@@ -456,8 +458,8 @@ async function pageFiche(noeud, type, vmid) {
       else if (k === 'instantanes') corps.replaceChildren(instantanes(f, base, relire));
       else if (k === 'sauvegardes') corps.replaceChildren(await sauvegardes(f, base));
       else if (k === 'configuration') corps.replaceChildren(configuration(f, base, relire));
-      else if (k === 'console') corps.replaceChildren(consoleMachine({ noeud: f.node, type: f.type, vmid: String(f.vmid) }, (t, w) => { fermerConsole(); term = t; ws = w; }));
-      else if (k === 'ecran') corps.replaceChildren(ecranMachine({ noeud: f.node, type: f.type, vmid: String(f.vmid) }, f.status === 'running', (t, w) => { fermerConsole(); term = t; ws = w; }));
+      else if (k === 'console') corps.replaceChildren(consoleMachine({ noeud: f.node, type: f.type, vmid: String(f.vmid) }, (t, w) => { fermerConsole(); term = t; ws = w; }, { f, relire: () => relire().then(() => montrer('console')) }));
+      else if (k === 'ecran') corps.replaceChildren(ecranMachine(f, (t, w) => { fermerConsole(); term = t; ws = w; }, () => relire().then(() => montrer('ecran'))));
     } catch (e) { corps.replaceChildren(h('p', { class: 'vide', text: e.message })); }
   }
   tabs.replaceChildren(...onglets.map(([k, l]) => h('button', { class: 'view', type: 'button', role: 'tab', text: l, dataset: { k }, onclick: () => montrer(k) })));
@@ -601,58 +603,166 @@ async function migrer(f, base) {
 }
 
 // L'écran d'une VM (VNC) : clavier à la disposition de la machine, souris,
-// Ctrl+Alt+Suppr, plein écran. Chaque ouverture est journalisée.
-function ecranMachine(cible, enMarche, garder) {
+// Ctrl+Alt+Suppr, plein écran, presse-papiers dans les deux sens. Chaque
+// ouverture est journalisée.
+const lireLocal = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+const poserLocal = (k, v) => { try { localStorage.setItem(k, v); } catch { /* navigation privée */ } };
+const MOD = estMac() ? '⌘' : 'Ctrl+';
+
+function ecranMachine(f, garder, relire) {
+  const cible = { noeud: f.node, type: f.type, vmid: String(f.vmid) }, enMarche = f.status === 'running';
+  const agent = /clipboard=vnc/.test(f.config?.vga || '');
   const hote = h('div', { class: 'ecran-hote' });
   const etat = h('span', { class: 'note', text: 'fermé' });
-  let ecran = null;
+  let ecran = null, ouvertA = 0, reprise = false;
+  let disposition = lireLocal('proxlab-disposition', /^fr/i.test(navigator.language || '') ? 'fr' : 'us');
+
+  // Le panneau du presse-papiers.
+  const recu = h('pre', { class: 'presse-recu vide-doux', text: 'Rien de copié dans la VM pour l\'instant.' });
+  const copierIci = h('button', { class: 'btn sm', type: 'button', disabled: true, onclick: async () => {
+    try { await navigator.clipboard.writeText(ecran?.dernierPresse || ''); toast('Copié ici.'); } catch { toast('Le navigateur refuse : sélectionne le texte et copie-le.', true); }
+  } }, icone('copie', 13), 'Copier ici');
+  const aEnvoyer = h('textarea', { class: 'presse-envoi', rows: 3, placeholder: `Colle ici ce que tu veux envoyer (${MOD}V), ou fais ${MOD}V directement dans l'écran.`, spellcheck: false });
+  const choixDispo = h('select', { class: 'presse-dispo', 'aria-label': 'Disposition du clavier de la VM', onchange: e => { disposition = e.target.value; poserLocal('proxlab-disposition', disposition); } },
+    Object.entries(DISPOSITIONS).map(([k, d]) => h('option', { value: k, text: d.nom, selected: k === disposition })));
+  const avance = h('span', { class: 'note' });
+  const taper = async texte => {
+    if (!ecran?.actif) return toast('Ouvre l\'écran d\'abord.', true);
+    const manque = intapables(texte, disposition);
+    if ([...texte].length > FRAPPE_MAX) toast(`Seuls les ${FRAPPE_MAX} premiers caractères sont tapés.`);
+    ecran.toile.focus();
+    const r = await ecran.taper(texte, disposition, { surAvance: (i, n) => { avance.textContent = i < n ? `frappe ${i}/${n}…` : ''; } });
+    if (r.sautes) toast(`Tapé, sauf ${r.sautes} caractère${r.sautes > 1 ? 's' : ''} absent${r.sautes > 1 ? 's' : ''} de la disposition ${DISPOSITIONS[disposition].nom} : ${manque.slice(0, 8).join(' ')}`, true);
+  };
+  const coller = texte => {
+    if (!ecran?.actif) return toast('Ouvre l\'écran d\'abord.', true);
+    ecran.envoyerPresse(texte);
+    ecran.toile.focus();
+    setTimeout(() => ecran?.combinaison('v'), 150);
+  };
+  const branche = admin ? h('button', { class: 'btn sm', type: 'button', onclick: sur(async () => {
+    if (!await confirmer('Brancher le presse-papiers de cette VM ?', 'Proxmox ajoute « clipboard=vnc » à son affichage : pris en compte au prochain démarrage complet (Redémarrer depuis ProxLab suffit). Une VM ainsi réglée ne migre plus à chaud. Dans la VM, spice-vdagent doit tourner (déjà là sur Fedora, Ubuntu et la plupart des bureaux Linux).', { oui: 'Brancher' })) return;
+    await api.post(`/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/acces`, { pressePapiers: true });
+    toast('Presse-papiers branché : redémarre la VM pour qu\'il prenne effet.');
+    relire?.();
+  }) }, 'Brancher le presse-papiers') : null;
+  const panneau = h('div', { class: 'presse', hidden: true },
+    h('div', { class: 'presse-col' },
+      h('div', { class: 'presse-tete' }, h('b', { text: 'Copié dans la VM' }), copierIci),
+      recu,
+      agent ? h('p', { class: 'hint', text: `Copie dans la VM : le texte arrive ici. ${MOD}C dans l'écran le met directement dans ton presse-papiers.` })
+        : h('div', { class: 'note-bloc' }, h('p', { class: 'hint', text: 'Le presse-papiers de cette VM n\'est pas branché : ce qu\'elle copie ne peut pas sortir. Le coller fonctionne quand même, en tapant le texte.' }), branche)),
+    h('div', { class: 'presse-col' },
+      h('div', { class: 'presse-tete' }, h('b', { text: 'Envoyer à la VM' }), avance),
+      aEnvoyer,
+      h('div', { class: 'presse-actions' },
+        agent ? h('button', { class: 'btn sm solid', type: 'button', onclick: () => coller(aEnvoyer.value) }, icone('presse', 13), 'Coller dans la VM') : null,
+        h('button', { class: 'btn sm' + (agent ? '' : ' solid'), type: 'button', onclick: () => taper(aEnvoyer.value) }, icone('clavier', 13), 'Taper dans la VM'),
+        h('label', { class: 'presse-label' }, h('span', { class: 'cache-s', text: 'Clavier de la VM' }), choixDispo)),
+      h('p', { class: 'hint', text: agent ? `${MOD}V dans l'écran colle ton presse-papiers dans la VM.` : `${MOD}V dans l'écran tape ton presse-papiers, touche par touche, au clavier ${DISPOSITIONS[disposition].nom}. Pratique aussi pour un mot de passe à l'écran de connexion.` })));
+  const btnPresse = h('button', { class: 'btn sm', type: 'button', 'aria-expanded': 'false', onclick: () => {
+    panneau.hidden = !panneau.hidden; btnPresse.setAttribute('aria-expanded', String(!panneau.hidden)); btnPresse.classList.remove('signal');
+  } }, icone('presse', 14), h('span', { class: 'cache-s', text: 'Presse-papiers' }));
+
   const outils = h('div', { class: 'ecran-outils' },
+    btnPresse,
     h('button', { class: 'btn sm', type: 'button', disabled: true, onclick: () => { ecran?.ctrlAltSuppr(); ecran?.toile.focus(); } }, 'Ctrl+Alt+Suppr'),
     h('button', { class: 'btn sm', type: 'button', disabled: true, 'aria-label': 'Plein écran', onclick: () => (document.fullscreenElement ? document.exitFullscreen() : hote.requestFullscreen?.())?.catch(() => {}) }, icone('agrandir', 14), h('span', { class: 'cache-s', text: 'Plein écran' })));
+  const activer = on => { for (const b of outils.querySelectorAll('button')) if (b !== btnPresse) b.disabled = !on; copierIci.disabled = !on || !ecran?.dernierPresse; };
+
   const ouvrir = sur(async () => {
     const { passe } = await api.post('/api/console', { ...cible, mode: 'ecran' });
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/ws/console?passe=${encodeURIComponent(passe)}`);
     ws.binaryType = 'arraybuffer';
-    ecran = new Ecran(hote, ws, { surEtat: (q, d) => { etat.textContent = q === 'taille' ? `ouvert · ${d}` : q; } });
+    ecran = new Ecran(hote, ws, {
+      surEtat: (q, d) => { etat.textContent = q === 'taille' ? `ouvert · ${d}` : q === 'pret' ? 'ouvert' : q; },
+      surPresse: texte => {
+        recu.textContent = texte || '(vide)'; recu.classList.toggle('vide-doux', !texte); copierIci.disabled = !texte;
+        if (panneau.hidden) btnPresse.classList.add('signal');
+      },
+      // ⌘V / Ctrl+V dans l'écran : le presse-papiers d'ici, collé (agent) ou tapé.
+      surColler: ({ maj }) => {
+        if (!navigator.clipboard?.readText) { panneau.hidden = false; aEnvoyer.focus(); return toast('Colle ton texte dans le panneau, puis « Taper dans la VM ».'); }
+        navigator.clipboard.readText().then(texte => {
+          if (!texte) return;
+          if (agent) { ecran.envoyerPresse(texte); setTimeout(() => ecran?.combinaison('v', maj), 150); } else taper(texte);
+        }, () => { panneau.hidden = false; btnPresse.setAttribute('aria-expanded', 'true'); aEnvoyer.focus(); toast(`Le navigateur n'a pas donné le presse-papiers : colle-le ici (${MOD}V), puis envoie-le.`, true); });
+      },
+    });
     garder({ detruire: () => ecran?.relacher() }, ws);
     etat.textContent = 'connexion…';
     ws.addEventListener('message', ev => {
       if (typeof ev.data !== 'string') return ecran.recevoir(ev.data);
       let m; try { m = JSON.parse(ev.data); } catch { return; }
-      if (m.pret) { ecran.demarrer(); for (const b of outils.querySelectorAll('button')) b.disabled = false; ecran.toile.focus(); }
-      if (m.fin) { etat.textContent = 'fermé'; hote.append(h('p', { class: 'vide', text: m.fin })); }
+      if (m.pret) { ecran.demarrer(); ouvertA = Date.now(); activer(true); ecran.toile.focus(); }
+      if (m.fin) {
+        etat.textContent = 'fermé';
+        // Proxmox qui coupe dans les premières secondes : une reprise, automatique.
+        if (/fermé par Proxmox/.test(m.fin) && !reprise && Date.now() - ouvertA < 8000) { reprise = true; etat.textContent = 'reprise…'; setTimeout(ouvrir, 600); return; }
+        hote.append(h('p', { class: 'vide', text: m.fin }));
+      }
     });
-    ws.addEventListener('close', () => { if (etat.textContent !== 'fermé') etat.textContent = 'fermé'; for (const b of outils.querySelectorAll('button')) b.disabled = true; });
+    ws.addEventListener('close', () => { if (etat.textContent !== 'reprise…') etat.textContent = 'fermé'; activer(false); });
     bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
   });
-  const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: ouvrir }, icone('ecran', 14), 'Ouvrir');
-  hote.append(h('p', { class: 'vide', text: enMarche ? 'L\'écran de la machine, avec le clavier et la souris. Clique dans l\'image pour lui donner le clavier ; chaque ouverture est journalisée.' : 'La machine est arrêtée : démarre-la pour voir son écran.' }));
+  const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: () => { reprise = false; ouvrir(); } }, icone('ecran', 14), 'Ouvrir');
+  hote.append(h('p', { class: 'vide', text: enMarche ? `L'écran de la machine, avec le clavier et la souris. Clique dans l'image pour lui donner le clavier ; ${MOD}C et ${MOD}V copient et collent. Chaque ouverture est journalisée.` : 'La machine est arrêtée : démarre-la pour voir son écran.' }));
   if (!enMarche) bouton.disabled = true;
-  return h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Écran' }), etat, outils, bouton), hote);
+  return h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Écran' }), etat, outils, bouton), panneau, hote);
 }
 
-function consoleMachine(cible, garder) {
+// La console d'une VM sans port série : ce qu'il faut, et le bouton pour l'ajouter.
+function sansPortSerie(f, relire) {
+  const cmd = 'sudo systemctl enable --now serial-getty@ttyS0.service';
+  return h('div', { class: 'pad sans-serie' },
+    h('p', { text: 'La console texte d\'une VM passe par son port série, et celle-ci n\'en a pas. L\'onglet Écran marche sans lui.' }),
+    h('ol', { class: 'etapes' },
+      h('li', {}, admin ? h('span', {}, 'Ajouter le port série : ', h('button', { class: 'btn sm', type: 'button', onclick: sur(async () => {
+        if (!await confirmer('Ajouter un port série à cette VM ?', 'Proxmox ajoute « serial0: socket ». Il est pris en compte au prochain démarrage complet : Redémarrer depuis ProxLab suffit.', { oui: 'Ajouter' })) return;
+        await api.post(`/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/acces`, { portSerie: true });
+        toast('Port série ajouté : redémarre la VM.');
+        relire?.();
+      }) }, 'Ajouter')) : 'Un administrateur ajoute le port série (serial0: socket) à la VM.'),
+      h('li', { text: 'Redémarrer la VM depuis ProxLab (le bouton Redémarrer, en haut).' }),
+      h('li', {}, 'Dans la VM, une seule fois, activer la connexion sur le port série : ',
+        h('span', { class: 'cmd' }, h('code', { text: cmd }), h('button', { class: 'btn flat sm', type: 'button', 'aria-label': 'Copier la commande', onclick: async () => { try { await navigator.clipboard.writeText(cmd); toast('Commande copiée.'); } catch { toast(cmd); } } }, icone('copie', 12))))));
+}
+
+function consoleMachine(cible, garder, { f = null, relire = null } = {}) {
   const hote = h('div', { class: 'console-hote' });
   const etat = h('span', { class: 'note', text: 'fermée' });
+  let term = null;
+  const copier = h('button', { class: 'btn sm', type: 'button', disabled: true, title: `Copier la sélection (${estMac() ? '⌘C' : 'Ctrl+Maj+C'})`, onclick: () => term?.copier() }, icone('copie', 13), h('span', { class: 'cache-s', text: 'Copier' }));
+  const coller = h('button', { class: 'btn sm', type: 'button', disabled: true, title: `Coller (${estMac() ? '⌘V' : 'Ctrl+Maj+V'})`, onclick: () => term?.collerPressePapiers() }, icone('presse', 13), h('span', { class: 'cache-s', text: 'Coller' }));
+  const carte = h('div', { class: 'card' });
   const ouvrir = sur(async () => {
-    const { passe } = await api.post('/api/console', cible);
+    let passe;
+    try { ({ passe } = await api.post('/api/console', cible)); } catch (e) {
+      if (e.details?.sansSerie && f) { hote.replaceChildren(sansPortSerie(f, relire)); return; }
+      throw e;
+    }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/ws/console?passe=${encodeURIComponent(passe)}`);
-    const term = new Terminal(hote, {
+    term = new Terminal(hote, {
       surSaisie: s => { if (ws.readyState === 1) ws.send(JSON.stringify({ i: s })); },
       surTaille: (c, l) => { if (ws.readyState === 1) ws.send(JSON.stringify({ r: [c, l] })); },
+      surCopie: n => toast(n ? `${n} caractère${n > 1 ? 's' : ''} copié${n > 1 ? 's' : ''}.` : 'Rien de sélectionné.'),
+      surRefus: m => toast(m, true),
     });
     garder(term, ws);
     etat.textContent = 'connexion…';
-    ws.addEventListener('open', () => { etat.textContent = 'ouverte'; ws.send(JSON.stringify({ r: [term.cols, term.lignes] })); term.focus(); });
+    ws.addEventListener('open', () => { etat.textContent = 'ouverte'; copier.disabled = coller.disabled = false; ws.send(JSON.stringify({ r: [term.cols, term.lignes] })); term.focus(); });
     ws.addEventListener('message', ev => { if (typeof ev.data === 'string') term.ecrire(ev.data); });
-    ws.addEventListener('close', () => { etat.textContent = 'fermée'; });
+    ws.addEventListener('close', () => { etat.textContent = 'fermée'; coller.disabled = true; });
     bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
   });
   const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: ouvrir }, icone('terminal', 14), 'Ouvrir');
-  hote.append(h('p', { class: 'vide', text: cible.type === 'node' ? 'Shell du nœud, en administrateur : chaque ouverture est journalisée.' : 'Console texte de la machine (termproxy). Chaque ouverture est journalisée.' }));
-  return h('div', { class: 'card' }, h('header', {}, h('h2', { text: cible.type === 'node' ? `Shell de ${cible.noeud}` : 'Console' }), etat, bouton), hote);
+  const serie = cible.type !== 'qemu' || !f || Object.keys(f.config || {}).some(k => /^serial\d$/.test(k));
+  if (serie) hote.append(h('p', { class: 'vide', text: cible.type === 'node' ? 'Shell du nœud, en administrateur : chaque ouverture est journalisée.' : `Console texte de la machine. Sélectionne pour copier (${estMac() ? '⌘C' : 'Ctrl+Maj+C'}), ${estMac() ? '⌘V' : 'Ctrl+Maj+V'} pour coller. Chaque ouverture est journalisée.` }));
+  else { hote.append(sansPortSerie(f, relire)); bouton.disabled = true; copier.hidden = coller.hidden = true; }
+  carte.append(h('header', {}, h('h2', { text: cible.type === 'node' ? `Shell de ${cible.noeud}` : 'Console' }), etat, h('div', { class: 'ecran-outils' }, copier, coller), bouton), hote);
+  return carte;
 }
 
 async function pageNoeuds() {

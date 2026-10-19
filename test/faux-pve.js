@@ -5,6 +5,7 @@
 // adresses de documentation.
 import https from 'node:https';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -39,7 +40,7 @@ function grappeInitiale() {
       { node: 'pve-b', status: 'online', cpu: 0.06, maxcpu: 8, mem: 8589934592, maxmem: 34359738368, disk: 10737418240, maxdisk: 107374182400, uptime: 432000 },
     ],
     machines: [
-      g('pve-a', 'qemu', 101, 'passerelle', 'running', 1073741824, 2147483648, { tags: 'reseau' }),
+      g('pve-a', 'qemu', 101, 'passerelle', 'running', 1073741824, 2147483648, { tags: 'reseau', conf: { serial0: 'socket', vga: 'std,clipboard=vnc' } }),
       g('pve-a', 'qemu', 102, 'base-de-donnees-du-service-de-facturation-interne', 'running', 6442450944, 8589934592),
       g('pve-a', 'lxc', 110, 'mandataire', 'running', 268435456, 1073741824),
       g('pve-b', 'lxc', 120, 'supervision', 'stopped', 0, 2147483648),
@@ -145,8 +146,8 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
           const cle = `${m.type}/${m.vmid}`;
           const reste = s.slice(4).join('/');
           if (reste === 'status/current') return repondre(200, { ...m, qmpstatus: m.status });
-          if (reste === 'config' && req.method === 'GET') return repondre(200, { name: m.name, cores: 2, sockets: 1, memory: Math.round(m.maxmem / 1048576), ostype: 'l26', onboot: 1, net0: 'virtio=02:00:00:00:01:01,bridge=vmbr0', scsi0: 'local-lvm:vm-' + m.vmid + '-disk-0,size=32G', cipassword: '**********', sshkeys: 'ssh-ed25519%20AAAA', ciuser: 'essai', digest: 'abc', description: 'Machine fabriquée pour les essais.' });
-          if (reste === 'config' && req.method === 'PUT') { if (params.name) m.name = params.name; if (params.hostname) m.name = params.hostname; if (params.memory) m.maxmem = Number(params.memory) * 1048576; return repondre(200, null); }
+          if (reste === 'config' && req.method === 'GET') return repondre(200, { name: m.name, cores: 2, sockets: 1, memory: Math.round(m.maxmem / 1048576), ostype: 'l26', onboot: 1, net0: 'virtio=02:00:00:00:01:01,bridge=vmbr0', scsi0: 'local-lvm:vm-' + m.vmid + '-disk-0,size=32G', cipassword: '**********', sshkeys: 'ssh-ed25519%20AAAA', ciuser: 'essai', digest: 'abc', description: 'Machine fabriquée pour les essais.', ...m.conf });
+          if (reste === 'config' && req.method === 'PUT') { if (params.name) m.name = params.name; if (params.hostname) m.name = params.hostname; if (params.memory) m.maxmem = Number(params.memory) * 1048576; for (const k of ['serial0', 'vga']) if (params[k]) (m.conf ||= {})[k] = params[k]; return repondre(200, null); }
           if (reste === 'rrddata') return repondre(200, rrd(m.vmid));
           if (s[4] === 'status' && req.method === 'POST') {
             const action = s[5];
@@ -174,11 +175,15 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
   // termproxy rend { port, ticket, user } : intercepté avant l'aiguillage général.
   const origine = serveur.listeners('request')[0];
   serveur.removeAllListeners('request');
+  // Comme Proxmox, le ticket de vncproxy et de termproxy est lié à qui le
+  // demande : un jeton d'API (« utilisateur!jeton ») n'est pas l'utilisateur
+  // du ticket de session qui ouvre ensuite le WebSocket.
+  const demandeur = req => (req.headers.authorization ? String(req.headers.authorization).replace(/^PVEAPIToken=/, '').split('=')[0] : UTILISATEUR.nom);
   serveur.on('request', (req, res) => {
     if (req.method === 'POST' && /\/qemu\/\d+\/vncproxy$/.test(req.url)) {
       const ticket = 'PVEVNC:' + crypto.randomBytes(12).toString('hex');
       const s = req.url.replace(/^\/api2\/json/, '').split('/').filter(Boolean);
-      vnctickets.set(ticket, { node: s[1], cle: `${s[2]}/${s[3]}`, vnc: true });
+      vnctickets.set(ticket, { node: s[1], cle: `${s[2]}/${s[3]}`, vnc: true, user: demandeur(req) });
       appels.push({ methode: 'POST', chemin: req.url.replace(/^\/api2\/json/, ''), auth: req.headers.authorization || 'ticket' });
       req.resume();
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -188,7 +193,10 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
     if (req.method === 'POST' && /\/termproxy$/.test(req.url)) {
       const ticket = 'PVEVNC:' + crypto.randomBytes(10).toString('hex');
       const s = req.url.replace(/^\/api2\/json/, '').split('/').filter(Boolean);
-      vnctickets.set(ticket, { node: s[1], cle: s.length > 3 ? `${s[2]}/${s[3]}` : null });
+      if (s[2] === 'qemu' && !trouver(s[1], 'qemu', s[3])?.conf?.serial0) {
+        req.resume(); res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: null, message: 'unable to find a serial interface\n' })); return;
+      }
+      vnctickets.set(ticket, { node: s[1], cle: s.length > 3 ? `${s[2]}/${s[3]}` : null, user: demandeur(req) });
       appels.push({ methode: 'POST', chemin: req.url.replace(/^\/api2\/json/, ''), auth: req.headers.authorization || 'ticket' });
       req.resume();
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -200,13 +208,15 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
 
   // vncwebsocket : ticket de session dans le cookie, vncticket en paramètre,
   // puis « utilisateur:ticket\n » attendu avant tout. Un shell minimal ensuite.
-  const consoles = [];
+  const consoles = [], coupures = { ecran: 0 };
   serveur.on('upgrade', (req, socket) => {
     const url = new URL(req.url, 'https://pve');
     const cookie = /PVEAuthCookie=([^;]+)/.exec(req.headers.cookie || '');
     const vt = vnctickets.get(url.searchParams.get('vncticket') || '');
-    if (!cookie || !tickets.has(decodeURIComponent(cookie[1])) || !vt) { socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
+    if (!cookie || !tickets.has(decodeURIComponent(cookie[1])) || !vt || vt.user !== UTILISATEUR.nom) { socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
     const ws = accepter(req, socket, { sousProtocole: 'binary' });
+    // Un écran que Proxmox coupe pendant la poignée (vncproxy pas encore prêt).
+    if (vt.vnc && coupures.ecran > 0) { coupures.ecran--; setTimeout(() => ws.close(), 5); return; }
     if (vt.vnc) return ecranVnc(ws, vt, url.searchParams.get('vncticket'));
     const c = { cible: vt.cle || `node/${vt.node}`, saisies: [], tailles: [] };
     consoles.push(c);
@@ -245,11 +255,16 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
   }
   const ecrans = [];
   function ecranVnc(ws, vt, ticket) {
-    const e = { cible: vt.cle, authentifie: false, messages: [] };
+    // Presse-papiers étendu (comme QEMU avec clipboard=vnc) : capacités, avis,
+    // demande, fourniture compressée en zlib ; l'ancien ClientCutText aussi.
+    const ext = { CAPS: 1 << 24, REQUEST: 1 << 25, NOTIFY: 1 << 27, PROVIDE: 1 << 28, TEXTE: 1 };
+    const couper = (flags, donnees = Buffer.alloc(0)) => { const t = Buffer.alloc(12); t[0] = 3; t.writeInt32BE(-(4 + donnees.length), 4); t.writeUInt32BE(flags >>> 0, 8); ws.envoyerBinaire(Buffer.concat([t, donnees])); };
+    const e = { cible: vt.cle, authentifie: false, messages: [], presse: null, invite: '', ext: false,
+      copierInvite(texte) { e.invite = texte; if (e.ext) couper(ext.NOTIFY | ext.TEXTE); } };
     ecrans.push(e);
     let tampon = Buffer.alloc(0), etape = 'version', defi = crypto.randomBytes(16);
     ws.envoyerBinaire(Buffer.from('RFB 003.008\n', 'latin1'));
-    const longueur = b => ({ 0: 20, 3: 10, 4: 8, 5: 6, 255: 12 }[b[0]] ?? (b[0] === 2 && b.length >= 4 ? 4 + 4 * b.readUInt16BE(2) : b[0] === 6 && b.length >= 8 ? 8 + b.readUInt32BE(4) : 0));
+    const longueur = b => ({ 0: 20, 3: 10, 4: 8, 5: 6, 255: 12 }[b[0]] ?? (b[0] === 2 && b.length >= 4 ? 4 + 4 * b.readUInt16BE(2) : b[0] === 6 && b.length >= 8 ? 8 + Math.abs(b.readInt32BE(4)) : 0));
     ws.on('message', d => {
       tampon = Buffer.concat([tampon, d]);
       for (;;) {
@@ -275,6 +290,23 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
         if (!n || tampon.length < n) return;
         const m = tampon.subarray(0, n); tampon = tampon.subarray(n);
         e.messages.push([...m]);
+        if (m[0] === 2) {
+          const encs = Array.from({ length: m.readUInt16BE(2) }, (_, i) => m.readInt32BE(4 + 4 * i));
+          // QEMU accuse la touche étendue par un rectangle -258 vide.
+          if (encs.includes(-258)) { const t = Buffer.alloc(16); t.writeUInt16BE(1, 2); t.writeInt32BE(-258, 12); ws.envoyerBinaire(t); }
+          if (encs.includes(0xC0A1E5CE | 0)) { e.ext = true; const max = Buffer.alloc(4); max.writeUInt32BE(64 * 1024); couper(ext.CAPS | ext.REQUEST | ext.NOTIFY | ext.PROVIDE | ext.TEXTE, max); }
+        }
+        if (m[0] === 6) {
+          const lg = m.readInt32BE(4);
+          if (lg >= 0) e.presse = m.subarray(8).toString('latin1');
+          else {
+            const flags = m.readUInt32BE(8);
+            if (flags & ext.CAPS) e.capsClient = flags;
+            else if (flags & ext.REQUEST && flags & ext.TEXTE) { const t = Buffer.from(e.invite.replace(/\n/g, '\r\n') + '\0'); const l = Buffer.alloc(4); l.writeUInt32BE(t.length); couper(ext.PROVIDE | ext.TEXTE, zlib.deflateSync(Buffer.concat([l, t]))); }
+            else if (flags & ext.NOTIFY && flags & ext.TEXTE) couper(ext.REQUEST | ext.TEXTE);
+            else if (flags & ext.PROVIDE && flags & ext.TEXTE) { const z = zlib.inflateSync(m.subarray(12)); e.presse = z.subarray(4, 4 + z.readUInt32BE(0)).toString('utf8').replace(/\0$/, '').replace(/\r\n/g, '\n'); }
+          }
+        }
         if (m[0] === 3 && m[1] === 0) {
           const t = Buffer.alloc(16); t.writeUInt16BE(1, 2); t.writeUInt16BE(EL, 8); t.writeUInt16BE(EH, 10); t.writeInt32BE(0, 12);
           ws.envoyerBinaire(Buffer.concat([t, pixels]));
@@ -286,7 +318,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
   await new Promise(r => serveur.listen(0, '127.0.0.1', r));
   const port = serveur.address().port;
   return {
-    hote: '127.0.0.1', port, etat, appels, consoles, ecrans, autorite: certificats.autorite,
+    hote: '127.0.0.1', port, etat, appels, consoles, ecrans, coupures, autorite: certificats.autorite,
     empreinte: new crypto.X509Certificate(certificats.cert).fingerprint256,
     fermer: () => new Promise(f => { serveur.closeAllConnections?.(); serveur.close(f); }),
   };

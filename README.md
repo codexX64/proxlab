@@ -80,9 +80,28 @@ de Proxmox), sous la même passe. ProxLab fait lui-même la poignée VNC avec le
 ticket de vncproxy, qui ne quitte jamais le serveur ; le navigateur reprend le
 protocole ensuite, et seuls les messages d'un client VNC ordinaire (format,
 encodages, demandes d'image, touches, souris, presse-papiers) passent, entiers
-et bornés. Les touches partent avec leur code physique : la disposition du
-clavier est celle de la machine (AZERTY reste AZERTY). Ctrl+Alt+Suppr et le
-plein écran ont leur bouton.
+et bornés. Le navigateur n'envoie ni touche ni souris avant la fin de la
+poignée, et une connexion que Proxmox coupe pendant la poignée est reprise une
+fois. Les touches partent avec leur code physique : la disposition du clavier
+est celle de la machine (AZERTY reste AZERTY). Ctrl+Alt+Suppr et le plein écran
+ont leur bouton.
+
+**Presse-papiers de l'écran.** Dans les deux sens, par le presse-papiers étendu
+de VNC (UTF-8, 64 Kio au plus) : ⌘C/Ctrl+C dans l'écran rapporte ici ce que la
+VM a copié, ⌘V/Ctrl+V y colle le presse-papiers d'ici, et le panneau
+« Presse-papiers » montre et envoie le texte à la main. Il faut à la VM
+`clipboard=vnc` sur son affichage (bouton « Brancher le presse-papiers »,
+administrateur ; pris en compte au prochain redémarrage ; une VM ainsi réglée ne
+migre plus à chaud) et `spice-vdagent` dans l'invité. Sans cela, coller tape le
+texte touche par touche, à la disposition choisie (AZERTY ou QWERTY) : utile
+aussi pour un mot de passe à l'écran de connexion.
+
+**Console d'une VM.** Elle passe par le port série de la VM : sans `serial0`,
+ProxLab le dit avant d'appeler Proxmox et propose de l'ajouter
+(`serial0: socket`, administrateur, au prochain redémarrage), puis
+`sudo systemctl enable --now serial-getty@ttyS0.service` dans l'invité. Copier :
+sélectionner puis ⌘C, Ctrl+Maj+C ou le bouton ; coller : ⌘V, Ctrl+Maj+V ou le
+bouton (collage encadré quand le shell le demande).
 
 **Droits à donner dans Proxmox.** Un utilisateur dédié (par exemple
 `proxlab@pve`) et un jeton d'API à séparation de privilèges, avec les rôles
