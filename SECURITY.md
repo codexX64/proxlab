@@ -162,8 +162,8 @@ ProxLab 1.0 relevé en lecture seule (archive reçue, sans historique), classé 
 | SEC-INJ-007 | HIGH | N/A | aucun analyseur XML : Proxmox parle JSON, `grep -rniE "xml2js\|sax\|libxml\|fast-xml\|DOMParser" src socle/src` → 0 |  |
 | SEC-INJ-008 | HIGH | PASS | JSON seulement ; clés de prototype refusées : `socle/src/schema.js:6` ; réponses de Proxmox lues en JSON, champ par champ |  |
 | SEC-XSS-001 | CRITICAL | PASS | interface : DOM construit par `h()`, texte seulement (`web/app.js:7`) ; graphiques construits nœud par nœud (`socle/web/graphes.js:3`) ; terminal écrit par textContent (`web/terminal.js:4`) | noms de machines, notes, descriptions et journaux de tâches de Proxmox affichés en texte brut |
-| SEC-XSS-002 | HIGH | N/A | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:872`) |  |
-| SEC-XSS-003 | HIGH | PASS | aucun eval, setTimeout chaîne ni affectation de location depuis une donnée : `grep -rnE "eval\(\|new Function\|location\.href *=" web/app.js web/terminal.js socle/web/compte.js socle/web/graphes.js` → 0 | le hash ne choisit qu’une page connue ou une fiche au format vérifié : `web/app.js:155` |
+| SEC-XSS-002 | HIGH | N/A | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:954`) |  |
+| SEC-XSS-003 | HIGH | PASS | aucun eval, setTimeout chaîne ni affectation de location depuis une donnée : `grep -rnE "eval\(\|new Function\|location\.href *=" web/app.js web/terminal.js socle/web/compte.js socle/web/graphes.js` → 0 | le hash ne choisit qu’une page connue ou une fiche au format vérifié : `web/app.js:159` |
 | SEC-XSS-004 | HIGH | PASS | voir REQ-WEB-002 |  |
 | SEC-XSS-005 | MEDIUM | PASS | seul échange : le Worker de preuve de travail, de même origine : `socle/web/compte.js:233` | aucune écoute de window message |
 | SEC-XSS-006 | MEDIUM | PASS | une erreur de Proxmox : la cause courte, sans chemin de l’hyperviseur, et une référence au client ; le détail au seul journal du serveur (`src/api.js:79`) ; erreurs imprévues réduites à un numéro (`socle/src/http.js:171`) | essai `test/proxlab.test.js:296` |
@@ -290,7 +290,7 @@ ProxLab 1.0 relevé en lecture seule (archive reçue, sans historique), classé 
 | SEC-LOG-007 | HIGH | PASS | sessions : fermeture globale `socle/src/portail.js:479` ; liaison à Proxmox retirée en ligne de commande, service en marche (`src/cli.js:51`) ; jeton du Hub changé au redéploiement ; SOCLE_CLE tournée sans réinscription ; chaque procédure écrite dans le runbook ci-dessous | joué de bout en bout le 2026-10-12 : `outils/exercice-incident.mjs:96` (22 vérifications), `outils/exercice-rotation.mjs:1` (21) |
 | SEC-PRIV-001 | MEDIUM | PASS | `web/confidentialite.txt:7` avec durées ; purges automatiques : `src/base.js:133`, `socle/src/comptes.js:974` |  |
 | SEC-PRIV-002 | MEDIUM | PASS | un cookie de session indispensable, documenté ; aucun traceur (`web/confidentialite.txt:71`) |  |
-| SEC-PRIV-003 | MEDIUM | PASS | `web/confidentialite.txt:57` nomme chaque destinataire ; lien depuis la page Sécurité (`web/app.js:119`) |  |
+| SEC-PRIV-003 | MEDIUM | PASS | `web/confidentialite.txt:57` nomme chaque destinataire ; lien depuis la page Sécurité (`web/app.js:123`) |  |
 | SEC-PRIV-004 | MEDIUM | PASS | export : `socle/src/portail.js:334` complété par ProxLab (`src/base.js:139`) ; effacement en libre-service sous renfort : `socle/src/comptes.js:844`, gestes du compte neutralisés (`src/base.js:142`) | essai `test/proxlab.test.js:625` |
 | SEC-PRIV-005 | HIGH | FAIL | voir REQ-DATA-002 | action H7 |
 | SEC-PRIV-006 | LOW | FAIL | aucun sous-traitant dans le code : Proxmox, le récepteur d’alertes et le Hub sont chez l’exploitant ; le relais SMTP est choisi par lui | si ce relais est un prestataire hors de l’UE : accord de traitement ou relais européen, action H15 |
@@ -317,7 +317,7 @@ ProxLab 1.0 relevé en lecture seule (archive reçue, sans historique), classé 
 | SEC-INJ-002 | aucun ORM : node:sqlite, requêtes préparées seulement |
 | SEC-INJ-003 | aucune base documentaire : SQLite seulement ; JSON rangé en colonne texte |
 | SEC-INJ-007 | aucun analyseur XML : Proxmox parle JSON, `grep -rniE "xml2js\|sax\|libxml\|fast-xml\|DOMParser" src socle/src` → 0 |
-| SEC-XSS-002 | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:872`) |
+| SEC-XSS-002 | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:954`) |
 | SEC-XSS-007 | aucune redirection pilotée par paramètre ; `curl -sI "/login?next=https://evil.example"` → aucun Location (annexe B.4) |
 | SEC-CSRF-006 | aucune redirection pilotée par paramètre : voir SEC-XSS-007 |
 | SEC-API-006 | aucun GraphQL : `grep -rniE "graphql\|apollo" src web/app.js socle/src` → 0 |
