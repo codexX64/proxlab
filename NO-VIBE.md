@@ -156,6 +156,9 @@ Deux commits (qualité nette ; borne de trame selon le sens) et la version. 23 e
 ## Suivi du 2026-10-19 (2.1.14)
 Un commit d'interface et la version. 23 essais verts ; parcours du navigateur 28 + 20 vérifications (taille fixe affichée, bouton dans la barre), vertes.
 
+## Suivi du 2026-10-19 (2.1.15)
+Trois commits (plein écran dans la fenêtre ; « fr-azerty » ; console série muette) et la version. 24 essais verts ; parcours du navigateur 28 + 20 + 10 vérifications (mode fenêtre, Échap dans la VM, aide de la console muette, activation par l'agent, invite qui répond), vertes. L'exécution par l'agent est factorisée (`executer`, partagée par le clavier et la console) au lieu d'être recopiée.
+
 ## Verification (chapter 49)
 - [x] Full suite passes and matches the baseline — les 83 essais de la référence, verts avant et après la passe, relancés à la génération de ce fichier ; delta 2.1 : 88 essais (21 du service, 67 du socle), verts sur l’arbre final
 - [x] Public API diff empty — inventaire de la surface publique identique ligne à ligne ; delta 2.1 : ajouts seuls, aucune route ni aucun schéma existants changés (« Behaviour freeze »)
