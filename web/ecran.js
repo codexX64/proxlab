@@ -349,9 +349,12 @@ export class Ecran {
     b.setUint16(4, Math.max(0, Math.min(this.toile.height - 1, Math.round(y))));
     this.envoyer(b.buffer);
   }
+  // L'image est contenue dans la toile sans être déformée (object-fit:
+  // contain) : en plein écran, des bandes l'entourent, hors de l'image.
   position(e) {
-    const r = this.toile.getBoundingClientRect();
-    return [(e.clientX - r.left) * this.toile.width / r.width, (e.clientY - r.top) * this.toile.height / r.height];
+    const r = this.toile.getBoundingClientRect(), l = this.toile.width, h = this.toile.height;
+    const k = Math.min(r.width / l, r.height / h) || 1;
+    return [(e.clientX - r.left - (r.width - l * k) / 2) / k, (e.clientY - r.top - (r.height - h * k) / 2) / k];
   }
   // Une combinaison quelconque : les touches enfoncées dans l'ordre, relâchées à rebours.
   combo(...codes) {
