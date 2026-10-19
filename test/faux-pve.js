@@ -147,8 +147,22 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
           const reste = s.slice(4).join('/');
           if (reste === 'status/current') return repondre(200, { ...m, qmpstatus: m.status });
           if (reste === 'config' && req.method === 'GET') return repondre(200, { name: m.name, cores: 2, sockets: 1, memory: Math.round(m.maxmem / 1048576), ostype: 'l26', onboot: 1, net0: 'virtio=02:00:00:00:01:01,bridge=vmbr0', scsi0: 'local-lvm:vm-' + m.vmid + '-disk-0,size=32G', cipassword: '**********', sshkeys: 'ssh-ed25519%20AAAA', ciuser: 'essai', digest: 'abc', description: 'Machine fabriquée pour les essais.', ...m.conf, ...(params.current ? {} : m.attente) });
-          if (reste === 'config' && req.method === 'PUT') { if (params.name) m.name = params.name; if (params.hostname) m.name = params.hostname; if (params.memory) m.maxmem = Number(params.memory) * 1048576; for (const k of ['serial0', 'vga']) if (params[k]) (m.status === 'running' ? (m.attente ||= {}) : (m.conf ||= {}))[k] = params[k]; return repondre(200, null); }
+          if (reste === 'config' && req.method === 'PUT') { if (params.name) m.name = params.name; if (params.hostname) m.name = params.hostname; if (params.memory) m.maxmem = Number(params.memory) * 1048576; for (const k of ['serial0', 'vga', 'agent']) if (params[k]) (m.status === 'running' ? (m.attente ||= {}) : (m.conf ||= {}))[k] = params[k]; return repondre(200, null); }
           if (reste === 'rrddata') return repondre(200, rrd(m.vmid));
+          // L'agent QEMU : coché dans la configuration, puis présent dans la VM (m.clavierInvite).
+          if (reste === 'agent/exec' && req.method === 'POST') {
+            if (!/^(1|enabled=1)/.test(String(m.conf?.agent || ''))) return repondre(500, null, 'No QEMU guest agent configured');
+            if (m.clavierInvite === undefined) return repondre(500, null, 'QEMU guest agent is not running');
+            const pid = 1000 + ++compteur;
+            const sortie = params.command === 'sh' && /gsettings get org\.gnome\.desktop\.input-sources/.test(params['input-data'] || '') ? (m.clavierInvite.startsWith('vc ') ? `${m.clavierInvite}\n` : `gnome [('xkb', '${m.clavierInvite}'), ('xkb', 'de')]\n`) : '';
+            (etat.execs ||= new Map()).set(pid, { sortie, commande: params.command, entree: params['input-data'] });
+            return repondre(200, { pid });
+          }
+          if (reste === 'agent/exec-status' && req.method === 'GET') {
+            const x = etat.execs?.get(Number(params.pid));
+            if (!x) return repondre(500, null, 'unknown pid');
+            return repondre(200, { exited: 1, exitcode: 0, 'out-data': x.sortie });
+          }
           if (s[4] === 'status' && req.method === 'POST') {
             const action = s[5];
             if (action === 'start' && m.status === 'running') return repondre(500, null, `VM ${m.vmid} already running`);

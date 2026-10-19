@@ -622,7 +622,23 @@ function menuActions(groupes, { titre = 'Actions' } = {}) {
   const bouton = h('button', { class: 'btn sm', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false' }, icone('actions', 14), h('span', { text: titre }));
   const ancre = h('span', { class: 'menu-ancre' }, bouton, liste);
   const dehors = e => { if (!ancre.contains(e.target)) fermer(); };
-  function fermer(rendre = false) { liste.hidden = true; bouton.setAttribute('aria-expanded', 'false'); document.removeEventListener('pointerdown', dehors, true); if (rendre) bouton.focus(); }
+  function fermer(rendre = false) {
+    liste.hidden = true; bouton.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', dehors, true);
+    window.removeEventListener('scroll', fermerSurDefilement, true); window.removeEventListener('resize', fermerSurDefilement);
+    if (rendre) bouton.focus();
+  }
+  function fermerSurDefilement(e) { if (!liste.contains(e.target)) fermer(); }
+  // Posé par rapport à la fenêtre (une carte coupe ce qui dépasse) : sous le
+  // bouton, ou au-dessus s'il y a plus de place ; hauteur bornée à la fenêtre.
+  function placer() {
+    const r = bouton.getBoundingClientRect(), bas = innerHeight - r.bottom - 12, haut = r.top - 12;
+    const dessus = bas < 320 && haut > bas;
+    liste.style.right = `${Math.max(8, innerWidth - r.right)}px`;
+    liste.style.top = dessus ? 'auto' : `${r.bottom + 6}px`;
+    liste.style.bottom = dessus ? `${innerHeight - r.top + 6}px` : 'auto';
+    liste.style.maxHeight = `${Math.max(160, dessus ? haut : bas)}px`;
+  }
   bouton.addEventListener('click', () => {
     if (!liste.hidden) return fermer();
     liste.replaceChildren(...groupes().filter(g => g.items.length).flatMap((g, i) => [
@@ -632,7 +648,9 @@ function menuActions(groupes, { titre = 'Actions' } = {}) {
         it.ic ? icone(it.ic, 14) : h('span', { class: 'menu-ic' }), h('span', { class: 'menu-texte', text: it.texte }), it.touche ? h('kbd', { text: it.touche }) : null)),
     ]).filter(Boolean));
     liste.hidden = false; bouton.setAttribute('aria-expanded', 'true'); bouton.classList.remove('signal');
+    placer();
     document.addEventListener('pointerdown', dehors, true);
+    window.addEventListener('scroll', fermerSurDefilement, true); window.addEventListener('resize', fermerSurDefilement);
     liste.querySelector('.menu-item:not([disabled])')?.focus();
   });
   liste.addEventListener('keydown', e => {
@@ -656,7 +674,23 @@ function ecranMachine(f, garder, relire) {
   const hote = h('div', { class: 'ecran-hote' });
   const etat = h('span', { class: 'note', text: 'fermé' });
   let ecran = null, ouvertA = 0, reprise = false;
-  let disposition = lireLocal('proxlab-disposition', /^fr/i.test(navigator.language || '') ? 'fr' : 'us');
+  // Le clavier de la VM : choisi à la main pour cette VM, sinon demandé à la VM
+  // (agent QEMU) à l'ouverture, sinon le dernier choisi, sinon la langue d'ici.
+  const cleDispo = `proxlab-disposition:${f.node}/${f.vmid}`;
+  const choisie = lireLocal(cleDispo, '');
+  let disposition = DISPOSITIONS[choisie] ? choisie : lireLocal('proxlab-disposition', /^fr/i.test(navigator.language || '') ? 'fr' : 'us');
+  let detection = null;   // { disposition, brut, source } ou { disposition: null, raison, message }
+  const agentPrevuClavier = (f.enAttente || []).includes('agent');
+  const urlClavier = `/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/clavier`;
+  const poserDispo = (k, { main = false } = {}) => {
+    disposition = k; choixDispo.value = k;
+    if (main) { poserLocal(cleDispo, k); poserLocal('proxlab-disposition', k); }
+  };
+  const detecter = async (relire = false) => {
+    try { detection = await api.get(urlClavier + (relire ? '?relire=1' : '')); } catch (e) { detection = { disposition: null, raison: 'erreur', message: e.message }; }
+    if (detection.disposition && detection.disposition !== disposition) { poserDispo(detection.disposition); toast(`Clavier de la VM détecté : ${DISPOSITIONS[detection.disposition].nom}.`); }
+    else if (relire) toast(detection.disposition ? `Clavier de la VM : ${DISPOSITIONS[detection.disposition].nom} (détecté).` : detection.message || 'Pas de réponse de la VM.', !detection.disposition);
+  };
 
   // Le panneau du presse-papiers.
   const recu = h('pre', { class: 'presse-recu vide-doux', text: 'Rien de copié dans la VM pour l\'instant.' });
@@ -664,7 +698,7 @@ function ecranMachine(f, garder, relire) {
     try { await navigator.clipboard.writeText(ecran?.dernierPresse || ''); toast('Copié ici.'); } catch { toast('Le navigateur refuse : sélectionne le texte et copie-le.', true); }
   } }, icone('copie', 13), 'Copier ici');
   const aEnvoyer = h('textarea', { class: 'presse-envoi', rows: 3, placeholder: `Colle ici ce que tu veux envoyer (${MOD}V), ou fais ${MOD}V directement dans l'écran.`, spellcheck: false });
-  const choixDispo = h('select', { class: 'presse-dispo', 'aria-label': 'Disposition du clavier de la VM', onchange: e => { disposition = e.target.value; poserLocal('proxlab-disposition', disposition); } },
+  const choixDispo = h('select', { class: 'presse-dispo', 'aria-label': 'Disposition du clavier de la VM', onchange: e => poserDispo(e.target.value, { main: true }) },
     Object.entries(DISPOSITIONS).map(([k, d]) => h('option', { value: k, text: d.nom, selected: k === disposition })));
   const avance = h('span', { class: 'note' });
   const taper = async texte => {
@@ -687,6 +721,12 @@ function ecranMachine(f, garder, relire) {
     toast('Presse-papiers branché : redémarre la VM pour qu\'il prenne effet.');
     relire?.();
   }) }, 'Brancher le presse-papiers') : null;
+  const activerAgent = sur(async () => {
+    if (!await confirmer('Activer l\'agent QEMU de cette VM ?', 'Proxmox coche « Agent QEMU » : pris en compte au prochain démarrage complet (Redémarrer depuis ProxLab suffit). Dans la VM, qemu-guest-agent doit être installé (déjà là sur Fedora ; sinon : sudo dnf install qemu-guest-agent, ou sudo apt install qemu-guest-agent). ProxLab lui demandera alors la disposition du clavier, par un script fixe qui ne fait que la lire.', { oui: 'Activer' })) return;
+    await api.post(`/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/acces`, { agent: true });
+    toast('Agent QEMU activé : redémarre la VM pour qu\'il prenne effet.');
+    relire?.();
+  });
   const panneau = h('div', { class: 'presse', hidden: true },
     h('div', { class: 'presse-col' },
       h('div', { class: 'presse-tete' }, h('b', { text: 'Copié dans la VM' }), copierIci),
@@ -729,6 +769,14 @@ function ecranMachine(f, garder, relire) {
         { texte: 'Tout sélectionner', ic: 'selection', touche: `${MOD}A`, inactif: off, agir: r('a') },
         { texte: 'Taper un texte…', ic: 'clavier', agir: () => { montrerPanneau(true); aEnvoyer.focus(); } },
       ] },
+      { titre: 'Clavier de la VM', items: [
+        ...Object.entries(DISPOSITIONS).map(([k, d]) => ({
+          texte: d.nom + (detection?.disposition === k ? ' · détecté' : ''), ic: k === disposition ? 'verifie' : null,
+          agir: () => { poserDispo(k, { main: true }); toast(`Clavier de la VM : ${d.nom}. Coller tapera avec cette disposition.`); ecran?.toile.focus(); },
+        })),
+        { texte: detection?.disposition ? 'Détecter à nouveau' : 'Détecter le clavier de la VM', ic: 'relance', inactif: off, agir: () => { try { localStorage.removeItem(cleDispo); } catch { /* rien */ } detecter(true); } },
+        ...(detection?.raison === 'agent' && !agentPrevuClavier && admin ? [{ texte: 'Activer l\'agent QEMU…', ic: 'clavier', agir: activerAgent }] : []),
+      ] },
       { titre: 'Édition', items: [
         { texte: 'Annuler', ic: 'annuler', touche: `${MOD}Z`, inactif: off, agir: r('z') },
         { texte: 'Rétablir', ic: 'retablir', touche: `${T_MAJ}Z`, inactif: off, agir: r('z', true) },
@@ -740,9 +788,6 @@ function ecranMachine(f, garder, relire) {
         { texte: 'Échap', inactif: off, agir: dansVm(() => ecran.combo('Escape')) },
         { texte: 'Impr. écran', inactif: off, agir: dansVm(() => ecran.combo('PrintScreen')) },
       ] },
-      { titre: 'Clavier de la VM', items: Object.entries(DISPOSITIONS).map(([k, d]) => ({
-        texte: d.nom, ic: k === disposition ? 'verifie' : null, agir: () => { disposition = k; poserLocal('proxlab-disposition', k); choixDispo.value = k; toast(`Clavier de la VM : ${d.nom}. Coller tapera avec cette disposition.`); ecran?.toile.focus(); },
-      })) },
       { items: [
         { texte: panneau.hidden ? 'Afficher le presse-papiers' : 'Masquer le presse-papiers', ic: 'presse', agir: () => montrerPanneau() },
         { texte: document.fullscreenElement ? 'Quitter le plein écran' : 'Plein écran', ic: 'agrandir', inactif: off, agir: plein },
@@ -774,7 +819,7 @@ function ecranMachine(f, garder, relire) {
     ws.addEventListener('message', ev => {
       if (typeof ev.data !== 'string') return ecran.recevoir(ev.data);
       let m; try { m = JSON.parse(ev.data); } catch { return; }
-      if (m.pret) { ecran.demarrer(); ouvertA = Date.now(); activer(true); ecran.toile.focus(); }
+      if (m.pret) { ecran.demarrer(); ouvertA = Date.now(); activer(true); ecran.toile.focus(); if (!DISPOSITIONS[lireLocal(cleDispo, '')] && !detection?.disposition) detecter(); }
       if (m.fin) {
         etat.textContent = 'fermé';
         // Proxmox qui coupe dans les premières secondes : une reprise, automatique.

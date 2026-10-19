@@ -101,7 +101,11 @@ texte est pris par le collage du navigateur, sans demande d'autorisation, et
 bouton « Actions » de l'écran reprend tout cela à la souris : copier, couper,
 coller, tout sélectionner, taper un texte, annuler, rétablir, Ctrl+Alt+Suppr,
 Super, Alt+Tab, Échap, Impr. écran, clavier de la VM (AZERTY ou QWERTY : une
-VM installée en live est souvent en QWERTY), presse-papiers, plein écran ; celui de la
+VM installée en live est souvent en QWERTY), presse-papiers, plein écran ;
+le clavier de la VM est demandé à la VM elle-même par son agent QEMU
+(qemu-guest-agent, « Agent QEMU » coché — bouton « Activer l'agent QEMU »),
+avec un script fixe qui ne fait que lire la disposition de la session GNOME
+ou du système ; un choix à la main pour une VM reste prioritaire ; celui de la
 console : copier la sélection, coller, tout sélectionner, Ctrl+C, Ctrl+D,
 Ctrl+L, Ctrl+Z, Tab, Échap.
 

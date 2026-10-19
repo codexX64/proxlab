@@ -17,6 +17,7 @@ import { Connexion } from '../src/websocket.js';
 import { corpsTicket, urgence } from '../src/alerte.js';
 import { desChiffrer, reponseVnc } from '../src/des.js';
 import { longueurMessageClient } from '../src/ecran.js';
+import { dispositionDe, lireSortie } from '../src/clavier.js';
 
 const JETON_HUB = 'jeton-du-hub-pour-les-essais-de-proxlab-0123';
 const INSTALL = 'jeton-installation-proxlab-essai';
@@ -525,6 +526,48 @@ test('console d\'une VM sans port série : refus clair avant Proxmox, ajout par 
   ws.conn.close();
   const tp = pve.appels.filter(a => /termproxy$/.test(a.chemin)).at(-1);
   assert.equal(tp.auth, 'ticket', 'termproxy demandé avec le ticket de session');
+});
+
+test('clavier de la VM : demandé à l\'agent QEMU par un script fixe, disposition reconnue, agent ajouté par l\'administrateur', async () => {
+  for (const [brut, d] of [['fr', 'fr'], ['fr+oss', 'fr'], ['fr+latin9', 'fr'], ['fr-latin9', 'fr'], ['us', 'us'], ['us+altgr-intl', 'us'], ['fr+bepo', null], ['us+intl', null], ['de', null], ['', null]]) assert.equal(dispositionDe(brut), d, brut);
+  assert.deepEqual(lireSortie("gnome [('xkb', 'us'), ('xkb', 'fr+oss')]\n"), { brut: 'us', source: 'gnome' });
+  assert.deepEqual(lireSortie('x11 fr\nvariante oss\nvc fr\n'), { brut: 'fr+oss', source: 'système' });
+  assert.deepEqual(lireSortie('vc fr-latin9\n'), { brut: 'fr-latin9', source: 'console' });
+  const url = machine('pve-a', 'qemu', 102) + '/clavier';
+  assert.equal((await lecteur.get(url)).status, 403);
+  assert.equal((await membre.get(machine('pve-a', 'lxc', 110) + '/clavier')).status, 400);
+  const vm = pve.etat.machines.find(m => m.vmid === 102);
+  // Sans agent coché : dit, sans rien exécuter.
+  const sans = await membre.get(url);
+  assert.equal(sans.status, 200);
+  assert.deepEqual([sans.json.disposition, sans.json.raison], [null, 'agent']);
+  assert.ok(!pve.appels.some(a => /agent\/exec$/.test(a.chemin)));
+  // L'administrateur coche l'agent (au prochain démarrage), en gardant les autres options.
+  vm.conf = { ...vm.conf, agent: 'fstrim_cloned_disks=1' };
+  assert.equal((await membre.post(machine('pve-a', 'qemu', 102) + '/acces', { agent: true })).status, 403);
+  assert.equal((await admin.post(machine('pve-a', 'qemu', 102) + '/acces', { agent: true })).status, 200);
+  assert.equal(vm.attente.agent, 'enabled=1,fstrim_cloned_disks=1');
+  await membre.post(machine('pve-a', 'qemu', 102) + '/alimentation', { action: 'reboot' });
+  // Agent coché mais absent de la VM : la raison, pas une erreur.
+  const absent = await membre.get(url);
+  assert.deepEqual([absent.json.disposition, absent.json.raison], [null, 'injoignable']);
+  // Une session GNOME en QWERTY : reconnue.
+  vm.clavierInvite = 'us';
+  const us = await membre.get(url + '?relire=1');
+  assert.deepEqual([us.json.disposition, us.json.brut, us.json.source], ['us', 'us', 'gnome']);
+  const appel = pve.appels.filter(a => /agent\/exec$/.test(a.chemin)).at(-1);
+  assert.equal(appel.params.command, 'sh', 'une seule commande, le script sur l\'entrée standard');
+  assert.match(appel.params['input-data'], /gsettings get org\.gnome\.desktop\.input-sources/);
+  // Gardée deux minutes : pas de nouvel appel à l'agent.
+  const n = pve.appels.length;
+  vm.clavierInvite = 'fr+oss';
+  assert.equal((await membre.get(url)).json.disposition, 'us');
+  assert.ok(!pve.appels.slice(n).some(a => /agent\/exec$/.test(a.chemin)));
+  assert.equal((await membre.get(url + '?relire=1')).json.disposition, 'fr');
+  vm.clavierInvite = 'fr+bepo';
+  const bepo = await membre.get(url + '?relire=1');
+  assert.deepEqual([bepo.json.disposition, bepo.json.raison, bepo.json.brut], [null, 'inconnue', 'fr+bepo']);
+  assert.equal((await membre.get(url + '?relire=2')).status, 400, 'paramètre borné');
 });
 
 test('surveillance : une machine tombée est un événement et un ticket signé ; un arrêt depuis ProxLab ne sonne pas', async () => {

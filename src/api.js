@@ -9,6 +9,7 @@
 // machine), admin sous renfort récent (arrêt forcé, migration, configuration,
 // retour et suppression d'instantané, suppression de sauvegarde, arrêt d'une
 // tâche, shell d'un nœud, liaison à Proxmox, alertes).
+import { detecterClavier, agentActif } from './clavier.js';
 import crypto from 'node:crypto';
 import { ErreurHttp, Routeur, lireCorps, valider, repondreJson, egal } from '../socle/src/index.js';
 import { ErreurProxmox, Proxmox, chemin } from './pve.js';
@@ -38,7 +39,7 @@ const S = {
     coeurs: { type: 'entier', min: 1, max: 512 }, sockets: { type: 'entier', min: 1, max: 8 }, memoire: { type: 'entier', min: 16, max: 4194304 },
     demarrageAuto: { type: 'booleen' }, etiquettes: { type: 'chaine', max: 200, motif: /^[A-Za-z0-9_.;+-]*$/ },
   },
-  acces: { portSerie: { type: 'booleen', defaut: false }, pressePapiers: { type: 'booleen', defaut: false } },
+  acces: { portSerie: { type: 'booleen', defaut: false }, pressePapiers: { type: 'booleen', defaut: false }, agent: { type: 'booleen', defaut: false } },
   instantane: { nom: { type: 'chaine', requis: true, motif: INSTANTANE, max: 40 }, description: { type: 'chaine', max: 500, defaut: '' }, avecMemoire: { type: 'booleen', defaut: false } },
   sauvegarde: {
     stockage: { type: 'chaine', requis: true, max: 100, motif: STOCKAGE }, mode: { type: 'chaine', parmi: ['snapshot', 'suspend', 'stop'], defaut: 'snapshot' },
@@ -167,7 +168,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     return {
       ...machinePublique({ ...statut, node: m.noeud, type: m.type, vmid: m.vmid }),
       config: Object.fromEntries(Object.entries(config || {}).filter(([k]) => CONFIG_VISIBLE.test(k)).map(([k, v]) => [k, String(v).slice(0, 2000)])),
-      enAttente: ['serial0', 'vga'].filter(k => String(attente?.[k] ?? '') !== String(config?.[k] ?? '')),
+      enAttente: ['serial0', 'vga', 'agent'].filter(k => String(attente?.[k] ?? '') !== String(config?.[k] ?? '')),
       instantanes: (instantanes || []).filter(s => s.name !== 'current').map(s => ({ name: s.name, description: String(s.description || '').slice(0, 500), snaptime: nombre(s.snaptime), parent: s.parent || '', vmstate: !!s.vmstate })),
     };
   }, { role: 'lecture' });
@@ -318,7 +319,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     const m = machine(ctx.params);
     if (m.type !== 'qemu') throw new ErreurHttp(400, 'Réservé aux machines virtuelles.');
     const b = await corps(ctx, S.acces);
-    if (!b.portSerie && !b.pressePapiers) throw new ErreurHttp(400, 'Rien à ajouter.');
+    if (!b.portSerie && !b.pressePapiers && !b.agent) throw new ErreurHttp(400, 'Rien à ajouter.');
     const config = await pve(() => proxmox.get(m.base + '/config'));
     const params = {};
     if (b.portSerie && !Object.keys(config || {}).some(k => /^serial\d$/.test(k))) params.serial0 = 'socket';
@@ -328,14 +329,31 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
       if (/^(qxl|serial|none)/.test(genre)) throw new ErreurHttp(409, `L'affichage de cette VM (${genre}) ne prend pas le presse-papiers VNC : passe-le en « std » ou « virtio » dans Proxmox.`);
       if (!options.includes('clipboard=vnc')) params.vga = [genre || 'std', ...options.filter(o => !o.startsWith('clipboard=')), 'clipboard=vnc'].join(',');
     }
+    if (b.agent && !agentActif(config?.agent)) params.agent = ['enabled=1', ...String(config?.agent || '').split(',').filter(o => o && !/^(enabled=|[01]$)/.test(o))].join(',');
     if (!Object.keys(params).length) return { ok: true, deja: true };
     await pve(() => proxmox.put(m.base + '/config', params));
+    clavierConnu.delete(m.cible);
     const qui = acteur(ctx);
-    const quoi = [params.serial0 && 'port série', params.vga && 'presse-papiers'].filter(Boolean).join(' et ');
+    const quoi = [params.serial0 && 'port série', params.vga && 'presse-papiers', params.agent && 'agent QEMU'].filter(Boolean).join(', ');
     journal.ecrire({ acteur: qui.acteurCompte, action: 'machine.configuration', objet: m.cible, ip: ctx.ip, details: { champs: Object.keys(params).join(',') } });
-    evenements.noter({ genre: 'vm.configured', niveau: 'info', titre: `VM ${m.vmid} : ${quoi} ajouté${params.serial0 && params.vga ? 's' : ''}`, corps: `Pris en compte au prochain démarrage complet — par ${qui.acteur}.`, cible: m.cible, noeud: m.noeud, ...qui });
+    evenements.noter({ genre: 'vm.configured', niveau: 'info', titre: `VM ${m.vmid} : ${quoi} ajouté${Object.keys(params).length > 1 ? 's' : ''}`, corps: `Pris en compte au prochain démarrage complet — par ${qui.acteur}.`, cible: m.cible, noeud: m.noeud, ...qui });
     return { ok: true, champs: Object.keys(params) };
   }, { role: 'admin' });
+
+  // La disposition du clavier de la VM, demandée à son agent QEMU (script fixe,
+  // voir src/clavier.js), gardée deux minutes.
+  const clavierConnu = new Map();
+  r.get('/api/machines/:noeud/:type/:vmid/clavier', async ctx => {
+    session(ctx, { role: 'membre' });
+    const m = machine(ctx.params);
+    if (m.type !== 'qemu') throw new ErreurHttp(400, 'Réservé aux machines virtuelles.');
+    const deja = clavierConnu.get(m.cible);
+    if (deja && deja.expire > Date.now() && !ctx.q.relire) return deja.r;
+    const r = await pve(() => detecterClavier(proxmox, m.base));
+    if (clavierConnu.size > 500) clavierConnu.clear();
+    if (r.disposition) clavierConnu.set(m.cible, { r, expire: Date.now() + 120e3 });
+    return r;
+  }, { role: 'membre', requete: { relire: { type: 'chaine', parmi: ['1'] } } });
 
   r.post('/api/machines/:noeud/:type/:vmid/instantanes', async ctx => {
     session(ctx, { role: 'membre' });
