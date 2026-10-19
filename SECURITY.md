@@ -156,13 +156,13 @@ ProxLab 1.0 relevé en lecture seule (archive reçue, sans historique), classé 
 | SEC-INJ-001 | CRITICAL | PASS | requêtes préparées ; seul fragment variable : un filtre de niveau constant (`src/base.js:121`) | annexe B.3 : aucune interpolation de valeur dans le texte SQL |
 | SEC-INJ-002 | HIGH | N/A | aucun ORM : node:sqlite, requêtes préparées seulement |  |
 | SEC-INJ-003 | HIGH | N/A | aucune base documentaire : SQLite seulement ; JSON rangé en colonne texte |  |
-| SEC-INJ-004 | CRITICAL | PASS | serveur : aucun processus (`grep -rnE "child_process\|execFile\|spawn" src` → 0) ; la console transmet la saisie de l’opérateur au terminal de Proxmox, dans le protocole termproxy, sans l’interpréter (`src/console.js:46`) ; l’écran d’une VM transmet touches et souris en messages RFB, filtrés un à un (`src/ecran.js:84`) ; la disposition du clavier d’une VM est lue par l’agent QEMU avec un script fixe passé sur l’entrée standard de `sh`, sans aucune donnée du navigateur (`src/clavier.js:10`, appel `src/clavier.js:63`) | la console est la fonction elle-même : réservée au membre pour une machine, à l’administrateur sous renfort pour un nœud, chaque ouverture journalisée |
+| SEC-INJ-004 | CRITICAL | PASS | serveur : aucun processus (`grep -rnE "child_process\|execFile\|spawn" src` → 0) ; la console transmet la saisie de l’opérateur au terminal de Proxmox, dans le protocole termproxy, sans l’interpréter (`src/console.js:46`) ; l’écran d’une VM transmet touches et souris en messages RFB, filtrés un à un (`src/ecran.js:84`) ; la disposition du clavier d’une VM est lue par l’agent QEMU avec un script fixe passé sur l’entrée standard de `sh`, sans aucune donnée du navigateur (`src/clavier.js:11`, appel `src/clavier.js:73`) | la console est la fonction elle-même : réservée au membre pour une machine, à l’administrateur sous renfort pour un nœud, chaque ouverture journalisée |
 | SEC-INJ-005 | HIGH | PASS | `socle/src/http.js:194` ; chemins vers Proxmox : « .. » et tout segment hors motif refusés (`src/pve.js:26`) | essai `test/proxlab.test.js:247` |
 | SEC-INJ-006 | HIGH | PASS | aucun gabarit côté serveur ; `grep -rnE "new Function\|node:vm" src socle/src` → 0 | l’interface construit son DOM en texte (voir SEC-XSS-001) |
 | SEC-INJ-007 | HIGH | N/A | aucun analyseur XML : Proxmox parle JSON, `grep -rniE "xml2js\|sax\|libxml\|fast-xml\|DOMParser" src socle/src` → 0 |  |
 | SEC-INJ-008 | HIGH | PASS | JSON seulement ; clés de prototype refusées : `socle/src/schema.js:6` ; réponses de Proxmox lues en JSON, champ par champ |  |
 | SEC-XSS-001 | CRITICAL | PASS | interface : DOM construit par `h()`, texte seulement (`web/app.js:7`) ; graphiques construits nœud par nœud (`socle/web/graphes.js:3`) ; terminal écrit par textContent (`web/terminal.js:4`) | noms de machines, notes, descriptions et journaux de tâches de Proxmox affichés en texte brut |
-| SEC-XSS-002 | HIGH | N/A | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:1002`) |  |
+| SEC-XSS-002 | HIGH | N/A | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:1033`) |  |
 | SEC-XSS-003 | HIGH | PASS | aucun eval, setTimeout chaîne ni affectation de location depuis une donnée : `grep -rnE "eval\(\|new Function\|location\.href *=" web/app.js web/terminal.js socle/web/compte.js socle/web/graphes.js` → 0 | le hash ne choisit qu’une page connue ou une fiche au format vérifié : `web/app.js:159` |
 | SEC-XSS-004 | HIGH | PASS | voir REQ-WEB-002 |  |
 | SEC-XSS-005 | MEDIUM | PASS | seul échange : le Worker de preuve de travail, de même origine : `socle/web/compte.js:233` | aucune écoute de window message |
@@ -317,7 +317,7 @@ ProxLab 1.0 relevé en lecture seule (archive reçue, sans historique), classé 
 | SEC-INJ-002 | aucun ORM : node:sqlite, requêtes préparées seulement |
 | SEC-INJ-003 | aucune base documentaire : SQLite seulement ; JSON rangé en colonne texte |
 | SEC-INJ-007 | aucun analyseur XML : Proxmox parle JSON, `grep -rniE "xml2js\|sax\|libxml\|fast-xml\|DOMParser" src socle/src` → 0 |
-| SEC-XSS-002 | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:1002`) |
+| SEC-XSS-002 | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:1033`) |
 | SEC-XSS-007 | aucune redirection pilotée par paramètre ; `curl -sI "/login?next=https://evil.example"` → aucun Location (annexe B.4) |
 | SEC-CSRF-006 | aucune redirection pilotée par paramètre : voir SEC-XSS-007 |
 | SEC-API-006 | aucun GraphQL : `grep -rniE "graphql\|apollo" src web/app.js socle/src` → 0 |
