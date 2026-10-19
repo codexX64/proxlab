@@ -1,6 +1,6 @@
 {
   "name": "proxlab",
-  "version": "2.1.16",
+  "version": "2.1.17",
   "description": "Panneau de pilotage de Proxmox VE : grappe, machines, instantanés, sauvegardes, console, alertes — sur le socle commun.",
   "type": "module",
   "private": true,
