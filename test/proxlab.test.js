@@ -551,7 +551,7 @@ test('console d\'une VM sans port série : refus clair avant Proxmox, ajout par 
 });
 
 test('clavier de la VM : demandé à l\'agent QEMU par un script fixe, disposition reconnue, agent ajouté par l\'administrateur', async t => {
-  for (const [brut, d] of [['fr', 'fr'], ['fr+oss', 'fr'], ['fr+latin9', 'fr'], ['fr-latin9', 'fr'], ['us', 'us'], ['us+altgr-intl', 'us'], ['fr+bepo', null], ['us+intl', null], ['de', null], ['', null]]) assert.equal(dispositionDe(brut), d, brut);
+  for (const [brut, d] of [['fr', 'fr'], ['fr+oss', 'fr'], ['fr+latin9', 'fr'], ['fr-latin9', 'fr'], ['fr-azerty', 'fr'], ['fr+azerty', 'fr'], ['us', 'us'], ['us+altgr-intl', 'us'], ['fr+bepo', null], ['us+intl', null], ['de', null], ['', null]]) assert.equal(dispositionDe(brut), d, brut);
   assert.deepEqual(lireSortie("gnome [('xkb', 'us'), ('xkb', 'fr+oss')]\n"), { brut: 'us', source: 'gnome' });
   assert.deepEqual(lireSortie('x11 fr\nvariante oss\nvc fr\n'), { brut: 'fr+oss', source: 'système' });
   assert.deepEqual(lireSortie('vc fr-latin9\n'), { brut: 'fr-latin9', source: 'console' });

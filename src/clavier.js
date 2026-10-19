@@ -40,7 +40,7 @@ export function dispositionDe(brut) {
   if (base === 'fr' && SANS_TOUCHE_MORTE_FR.has(variante)) return 'fr';
   if (base === 'us' && (variante === '' || variante === 'altgr-intl')) return 'us';
   // Table de la console (VC Keymap) : fr, fr-latin1, fr-latin9, fr-pc ; us.
-  if (/^fr(-latin[019]|-pc|-oss)?$/.test(s)) return 'fr';
+  if (/^fr(-latin[019]|-pc|-oss|-azerty)?$/.test(s)) return 'fr';
   return null;
 }
 
