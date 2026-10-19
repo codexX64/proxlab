@@ -350,10 +350,11 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
   r.get('/api/machines/:noeud/:type/:vmid/clavier', async ctx => {
     session(ctx, { role: 'membre' });
     const m = machine(ctx.params);
+    const { relire } = ctx.q;
     if (m.type !== 'qemu') throw new ErreurHttp(400, 'Réservé aux machines virtuelles.');
     const t = Date.now(), deja = clavierConnu.get(m.cible);
     if (deja?.encours) return deja.encours;
-    if (deja && (t < deja.expire && !ctx.q.relire || t - deja.lu < 5000)) return deja.r;
+    if (deja && (t < deja.expire && !relire || t - deja.lu < 5000)) return deja.r;
     journal.rare(`clavier:${m.cible}`, { acteur: acteur(ctx).acteurCompte, action: 'machine.clavier', objet: m.cible, ip: ctx.ip });
     const encours = pve(() => detecterClavier(proxmox, m.base));
     if (clavierConnu.size > 500) clavierConnu.clear();

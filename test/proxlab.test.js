@@ -540,6 +540,7 @@ test('clavier de la VM : demandé à l\'agent QEMU par un script fixe, dispositi
   const url = machine('pve-a', 'qemu', 102) + '/clavier';
   assert.equal((await lecteur.get(url)).status, 403);
   assert.equal((await membre.get(machine('pve-a', 'lxc', 110) + '/clavier')).status, 400);
+  assert.equal((await membre.get(url + '?script=id')).status, 400, 'paramètre non déclaré refusé, même sans lecture en cache');
   const vm = pve.etat.machines.find(m => m.vmid === 102);
   // Sans agent coché : dit, sans rien exécuter.
   const sans = await membre.get(url);
