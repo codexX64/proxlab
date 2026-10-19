@@ -87,8 +87,11 @@ est celle de la machine (AZERTY reste AZERTY). Ctrl+Alt+Suppr et le plein écran
 ont leur bouton ; en plein écran, l'image remplit l'écran sans être déformée.
 Deux pleins écrans : celui du navigateur (l'écran entier), ou « dans la
 fenêtre », où l'écran de la VM couvre toute la page — le défaut sur Safari,
-qui floute une page en plein écran qui reçoit beaucoup de frappes ; la fenêtre
-de Safari se met elle-même en plein écran (⌃⌘F), et Échap part dans la VM.
+qui floute une page en plein écran qui reçoit beaucoup de frappes ; Échap y
+part dans la VM. Et « Ouvrir dans une fenêtre à part » : une fenêtre qui ne
+montre que l'écran de la VM, à sa taille, avec Actions et Fermer en surimpression
+— macOS la met en plein écran dans son propre bureau (bouton vert), à côté
+d'autres applications (Split View) ; c'est le défaut sur Safari.
 
 **Taille de l'écran.** « Ajuster la VM à la fenêtre » (menu Actions, activé par
 défaut, retenu par le navigateur) demande à la VM la résolution de la place

@@ -116,6 +116,8 @@ canvas.ecran:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .ecran-fenetre body{overflow:hidden}
 .ecran-hote .sortie-fenetre{position:absolute;top:10px;right:10px;z-index:1;opacity:.3;transition:opacity .15s}
 .ecran-hote .sortie-fenetre:hover,.ecran-hote .sortie-fenetre:focus-visible{opacity:1}
+.ecran-hote .sortie-fenetre.barre{display:flex;gap:6px;align-items:center}
+.ecran-hote .sortie-fenetre.barre:focus-within{opacity:1}
 .ecran-hote.fenetre canvas.ecran,.ecran-hote:fullscreen canvas.ecran{flex:1 1 auto;width:100%;height:100%;min-height:0;max-width:none;max-height:none;object-fit:contain;border-radius:0}
 .ecran-outils{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
 .menu-ancre{position:relative;display:inline-flex}

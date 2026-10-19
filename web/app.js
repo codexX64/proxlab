@@ -683,7 +683,7 @@ function menuActions(groupes, { titre = 'Actions' } = {}) {
   return { ancre, bouton, fermer };
 }
 
-function ecranMachine(f, garder, relire, { auto = false } = {}) {
+function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const cible = { noeud: f.node, type: f.type, vmid: String(f.vmid) }, enMarche = f.status === 'running';
   const agent = /clipboard=vnc/.test(f.config?.vga || '');
   const agentPrevu = !agent && (f.enAttente || []).includes('vga');
@@ -812,9 +812,20 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
   // fait quitter au lieu de partir dans la VM. Sur Safari, le second par
   // défaut ; la fenêtre elle-même se met en plein écran (⌃⌘F).
   const safari = /^((?!chrome|chromium|android|crios|fxios|edg|opr).)*safari/i.test(navigator.userAgent || '');
-  let modePlein = lireLocal('proxlab-plein', safari ? 'fenetre' : 'ecran');
-  const sortieFenetre = h('button', { class: 'btn sm sortie-fenetre', type: 'button', title: 'Revenir à la fiche', onclick: () => fenetre(false) }, icone('croix', 14), 'Réduire');
+  // Troisième voie : une fenêtre à part, rien que l'écran de la VM. macOS la met
+  // en plein écran dans son propre bureau (bouton vert), à côté d'autres apps.
+  let modePlein = lireLocal('proxlab-plein', safari ? 'apart' : 'ecran');
+  // Seule dans sa fenêtre, la barre de l'écran (Actions, plein écran) flotte
+  // au-dessus de l'image avec le bouton qui ferme la fenêtre.
+  const sortieFenetre = seul
+    ? h('div', { class: 'sortie-fenetre barre' })
+    : h('button', { class: 'btn sm sortie-fenetre', type: 'button', title: 'Revenir à la fiche', onclick: () => fenetre(false) }, icone('croix', 14), 'Réduire');
+  const apart = () => {
+    const w = window.open(`/#ecran/${encodeURIComponent(f.node)}/qemu/${f.vmid}`, `proxlab-ecran-${f.node}-${f.vmid}`, 'popup,width=1280,height=800');
+    if (!w) toast('Le navigateur a bloqué la fenêtre : autorise les fenêtres de ProxLab, puis recommence.', true);
+  };
   const fenetre = on => {
+    if (seul && !on) return;
     hote.classList.toggle('fenetre', on);
     document.documentElement.classList.toggle('ecran-fenetre', on);
     if (on) hote.append(sortieFenetre); else sortieFenetre.remove();
@@ -822,9 +833,10 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
   };
   const pleinEcran = () => (document.fullscreenElement ? document.exitFullscreen() : hote.requestFullscreen?.())?.catch(() => {});
   const plein = () => {
+    if (seul) return pleinEcran();
     if (hote.classList.contains('fenetre')) return fenetre(false);
     if (document.fullscreenElement) return pleinEcran();
-    return modePlein === 'fenetre' ? fenetre(true) : pleinEcran();
+    return modePlein === 'fenetre' ? fenetre(true) : modePlein === 'apart' ? apart() : pleinEcran();
   };
   const actions = menuActions(() => {
     const off = !ecran?.actif;
@@ -859,7 +871,10 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
       { items: [
         { texte: panneau.hidden ? 'Afficher le presse-papiers' : 'Masquer le presse-papiers', ic: 'presse', agir: () => montrerPanneau() },
         { texte: document.fullscreenElement ? 'Quitter le plein écran' : 'Plein écran (écran entier)', ic: 'agrandir', inactif: off, agir: () => { modePlein = 'ecran'; poserLocal('proxlab-plein', 'ecran'); pleinEcran(); } },
-        { texte: 'Plein écran dans la fenêtre', ic: modePlein === 'fenetre' ? 'verifie' : 'agrandir', inactif: off, agir: () => { modePlein = 'fenetre'; poserLocal('proxlab-plein', 'fenetre'); fenetre(true); } },
+        ...(seul ? [] : [
+          { texte: 'Plein écran dans la fenêtre', ic: modePlein === 'fenetre' ? 'verifie' : 'agrandir', inactif: off, agir: () => { modePlein = 'fenetre'; poserLocal('proxlab-plein', 'fenetre'); fenetre(true); } },
+          { texte: 'Ouvrir dans une fenêtre à part', ic: modePlein === 'apart' ? 'verifie' : 'lien', agir: () => { modePlein = 'apart'; poserLocal('proxlab-plein', 'apart'); apart(); } },
+        ]),
         { texte: 'Ajuster la VM à la fenêtre', ic: ajusterTaille ? 'verifie' : null, agir: () => {
           ajusterTaille = !ajusterTaille; poserLocal('proxlab-ajuster', ajusterTaille ? '1' : '0'); refusSignale = false; if (tailleVue) peindreEtat();
           if (!ajusterTaille) return toast('La VM garde sa résolution.');
@@ -937,7 +952,9 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
   if (auto && enMarche) setTimeout(() => { reprise = false; ouvrir(); }, 0);
   hote.append(h('p', { class: 'vide', text: enMarche ? `L'écran de la machine, avec le clavier et la souris. Clique dans l'image pour lui donner le clavier ; ${MOD}C et ${MOD}V copient et collent. Chaque ouverture est journalisée.` : 'La machine est arrêtée : démarre-la pour voir son écran.' }));
   if (!enMarche) bouton.disabled = true;
-  const carteEcran = h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Écran' }), etat, outils, bouton), panneau, hote);
+  if (seul) sortieFenetre.append(outils, h('button', { class: 'btn sm', type: 'button', title: 'Fermer cette fenêtre', onclick: () => window.close() }, icone('croix', 14), 'Fermer'));
+  const carteEcran = h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Écran' }), etat, seul ? null : outils, bouton), panneau, hote);
+  if (seul) fenetre(true);
   carteEcran.addEventListener('montre', () => { if (ecran?.actif) ecran.toile.focus({ preventScroll: true }); });
   return carteEcran;
 }
@@ -1298,5 +1315,15 @@ await rafraichir({ synthese: true });
 let tours = 0;
 setInterval(() => { tours++; rafraichir({ synthese: tours % 3 === 0 }); }, 20000);
 const [p0, ...ref] = location.hash.slice(1).split('/');
-if (p0 === 'fiche' && ref.length === 3 && /^[A-Za-z0-9.-]{1,63}$/.test(ref[0]) && ['qemu', 'lxc'].includes(ref[1]) && /^\d{2,9}$/.test(ref[2])) aller('fiche', ref);
+// L'écran d'une VM seul dans sa fenêtre (« Ouvrir dans une fenêtre à part »).
+if (p0 === 'ecran' && ref.length === 3 && /^[A-Za-z0-9.-]{1,63}$/.test(ref[0]) && ref[1] === 'qemu' && /^\d{2,9}$/.test(ref[2]) && membre) {
+  app.hidden = true;
+  try {
+    const f = await api.get(`/api/machines/${encodeURIComponent(ref[0])}/qemu/${ref[2]}`);
+    document.title = `${f.name || 'VM ' + f.vmid} — écran`;
+    const fermer = [];
+    document.body.append(ecranMachine(f, (o, ws) => fermer.push(() => { o?.detruire?.(); try { ws?.close(); } catch { /* fermé */ } }), null, { auto: true, seul: true }));
+    addEventListener('pagehide', () => fermer.forEach(fn => fn()));
+  } catch (e) { document.body.append(erreur(e)); }
+} else if (p0 === 'fiche' && ref.length === 3 && /^[A-Za-z0-9.-]{1,63}$/.test(ref[0]) && ['qemu', 'lxc'].includes(ref[1]) && /^\d{2,9}$/.test(ref[2])) aller('fiche', ref);
 else aller(PAGES[p0] ? p0 : 'over');
