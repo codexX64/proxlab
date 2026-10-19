@@ -47,17 +47,21 @@ export class Proxmox {
   post(p, q) { return this.appel('POST', p, q); }
   put(p, q) { return this.appel('PUT', p, q); }
   del(p, q) { return this.appel('DELETE', p, q); }
+  // Au nom de l'utilisateur, par ticket, même quand un jeton est réglé : le
+  // ticket de vncproxy et de termproxy est lié à qui le demande, et le
+  // WebSocket qui le présente est ouvert avec le ticket de session.
+  postSession(p, q) { return this.appel('POST', p, q, { parTicket: true }); }
 
-  async appel(methode, p, params = {}, { relance = true } = {}) {
+  async appel(methode, p, params = {}, { relance = true, parTicket = false } = {}) {
     const l = this.liaison();
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null && v !== '') qs.append(k, String(v));
     const corps = methode === 'GET' || methode === 'DELETE' ? null : qs.toString();
     const url = '/api2/json' + p + (corps === null && qs.size ? '?' + qs : '');
-    const entetes = { Accept: 'application/json', ...(await this.authentification(l, methode)) };
+    const entetes = { Accept: 'application/json', ...(await this.authentification(l, methode, parTicket)) };
     if (corps !== null) Object.assign(entetes, { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(corps) });
     const r = await brut({ agent: this.agent, hote: l.hote, port: l.port, methode, url, entetes, corps, timeout: this.timeout });
-    if (r.status === 401 && relance && !l.jeton_id) { this.ticket = null; return this.appel(methode, p, params, { relance: false }); }
+    if (r.status === 401 && relance && (!l.jeton_id || parTicket)) { this.ticket = null; return this.appel(methode, p, params, { relance: false, parTicket }); }
     let json = null;
     try { json = JSON.parse(r.texte); } catch { /* page d'erreur HTML */ }
     if (r.status >= 400) {
@@ -67,8 +71,8 @@ export class Proxmox {
     return json ? json.data : null;
   }
 
-  async authentification(l, methode) {
-    if (l.jeton_id && l.secret) return { Authorization: `PVEAPIToken=${l.jeton_id}=${l.secret}` };
+  async authentification(l, methode, parTicket = false) {
+    if (l.jeton_id && l.secret && !parTicket) return { Authorization: `PVEAPIToken=${l.jeton_id}=${l.secret}` };
     const t = await this.obtenirTicket();
     return { Cookie: `PVEAuthCookie=${encodeURIComponent(t.ticket)}`, ...(methode !== 'GET' ? { CSRFPreventionToken: t.csrf } : {}) };
   }

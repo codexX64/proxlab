@@ -67,7 +67,7 @@ export async function poigneeRfb(conn, motDePasse, { delai = 15000 } = {}) {
 
 export async function ouvrirVnc(proxmox, { noeud, vmid }) {
   const base = chemin('nodes', noeud, 'qemu', vmid);
-  const vp = await proxmox.post(base + '/vncproxy', { websocket: 1 });
+  const vp = await proxmox.postSession(base + '/vncproxy', { websocket: 1 });
   const ticket = await proxmox.obtenirTicket();
   const l = proxmox.liaison();
   const amont = await connecter(l, `/api2/json${base}/vncwebsocket?port=${encodeURIComponent(vp.port)}&vncticket=${encodeURIComponent(vp.ticket)}`, {
@@ -95,10 +95,10 @@ export function longueurMessageClient(b, debut) {
     case 3: return b.length >= 10 ? 10 : 0;             // FramebufferUpdateRequest
     case 4: return b.length >= 8 ? 8 : 0;               // KeyEvent
     case 5: return b.length >= 6 ? 6 : 0;               // PointerEvent
-    case 6: {                                           // ClientCutText
+    case 6: {                                           // ClientCutText (étendu si longueur négative)
       if (b.length < 8) return 0;
-      const n = b.readUInt32BE(4);
-      if (n > PRESSE_PAPIERS_MAX) return -1;
+      const n = Math.abs(b.readInt32BE(4));
+      if (n > PRESSE_PAPIERS_MAX || (b.readInt32BE(4) < 0 && n < 4)) return -1;
       return b.length >= 8 + n ? 8 + n : 0;
     }
     case 255:                                           // QEMU : touche étendue seulement
@@ -140,7 +140,14 @@ export function relayerEcran(navigateur, ouvrir, { vivante = () => true, surFin 
     if (amont) transmettre(); else enAttente.push(1);
   });
   navigateur.on('fermeture', () => finir(null));
-  ouvrir().then(({ amont: conn, deja }) => {
+  // Proxmox ferme parfois la toute première connexion pendant la poignée
+  // (vncproxy encore en train de naître) : une seconde tentative, pas plus.
+  const essayer = reste => ouvrir().catch(async e => {
+    if (fini || reste <= 0 || !/pendant la poignée|trop longue|ECONNRESET|socket hang up|EPIPE/.test(String(e?.message || e))) throw e;
+    await new Promise(r => setTimeout(r, 400));
+    return essayer(reste - 1);
+  });
+  essayer(1).then(({ amont: conn, deja }) => {
     if (fini) { conn.close(); return; }
     amont = conn;
     conn.on('message', d => { try { navigateur.envoyerBinaire(d); } catch { finir(null); } });

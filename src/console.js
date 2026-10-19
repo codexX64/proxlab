@@ -13,7 +13,7 @@ const SAISIE_MAX = 64 * 1024;
 
 export async function ouvrirTermproxy(proxmox, { noeud, type, vmid }) {
   const base = type === 'node' ? chemin('nodes', noeud) : chemin('nodes', noeud, type, vmid);
-  const tp = await proxmox.post(base + '/termproxy', {});
+  const tp = await proxmox.postSession(base + '/termproxy', {});
   const ticket = await proxmox.obtenirTicket();
   const l = proxmox.liaison();
   const amont = await connecter(l, `/api2/json${base}/vncwebsocket?port=${encodeURIComponent(tp.port)}&vncticket=${encodeURIComponent(tp.ticket)}`, {
