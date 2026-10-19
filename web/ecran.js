@@ -247,7 +247,7 @@ export class Ecran {
       inflate(p.subarray(4), PRESSE_MAX + 8).then(z => {
         const n = new DataView(z.buffer).getUint32(0);
         this.presseRecu(new TextDecoder().decode(z.subarray(4, 4 + Math.min(n, z.length - 4))).replace(/\0+$/, '').replace(/\r\n/g, '\n'));
-      }).catch(() => {});
+      }).catch(() => this.surEtat('presse-papiers de la VM ignoré : illisible ou plus de 64 Kio'));
     }
   }
   presseRecu(texte) {

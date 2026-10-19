@@ -794,7 +794,7 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
           texte: d.nom + (detection?.disposition === k ? ' · détecté' : ''), ic: k === disposition ? 'verifie' : null,
           agir: () => { poserDispo(k, { main: true }); toast(`Clavier de la VM : ${d.nom}. Coller tapera avec cette disposition.`); ecran?.toile.focus(); },
         })),
-        { texte: detection?.disposition ? 'Détecter à nouveau' : 'Détecter le clavier de la VM', ic: 'relance', inactif: off, agir: () => { try { localStorage.removeItem(cleDispo); } catch { /* rien */ } detecter(true); } },
+        { texte: detection?.disposition ? 'Détecter à nouveau' : 'Détecter le clavier de la VM', ic: 'relance', inactif: off, agir: () => { try { localStorage.removeItem(cleDispo); } catch { /* stockage du navigateur indisponible : rien à oublier */ } detecter(true); } },
         ...(detection?.raison === 'agent' && !agentPrevuClavier && admin ? [{ texte: 'Activer l\'agent QEMU…', ic: 'clavier', agir: activerAgent }] : []),
       ] },
       { titre: 'Édition', items: [
