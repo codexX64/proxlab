@@ -111,8 +111,9 @@ Ctrl+L, Ctrl+Z, Tab, Échap.
 
 **Onglets.** L'écran et la console s'ouvrent au premier affichage de leur
 onglet et restent ouverts quand on passe de l'un à l'autre ; ils se ferment en
-quittant la fiche. À l'ouverture de la console d'une VM, un Entrée fait
-réapparaître l'invite de connexion du port série.
+quittant la fiche. La console d'une VM n'envoie rien à l'ouverture (une ligne
+laissée par une autre session partirait) : un Entrée fait réapparaître
+l'invite de connexion du port série.
 
 **Console d'une VM.** Elle passe par le port série de la VM : sans `serial0`,
 ProxLab le dit avant d'appeler Proxmox et propose de l'ajouter
@@ -127,6 +128,9 @@ bouton (collage encadré quand le shell le demande).
 `PVEDatastoreUser` sur les stockages de sauvegarde ; ajouter `PVEVMAdmin` pour
 la migration, la configuration et les instantanés. Le mot de passe de cet
 utilisateur ne sert qu'à la console. Le shell d'un nœud exige `Sys.Console`.
+Lire le clavier d'une VM par son agent QEMU exige `VM.GuestAgent.Unrestricted`
+(Proxmox VE 9) ou `VM.Monitor` (Proxmox VE 8), compris dans `PVEVMAdmin` ;
+sans ce droit, ProxLab le dit et le choix reste à la main.
 
 Les clés d'accès n'existent que sur une page HTTPS. Sans HTTPS, `SOCLE_HTTP=1`
 ouvre un mode dégradé, affiché comme tel partout : réservé à un réseau de
