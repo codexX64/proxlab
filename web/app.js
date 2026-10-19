@@ -321,11 +321,20 @@ function carteJournal() {
   }).catch(() => {});
   return h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Journal d\'activité' }), h('span', { class: 'note', text: 'en direct' })), journal);
 }
-function ligneEvenement(e) {
+function ligneEvenement(e, { heure = false } = {}) {
   const ic = e.severity === 'critique' ? 'alerte' : /^backup/.test(e.kind) ? 'archive' : /^snapshot/.test(e.kind) ? 'photo' : /^node|^storage/.test(e.kind) ? 'noeud' : 'vm';
-  return h('div', { class: 'evenement ' + e.severity }, h('span', { class: 'ev-ic' }, icone(ic, 15)),
+  const d = new Date(e.at);
+  return h('div', { class: 'evenement ' + e.severity }, h('span', { class: 'ev-ic' }, icone(ic, 14)),
     h('div', { class: 'ev-txt' }, h('b', { text: e.title }), h('span', { text: [GENRES[e.kind] || e.kind, e.node, e.by].filter(Boolean).join(' · ') })),
-    h('time', { datetime: e.at, text: age(e.at) }));
+    h('time', { datetime: e.at, title: d.toLocaleString('fr-FR'), text: heure ? d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : age(e.at) }));
+}
+// « Aujourd'hui », « Hier », sinon le jour en toutes lettres.
+function jourEvenement(at) {
+  const d = new Date(at), j = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const ecart = Math.round((j(new Date()) - j(d)) / 864e5);
+  if (ecart === 0) return 'Aujourd\'hui';
+  if (ecart === 1) return 'Hier';
+  return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', ...(d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
 }
 
 function carteNoeuds(et, sy) {
@@ -763,25 +772,33 @@ async function journalTache(t) {
 }
 
 async function pageEvenements() {
-  const corps = h('div', {});
-  const plus = h('button', { class: 'btn sm flat', type: 'button', text: 'Plus anciens' });
-  let dernier = null;
+  const corps = h('div', { class: 'ev-liste' });
+  const plus = h('button', { class: 'btn sm', type: 'button', text: 'Plus anciens' });
+  const pied = h('div', { class: 'ev-pied', hidden: true }, plus);
+  let dernier = null, jour = null, n = 0;
+  const ajouter = liste => {
+    for (const e of liste) {
+      const j = jourEvenement(e.at);
+      if (j !== jour) { jour = j; corps.append(h('h3', { class: 'ev-jour', text: j })); }
+      corps.append(ligneEvenement(e, { heure: true }));
+    }
+  };
   const charger = async (suite = false) => {
     const liste = await api.get('/api/evenements?limite=50' + (suite && dernier ? `&avant=${encodeURIComponent(dernier)}` : ''));
-    if (!suite) corps.replaceChildren();
-    corps.append(...liste.map(ligneEvenement));
+    if (!suite) { corps.replaceChildren(); jour = null; n = 0; }
+    ajouter(liste);
+    n += liste.length;
     if (!suite && !liste.length) corps.append(h('p', { class: 'vide', text: 'Aucun événement pour l\'instant.' }));
     dernier = liste.at(-1)?.id || dernier;
-    plus.hidden = liste.length < 50;
+    pied.hidden = liste.length < 50;
   };
   plus.addEventListener('click', sur(() => charger(true)));
   await charger();
-  enregistrer(() => { if (!corps.querySelector('.evenement:nth-child(51)')) charger().catch(() => {}); });
+  enregistrer(() => { if (n <= 50) charger().catch(() => {}); });
   return h('div', { class: 'page' },
     h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Événements' }), h('p', { class: 'lede', text: 'Ce qui est arrivé à la grappe : pannes, retours, gestes faits depuis ProxLab et tâches lues dans Proxmox.' }))),
-    h('div', { class: 'card' }, corps, h('div', { class: 'pad centre' }, plus)));
+    h('div', { class: 'card' }, corps, pied));
 }
-
 async function pageReglages() {
   const [{ liaison }, { alertes }] = await Promise.all([api.get('/api/liaison'), api.get('/api/alertes')]);
   return h('div', { class: 'page' },
