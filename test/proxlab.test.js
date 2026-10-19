@@ -17,7 +17,7 @@ import { Connexion } from '../src/websocket.js';
 import { corpsTicket, urgence } from '../src/alerte.js';
 import { desChiffrer, reponseVnc } from '../src/des.js';
 import { longueurMessageClient } from '../src/ecran.js';
-import { dispositionDe, lireSortie } from '../src/clavier.js';
+import { dispositionDe, lireSortie, detecterClavier } from '../src/clavier.js';
 
 const JETON_HUB = 'jeton-du-hub-pour-les-essais-de-proxlab-0123';
 const INSTALL = 'jeton-installation-proxlab-essai';
@@ -533,6 +533,10 @@ test('clavier de la VM : demandé à l\'agent QEMU par un script fixe, dispositi
   assert.deepEqual(lireSortie("gnome [('xkb', 'us'), ('xkb', 'fr+oss')]\n"), { brut: 'us', source: 'gnome' });
   assert.deepEqual(lireSortie('x11 fr\nvariante oss\nvc fr\n'), { brut: 'fr+oss', source: 'système' });
   assert.deepEqual(lireSortie('vc fr-latin9\n'), { brut: 'fr-latin9', source: 'console' });
+  const refuse = { get: async () => ({ agent: '1' }), post: async () => { throw new Error('Permission check failed (/vms/101, VM.GuestAgent.Unrestricted)'); } };
+  const sansDroit = await detecterClavier(refuse, '/nodes/pve1/qemu/101');
+  assert.equal(sansDroit.raison, 'droit');
+  assert.match(sansDroit.message, /VM\.GuestAgent\.Unrestricted/);
   const url = machine('pve-a', 'qemu', 102) + '/clavier';
   assert.equal((await lecteur.get(url)).status, 403);
   assert.equal((await membre.get(machine('pve-a', 'lxc', 110) + '/clavier')).status, 400);

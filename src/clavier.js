@@ -72,6 +72,7 @@ export async function detecterClavier(proxmox, base, { essais = 12, attente = 25
   try {
     ({ pid } = await proxmox.post(base + '/agent/exec', { command: 'sh', 'input-data': SCRIPT_CLAVIER }) || {});
   } catch (e) {
+    if (/permission check failed/i.test(e.message)) return { disposition: null, raison: 'droit', message: 'Le compte de ProxLab dans Proxmox n\'a pas le droit d\'interroger l\'agent (VM.GuestAgent.Unrestricted sur Proxmox VE 9, VM.Monitor sur la 8) : choisis la disposition à la main.' };
     return { disposition: null, raison: 'injoignable', message: `L'agent QEMU ne répond pas dans la VM (qemu-guest-agent installé et démarré ?) : ${String(e.message).slice(0, 160)}` };
   }
   if (!Number.isInteger(Number(pid))) return { disposition: null, raison: 'injoignable', message: 'L\'agent QEMU n\'a pas lancé la lecture.' };
