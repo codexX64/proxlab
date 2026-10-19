@@ -708,7 +708,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     : [hote.clientWidth, Math.max(320, Math.min(innerHeight * 0.75, innerHeight - Math.max(0, hote.getBoundingClientRect().top) - 24))];
   const reajuster = () => {
     clearTimeout(minuteurTaille);
-    minuteurTaille = setTimeout(() => { if (ajusterTaille && ecran?.etendu && hote.isConnected) ecran.ajuster(...cibleTaille().map(v => Math.round(v * densite()))); }, 250);
+    minuteurTaille = setTimeout(() => { if (ajusterTaille && ecran?.etendu && hote.isConnected) ecran.ajuster(...cibleTaille().map(v => Math.round(v * densite()))); }, 400);
   };
   new ResizeObserver(reajuster).observe(hote);
   hote.addEventListener('fullscreenchange', reajuster);

@@ -48,6 +48,7 @@ const ENCODAGES = [1, 0, -223, -308, -258, PRESSE_EXT];
 const PP = { TEXTE: 1, CAPS: 1 << 24, REQUEST: 1 << 25, PEEK: 1 << 26, NOTIFY: 1 << 27, PROVIDE: 1 << 28 };
 const PRESSE_MAX = 64 * 1024 - 64;      // ProxLab refuse au-delà de 64 Kio
 export const FRAPPE_MAX = 4000;
+export const PLAFOND = Object.freeze({ l: 3840, h: 2400, pixels: 3840 * 2160 });
 
 async function deflate(octets) {
   const flux = new Blob([octets]).stream().pipeThrough(new CompressionStream('deflate'));
@@ -225,6 +226,11 @@ export class Ecran {
         if (e[0]) this.ecranId = new DataView(tout.buffer).getUint32(4);
         if (r.x === 1 && r.y !== 0 && r.y !== 4) { this.surEtat('ajustement-refuse', r.y); this.demandee = null; }
         else this.taille(r.l, r.h);
+        // La VM a répondu (ou changé de taille) : la demande suivante peut partir.
+        if (r.x !== 2 && this.enAttente) {
+          this.enAttente = 0;
+          if (this.prochaine) { const [pl, ph] = this.prochaine; this.prochaine = null; setTimeout(() => this.ajuster(pl, ph, { libre: true }), 0); }
+        }
         if (premier) this.surEtat('ajustable');
       }
       else if (r.enc === -258) this.qemu = true;
@@ -246,10 +252,20 @@ export class Ecran {
   // Demande à la VM un écran de l x h (SetDesktopSize). Faux si QEMU ne l'a
   // pas annoncé ; la VM répond par un changement de taille, ou le refuse
   // (affichage sans redimensionnement : il faut VirtIO-GPU).
-  ajuster(l, h) {
+  // Plafonnée à la 4K (proportions gardées) : au-delà, un invité peut refuser
+  // le mode et éteindre sa sortie (« Display output is not active »). Une seule
+  // demande à la fois : la suivante attend la réponse de la VM (trois secondes
+  // au plus), pour ne pas lui en envoyer une rafale pendant un redimensionnement.
+  ajuster(l, h, { libre = false } = {}) {
     if (!this.actif || !this.etendu) return false;
+    if (!libre) {
+      const k = Math.min(1, PLAFOND.l / l, PLAFOND.h / h, Math.sqrt(PLAFOND.pixels / (l * h)));
+      l *= k; h *= k;
+    }
     l = Math.max(320, Math.min(8192, Math.floor(l / 2) * 2)); h = Math.max(200, Math.min(8192, Math.floor(h / 2) * 2));
     if ((l === this.toile.width && h === this.toile.height) || (this.demandee && this.demandee[0] === l && this.demandee[1] === h)) return true;
+    if (this.enAttente && Date.now() - this.enAttente < 3000) { this.prochaine = [l, h]; return true; }
+    this.enAttente = Date.now(); this.prochaine = null;
     this.demandee = [l, h];
     const b = new DataView(new ArrayBuffer(24));
     b.setUint8(0, 251); b.setUint16(2, l); b.setUint16(4, h); b.setUint8(6, 1);
