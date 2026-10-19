@@ -53,6 +53,8 @@ Suivi du 2026-10-19 (2.1.14) : interface seule — la taille fixe d'un écran se
 
 Suivi du 2026-10-19 (2.1.15) : une route de plus, `POST …/console-serie` — l'agent QEMU lance dans l'invité une commande fixe (`systemctl enable --now serial-getty@ttyS0.service`, lue sur l'entrée standard de `sh`, aucun paramètre accepté), administrateur et renfort, une seule à la fois par VM, inscrite au journal et aux événements ; essais : membre refusé, renfort exigé, corps refusé, conteneur refusé, agent absent dit. Interface : plein écran dans la fenêtre (aucune surface serveur) ; « fr-azerty » reconnu. Trois cassures volontaires (renfort, corps vide exigé, disposition), toutes détectées.
 
+Suivi du 2026-10-19 (2.1.16) : interface seule — l'écran d'une VM peut s'ouvrir dans une fenêtre à part (`#ecran/<nœud>/qemu/<vmid>`, paramètres contrôlés par motif, rôle membre comme l'onglet Écran, même passe à usage unique et mêmes contrôles côté serveur). Aucune route ni aucun droit ajoutés.
+
 ## Control status
 | ID | Severity | Status | Evidence | Notes |
 |---|---|---|---|---|
@@ -133,7 +135,7 @@ Suivi du 2026-10-19 (2.1.15) : une route de plus, `POST …/console-serie` — l
 | SEC-SECRETS-002 | CRITICAL | PASS | aucune variable publique ni construction : web/ servi tel quel, `grep -rnE "\bsk-[A-Za-z0-9_-]{20}\|sk_live\|service_role\|-----BEGIN" web socle/web` → 0 | rien n’est injecté dans le code servi, sauf le nonce CSP et la gamme : `web/index.html:12` |
 | SEC-SECRETS-003 | CRITICAL | PASS | `.gitignore:9` ; seuls web/ et socle/web sont servis, tout segment caché → 404 (annexe B.2, `/.env` demandé à l’instance d’essai) | secrets vides dans `.env.example:11` |
 | SEC-SECRETS-004 | HIGH | PASS | installé par le Hub : secrets posés depuis son coffre (`deploy/compose.hub.yml:37`) ; installé seul : secret Docker hors du volume (`docker-compose.yml:14`) ; fichiers acceptés : `socle/src/config.js:5` ; jeton d’API de Proxmox jamais dans l’environnement : saisi dans l’interface et scellé en base (`src/config.js:4`) | jamais dans la CI |
-| SEC-SECRETS-005 | HIGH | FAIL | une clé par usage, lue par ProxLab seul ; jeton d’API Proxmox à séparation de privilèges, rôles minimaux documentés (`README.md:149`) | créer le jeton dédié, restreint, et séparer les clés par environnement : action H6 |
+| SEC-SECRETS-005 | HIGH | FAIL | une clé par usage, lue par ProxLab seul ; jeton d’API Proxmox à séparation de privilèges, rôles minimaux documentés (`README.md:152`) | créer le jeton dédié, restreint, et séparer les clés par environnement : action H6 |
 | SEC-SECRETS-006 | HIGH | FAIL | procédures de rotation ci-dessous ; SOCLE_CLE exercée de bout en bout (`outils/exercice-rotation.mjs:1`) | jetons et mots de passe vus pendant le développement : action H5 |
 | SEC-SECRETS-007 | HIGH | PASS | clé maîtresse de 32 octets aléatoires : `socle/src/chiffre.js:24` ; jeton du Hub de 24 caractères au moins (`src/config.js:23`) ; valeurs d’exemple refusées : `socle/src/config.js:54` | essai `test/proxlab.test.js:170` ; passes de console tirées par le serveur (voir REQ-CRYPT-005) |
 | SEC-SECRETS-008 | MEDIUM | PASS | `src/config.js:10` : une valeur invalide arrête le démarrage avec la liste des erreurs ; aucun mode de débogage ; mode HTTP dégradé affiché en permanence : `socle/web/compte.js:586`, `socle/web/compte.js:704` | essai `test/proxlab.test.js:170` |
@@ -172,7 +174,7 @@ Suivi du 2026-10-19 (2.1.15) : une route de plus, `POST …/console-serie` — l
 | SEC-INJ-007 | HIGH | N/A | aucun analyseur XML : Proxmox parle JSON, `grep -rniE "xml2js\|sax\|libxml\|fast-xml\|DOMParser" src socle/src` → 0 |  |
 | SEC-INJ-008 | HIGH | PASS | JSON seulement ; clés de prototype refusées : `socle/src/schema.js:6` ; réponses de Proxmox lues en JSON, champ par champ |  |
 | SEC-XSS-001 | CRITICAL | PASS | interface : DOM construit par `h()`, texte seulement (`web/app.js:7`) ; graphiques construits nœud par nœud (`socle/web/graphes.js:3`) ; terminal écrit par textContent (`web/terminal.js:4`) | noms de machines, notes, descriptions et journaux de tâches de Proxmox affichés en texte brut |
-| SEC-XSS-002 | HIGH | N/A | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:1152`) |  |
+| SEC-XSS-002 | HIGH | N/A | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:1169`) |  |
 | SEC-XSS-003 | HIGH | PASS | aucun eval, setTimeout chaîne ni affectation de location depuis une donnée : `grep -rnE "eval\(\|new Function\|location\.href *=" web/app.js web/terminal.js socle/web/compte.js socle/web/graphes.js` → 0 | le hash ne choisit qu’une page connue ou une fiche au format vérifié : `web/app.js:159` |
 | SEC-XSS-004 | HIGH | PASS | voir REQ-WEB-002 |  |
 | SEC-XSS-005 | MEDIUM | PASS | seul échange : le Worker de preuve de travail, de même origine : `socle/web/compte.js:233` | aucune écoute de window message |
@@ -205,7 +207,7 @@ Suivi du 2026-10-19 (2.1.15) : une route de plus, `POST …/console-serie` — l
 | SEC-DB-001 | CRITICAL | PASS | voir REQ-DATA-001 |  |
 | SEC-DB-002 | HIGH | N/A | SQLite embarqué sans rôle ni identifiant : `src/base.js:14` |  |
 | SEC-DB-003 | HIGH | FAIL | aucun trafic réseau vers la base ; secrets de facteurs et de la liaison chiffrés | chiffrement du disque des hôtes : action H7 |
-| SEC-DB-004 | MEDIUM | PASS | secrets TOTP, de la liaison et des alertes scellés AES-256-GCM, sous-clé par usage et lien à leur réglage (`src/base.js:36`) ; clé maîtresse jamais dans le volume : secret du Hub, ou secret Docker hors du volume pour l’installation seule (`docker-compose.yml:14`, `README.md:185`), secret vide refusé au démarrage | lecture brute des colonnes : essais `test/proxlab.test.js:215`, `test/proxlab.test.js:799` |
+| SEC-DB-004 | MEDIUM | PASS | secrets TOTP, de la liaison et des alertes scellés AES-256-GCM, sous-clé par usage et lien à leur réglage (`src/base.js:36`) ; clé maîtresse jamais dans le volume : secret du Hub, ou secret Docker hors du volume pour l’installation seule (`docker-compose.yml:14`, `README.md:188`), secret vide refusé au démarrage | lecture brute des colonnes : essais `test/proxlab.test.js:215`, `test/proxlab.test.js:799` |
 | SEC-DB-005 | CRITICAL | PASS | voir SEC-INJ-001 |  |
 | SEC-DB-006 | HIGH | FAIL | voir REQ-DATA-003 | action H8 |
 | SEC-DB-007 | MEDIUM | PASS | essais sur données fabriquées ; aucun compte par défaut : jeton d’installation exigé (`socle/src/comptes.js:244`) — la 1.x laissait le premier visiteur créer le compte |  |
@@ -327,7 +329,7 @@ Suivi du 2026-10-19 (2.1.15) : une route de plus, `POST …/console-serie` — l
 | SEC-INJ-002 | aucun ORM : node:sqlite, requêtes préparées seulement |
 | SEC-INJ-003 | aucune base documentaire : SQLite seulement ; JSON rangé en colonne texte |
 | SEC-INJ-007 | aucun analyseur XML : Proxmox parle JSON, `grep -rniE "xml2js\|sax\|libxml\|fast-xml\|DOMParser" src socle/src` → 0 |
-| SEC-XSS-002 | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:1152`) |
+| SEC-XSS-002 | aucun texte riche ni Markdown rendu : descriptions et journaux de tâches affichés en texte brut (`web/app.js:1169`) |
 | SEC-XSS-007 | aucune redirection pilotée par paramètre ; `curl -sI "/login?next=https://evil.example"` → aucun Location (annexe B.4) |
 | SEC-CSRF-006 | aucune redirection pilotée par paramètre : voir SEC-XSS-007 |
 | SEC-API-006 | aucun GraphQL : `grep -rniE "graphql\|apollo" src web/app.js socle/src` → 0 |
@@ -393,7 +395,7 @@ Suivi du 2026-10-19 (2.1.15) : une route de plus, `POST …/console-serie` — l
 | SEC-TEST-008 | ni argent, ni santé, ni large public : service auto-hébergé pour quelques comptes invités ; `grep -rniE "stripe\|paypal\|checkout\|invoice\|payout\|refund" src web/app.js web/terminal.js socle/src socle/web/compte.js socle/web/graphes.js` → 0 : aucun paiement |
 
 ## Anonymity (REQ-ANON-001 to -010)
-Arbre de travail : 0 occurrence de la liste d’anonymat propre à ce dépôt (la liste commune moins le nom de l’hyperviseur, objet du logiciel) ; les motifs de l’annexe B.1 y relèvent 1 ligne, un nom de fichier du .gitignore. Historique local complet (92 commits sur `main`, 95 avec les trois branches de Dependabot de GitHub, tous les arbres, tous les messages, auteurs et validateurs) : 0 occurrence de cette liste, une seule identité sur `main` (les branches de Dependabot portent `dependabot[bot]` et `GitHub`, comptes de service → H17), toutes les dates en UTC, aucune mention d’outil ; le motif « infrastructure personnelle » y relève 336 lignes hors des deux relevés, toutes le nom de l’hyperviseur piloté ou des mots qui contiennent le motif. Aucun binaire image ni document dans tout l’historique. Le dépôt ne contient pas l’historique de la 1.x : l’ancien dépôt publié n’a pas pu être relu d’ici (accès refusé au clonage) ; l’archive de la 1.x reçue, relue hors dépôt, ne portait aucun terme de la liste hors du nom de l’hyperviseur, mais son historique publié reste non audité et le pseudonyme y figurait en auteur → H12, détail dans le rapport d’anonymat hors dépôt. Le balayage est fait sur motifs et sur une liste finie : il ne prouve pas l’absence de ce que la liste ne nomme pas.
+Arbre de travail : 0 occurrence de la liste d’anonymat propre à ce dépôt (la liste commune moins le nom de l’hyperviseur, objet du logiciel) ; les motifs de l’annexe B.1 y relèvent 1 ligne, un nom de fichier du .gitignore. Historique local complet (95 commits sur `main`, 98 avec les trois branches de Dependabot de GitHub, tous les arbres, tous les messages, auteurs et validateurs) : 0 occurrence de cette liste, une seule identité sur `main` (les branches de Dependabot portent `dependabot[bot]` et `GitHub`, comptes de service → H17), toutes les dates en UTC, aucune mention d’outil ; le motif « infrastructure personnelle » y relève 336 lignes hors des deux relevés, toutes le nom de l’hyperviseur piloté ou des mots qui contiennent le motif. Aucun binaire image ni document dans tout l’historique. Le dépôt ne contient pas l’historique de la 1.x : l’ancien dépôt publié n’a pas pu être relu d’ici (accès refusé au clonage) ; l’archive de la 1.x reçue, relue hors dépôt, ne portait aucun terme de la liste hors du nom de l’hyperviseur, mais son historique publié reste non audité et le pseudonyme y figurait en auteur → H12, détail dans le rapport d’anonymat hors dépôt. Le balayage est fait sur motifs et sur une liste finie : il ne prouve pas l’absence de ce que la liste ne nomme pas.
 
 ## Human actions required
 Ce qu’aucun agent ne peut faire à la place de l’exploitant. Cette liste bloque la mise en production tant qu’elle n’est pas vide.
