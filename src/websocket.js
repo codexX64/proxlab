@@ -14,8 +14,11 @@ import crypto from 'node:crypto';
 import { connecter as connecterTls } from './tls.js';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
-const MAX_TRAME = 4 * 1024 * 1024;      // une trame de plus de 4 Mio n'est pas un flux normal
+const MAX_TRAME = 4 * 1024 * 1024;      // du navigateur : une trame de plus de 4 Mio n'est pas un flux normal
 const MAX_MESSAGE = 16 * 1024 * 1024;   // message réassemblé borné
+// De Proxmox (TLS vérifié, ticket à usage unique) : une image entière d'un écran
+// à pleine définition (3840 × 2160, 32 bits : 33 Mio) peut arriver d'un bloc.
+const MAX_AMONT = 64 * 1024 * 1024;
 const OP = { suite: 0x0, texte: 0x1, binaire: 0x2, fermeture: 0x8, ping: 0x9, pong: 0xa };
 
 function acceptation(cle) {
@@ -96,8 +99,8 @@ export class Connexion {
     if (this.role === 'serveur' && !masque) throw new Error('trame client non masquée');
     if (this.role === 'client' && masque) throw new Error('trame serveur masquée');
     if (len === 126) { if (b.length < i + 2) return false; len = b.readUInt16BE(i); i += 2; }
-    else if (len === 127) { if (b.length < i + 8) return false; const g = b.readBigUInt64BE(i); if (g > BigInt(MAX_TRAME)) throw new Error('trame démesurée'); len = Number(g); i += 8; }
-    if (len > MAX_TRAME) throw new Error('trame démesurée');
+    else if (len === 127) { if (b.length < i + 8) return false; const g = b.readBigUInt64BE(i); if (g > BigInt(this.role === 'client' ? MAX_AMONT : MAX_TRAME)) throw new Error('trame démesurée'); len = Number(g); i += 8; }
+    if (len > (this.role === 'client' ? MAX_AMONT : MAX_TRAME)) throw new Error('trame démesurée');
     // Trame de contrôle (fermeture, ping, pong) : jamais fragmentée, 125 octets
     // au plus (RFC 6455 §5.5) ; un ping plus gros serait renvoyé tel quel.
     if (opcode >= 0x8 && (!fin || len > 125)) throw new Error('trame de contrôle invalide');
@@ -127,7 +130,7 @@ export class Connexion {
       throw new Error('opcode inconnu');
     }
     this.tailleMessage += len;
-    if (this.tailleMessage > MAX_MESSAGE) throw new Error('message démesuré');
+    if (this.tailleMessage > (this.role === 'client' ? MAX_AMONT : MAX_MESSAGE)) throw new Error('message démesuré');
     this.morceaux.push(charge);
     if (fin) {
       const message = this.morceaux.length === 1 ? this.morceaux[0] : Buffer.concat(this.morceaux);

@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -781,4 +782,21 @@ test('ligne de commande : sauvegarde chiffrée pour une clé publique, restauré
   const actions = s.db.prepare("SELECT action FROM socle_journal WHERE action IN ('sauvegarde.faite', 'liaison.retiree')").all().map(x => x.action);
   assert.deepEqual(actions.sort(), ['liaison.retiree', 'sauvegarde.faite']);
   fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('WebSocket : trames bornées selon le sens — 4 Mio du navigateur, une image entière de Proxmox', () => {
+  const faux = () => { const s = new EventEmitter(); Object.assign(s, { ecrit: [], write(b) { s.ecrit.push(b); return true; }, end() { s.fini = true; }, destroy() { s.fini = true; }, setTimeout() {} }); return s; };
+  const tete = (n, masque) => { const t = Buffer.alloc(10); t[0] = 0x82; t[1] = 127 | (masque ? 0x80 : 0); t.writeBigUInt64BE(BigInt(n), 2); return masque ? Buffer.concat([t, Buffer.alloc(4)]) : t; };
+  const navigateur = new Connexion(faux(), { role: 'serveur' });
+  navigateur._recevoir(tete(5 * 1024 * 1024, true));
+  assert.equal(navigateur.ferme, true, 'trame de 5 Mio du navigateur : fermée');
+  const amont = new Connexion(faux(), { role: 'client' });
+  let recu = 0;
+  amont.on('message', m => { recu = m.length; });
+  const n = 3024 * 1964 * 4;   // image entière d'un écran Retina de 15 pouces
+  amont._recevoir(Buffer.concat([tete(n, false), Buffer.alloc(n)]));
+  assert.equal(recu, n, 'image entière de Proxmox : passée');
+  const geant = new Connexion(faux(), { role: 'client' });
+  geant._recevoir(tete(65 * 1024 * 1024, false));
+  assert.equal(geant.ferme, true, 'au-delà de 64 Mio : fermée');
 });
