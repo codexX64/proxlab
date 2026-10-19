@@ -68,9 +68,16 @@ export async function demarrer(env = process.env, { log = CONSOLE } = {}) {
       if (await socle.portail.traiter(req, res, url, ctx)) return;
       if (await api.traiter(ctx)) return;
       if (!['GET', 'HEAD'].includes(req.method)) return repondreJson(res, 405, { error: 'Méthode non admise.' });
-      if (url.pathname.startsWith('/socle/') && servirFichier(req, res, path.join(RACINE, 'socle', 'web'), url.pathname.slice(6), { nonce, cache: 'public, max-age=3600' })) return;
-      const fichier = url.pathname === '/' ? '/index.html' : url.pathname;
-      if (servirFichier(req, res, path.join(RACINE, 'web'), fichier, { nonce, gamme: socle.cfg.gamme })) return;
+      // L'interface est servie sous /v/<version>/ : une nouvelle version change
+      // l'adresse de chaque fichier, et aucun cache (navigateur, mandataire)
+      // ne peut garder l'ancien script face à la nouvelle page. Sous la bonne
+      // version, les fichiers ne changent plus : gardés un an.
+      const v = /^\/v\/([0-9A-Za-z.-]{1,40})(\/.+)$/.exec(url.pathname);
+      const chemin = v ? v[2] : url.pathname;
+      const cache = v && v[1] === VERSION ? 'public, max-age=31536000, immutable' : null;
+      if (chemin.startsWith('/socle/') && servirFichier(req, res, path.join(RACINE, 'socle', 'web'), chemin.slice(6), { nonce, cache: cache || 'no-cache' })) return;
+      const fichier = chemin === '/' ? '/index.html' : chemin;
+      if (servirFichier(req, res, path.join(RACINE, 'web'), fichier, { nonce, gamme: socle.cfg.gamme, version: VERSION, ...(cache ? { cache } : {}) })) return;
       repondreJson(res, 404, { error: 'Introuvable.' });
     } catch (e) { repondreErreur(res, e, { journal: log }); }
   }));

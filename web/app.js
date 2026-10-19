@@ -9,10 +9,10 @@
 import {
   Api, porte, pageSecurite, pageComptes, h, icone, basculeTheme, appliquerTheme,
   toast, confirmer, dialogue, feuille, ajouterPictos,
-} from '/socle/compte.js';
-import { courbe, anneau, jauge, calendrier, capacite, tuiles } from '/socle/graphes.js';
-import { Terminal } from '/terminal.js';
-import { Ecran, DISPOSITIONS, FRAPPE_MAX, intapables, estMac } from '/ecran.js';
+} from './socle/compte.js';
+import { courbe, anneau, jauge, calendrier, capacite, tuiles } from './socle/graphes.js';
+import { Terminal } from './terminal.js';
+import { Ecran, DISPOSITIONS, FRAPPE_MAX, intapables, estMac } from './ecran.js';
 
 appliquerTheme();
 const SERVICE = 'ProxLab';

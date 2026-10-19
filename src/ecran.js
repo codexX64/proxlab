@@ -124,6 +124,16 @@ export function relayerEcran(navigateur, ouvrir, { vivante = () => true, surFin 
   garde.unref?.();
   const transmettre = () => {
     for (;;) {
+      // Une touche ou un mouvement de souris envoyé avant ClientInit (un ancien
+      // client, une souris qui bouge pendant l'ouverture) : lu entier et laissé
+      // de côté, au lieu de passer pour ClientInit et de décaler tout le reste.
+      if (debut && tampon.length && tampon[0] > 1) {
+        const n = longueurMessageClient(tampon, false);
+        if (n < 0) return finir('message refusé');
+        if (n === 0) return;
+        tampon = tampon.subarray(n);
+        continue;
+      }
       const n = longueurMessageClient(tampon, debut);
       if (n < 0) return finir('message refusé');
       if (n === 0) return;

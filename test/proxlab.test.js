@@ -109,6 +109,17 @@ test('en-têtes de sécurité, nonce, sonde publique minimale, security.txt', as
   ouvrirBase(ailleurs).close();
   for (const f of fs.readdirSync(ailleurs)) assert.equal(fs.statSync(path.join(ailleurs, f)).mode & 0o777, 0o600, f);
   fs.rmSync(ailleurs, { recursive: true, force: true });
+  // L'interface sous /v/<version>/ : la page pointe la version en cours, gardée un an ; une autre version n'est pas figée.
+  const { VERSION } = await import('../src/config.js');
+  assert.match(page, new RegExp(`src="/v/${VERSION.replace(/\./g, '\\.')}/app\\.js"`));
+  const servi = chemin => new Promise(ok => http.get({ host: '127.0.0.1', port: s.port, path: chemin, agent: false, headers: { host: `localhost:${s.port}` } }, r => { r.resume(); ok(r); }));
+  const courant = await servi(`/v/${VERSION}/app.js`);
+  assert.equal(courant.statusCode, 200);
+  assert.match(courant.headers['cache-control'], /immutable/);
+  assert.equal((await servi(`/v/${VERSION}/socle/compte.js`)).statusCode, 200, 'le socle suit le même préfixe (imports relatifs)');
+  const autre = await servi('/v/0.0.1/app.js');
+  assert.equal(autre.headers['cache-control'], 'no-cache');
+  assert.equal((await servi(`/v/${VERSION}/../src/config.js`)).statusCode, 404);
   const sante = await s.client().get('/api/health');
   assert.deepEqual(sante.json, { ok: true });
   const st = await s.client().get('/.well-known/security.txt');
@@ -378,6 +389,8 @@ test('écran d\'une VM : poignée VNC faite par ProxLab, le ticket ne sort jamai
   const e = pve.ecrans.at(-1);
   assert.equal(e.authentifie, true, 'réponse au défi calculée avec le ticket');
   assert.equal(e.cible, 'qemu/101');
+  // Une souris qui bouge avant ClientInit : laissée de côté, la poignée continue.
+  ws.conn.envoyerBinaire(Buffer.from([5, 0, 0, 10, 0, 10]));
   ws.conn.envoyerBinaire(Buffer.from([1]));                                     // ClientInit
   await attendre(() => ws.octets().length >= 24);
   const init = ws.octets();
