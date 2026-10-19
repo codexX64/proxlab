@@ -43,7 +43,8 @@ export function keysym(e) {
 export const codeQemu = xt => ((xt >> 8) === 0xe0 && (xt & 0xff) < 0x7f ? (xt & 0xff) | 0x80 : xt);
 
 const PRESSE_EXT = 0xC0A1E5CE | 0;       // pseudo-encodage du presse-papiers étendu
-const ENCODAGES = [1, 0, -223, -258, PRESSE_EXT];   // CopyRect, Raw, DesktopSize, touche étendue QEMU, presse-papiers
+// CopyRect, Raw, DesktopSize, ExtendedDesktopSize, touche étendue QEMU, presse-papiers
+const ENCODAGES = [1, 0, -223, -308, -258, PRESSE_EXT];
 const PP = { TEXTE: 1, CAPS: 1 << 24, REQUEST: 1 << 25, PEEK: 1 << 26, NOTIFY: 1 << 27, PROVIDE: 1 << 28 };
 const PRESSE_MAX = 64 * 1024 - 64;      // ProxLab refuse au-delà de 64 Kio
 export const FRAPPE_MAX = 4000;
@@ -107,6 +108,9 @@ export class Ecran {
     this.morceaux = []; this.dispo = 0;
     this.etat = 'init'; this.rects = 0; this.rect = null;
     this.qemu = false; this.enfoncees = new Map(); this.boutons = 0;
+    // Taille de l'écran demandée à la VM (ExtendedDesktopSize) : connue quand
+    // QEMU l'annonce ; this.ecranId est l'écran qu'il décrit.
+    this.etendu = false; this.ecranId = 0; this.demandee = null;
     this.toile = document.createElement('canvas');
     this.toile.className = 'ecran';
     this.toile.tabIndex = 0;
@@ -210,6 +214,19 @@ export class Ecran {
         const v = new DataView(s.buffer);
         if (r.l && r.h) this.ctx.drawImage(this.toile, v.getUint16(0), v.getUint16(2), r.l, r.h, r.x, r.y, r.l, r.h);
       } else if (r.enc === -223) this.taille(r.l, r.h);
+      else if (r.enc === -308) {
+        // x : la raison (0 la VM, 1 notre demande, 2 un autre client) ; y : le
+        // statut de notre demande (0 accepté, 4 transmis à la VM par QEMU).
+        const e = this.regarder(4); if (!e) return false;
+        if (e[0] > 16) throw new Error('écrans démesurés');
+        const tout = this.prendre(4 + 16 * e[0]); if (!tout) return false;
+        const premier = !this.etendu;
+        this.etendu = true;
+        if (e[0]) this.ecranId = new DataView(tout.buffer).getUint32(4);
+        if (r.x === 1 && r.y !== 0 && r.y !== 4) { this.surEtat('ajustement-refuse', r.y); this.demandee = null; }
+        else this.taille(r.l, r.h);
+        if (premier) this.surEtat('ajustable');
+      }
       else if (r.enc === -258) this.qemu = true;
       else throw new Error(`encodage ${r.enc} non demandé`);
       this.rect = null;
@@ -224,6 +241,21 @@ export class Ecran {
     this.toile.width = l; this.toile.height = h;
     this.ctx.fillStyle = '#000'; this.ctx.fillRect(0, 0, l, h);
     this.surEtat('taille', `${l} × ${h}`);
+  }
+
+  // Demande à la VM un écran de l x h (SetDesktopSize). Faux si QEMU ne l'a
+  // pas annoncé ; la VM répond par un changement de taille, ou le refuse
+  // (affichage sans redimensionnement : il faut VirtIO-GPU).
+  ajuster(l, h) {
+    if (!this.actif || !this.etendu) return false;
+    l = Math.max(320, Math.min(8192, Math.floor(l / 2) * 2)); h = Math.max(200, Math.min(8192, Math.floor(h / 2) * 2));
+    if ((l === this.toile.width && h === this.toile.height) || (this.demandee && this.demandee[0] === l && this.demandee[1] === h)) return true;
+    this.demandee = [l, h];
+    const b = new DataView(new ArrayBuffer(24));
+    b.setUint8(0, 251); b.setUint16(2, l); b.setUint16(4, h); b.setUint8(6, 1);
+    b.setUint32(8, this.ecranId); b.setUint16(16, l); b.setUint16(18, h);
+    this.envoyer(b.buffer);
+    return true;
   }
 
   // ── Presse-papiers ──

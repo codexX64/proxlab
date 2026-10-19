@@ -5,8 +5,8 @@
 // vncproxy) est faite ici : le ticket ne quitte jamais ProxLab. Le navigateur
 // reprend le protocole à ClientInit. Dans son sens, seuls les messages d'un
 // client RFB ordinaire passent, entiers et bornés — format des pixels,
-// encodages, demandes d'image, touches, souris, presse-papiers, touche QEMU
-// étendue ; tout autre octet ferme l'écran.
+// encodages, demandes d'image, touches, souris, presse-papiers, taille d'écran
+// demandée, touche QEMU étendue ; tout autre octet ferme l'écran.
 import { chemin } from './pve.js';
 import { connecter } from './websocket.js';
 import { reponseVnc } from './des.js';
@@ -100,6 +100,12 @@ export function longueurMessageClient(b, debut) {
       const n = Math.abs(b.readInt32BE(4));
       if (n > PRESSE_PAPIERS_MAX || (b.readInt32BE(4) < 0 && n < 4)) return -1;
       return b.length >= 8 + n ? 8 + n : 0;
+    }
+    case 251: {                                         // SetDesktopSize : taille de l'écran demandée à la VM
+      if (b.length < 8) return 0;
+      const n = b[6], l = b.readUInt16BE(2), h = b.readUInt16BE(4);
+      if (n < 1 || n > 16 || l < 1 || h < 1 || l > 8192 || h > 8192) return -1;
+      return b.length >= 8 + 16 * n ? 8 + 16 * n : 0;
     }
     case 255:                                           // QEMU : touche étendue seulement
       if (b.length < 2) return 0;

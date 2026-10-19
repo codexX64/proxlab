@@ -79,12 +79,22 @@ session est revérifiée chaque minute et la console se ferme avec elle.
 de Proxmox), sous la même passe. ProxLab fait lui-même la poignée VNC avec le
 ticket de vncproxy, qui ne quitte jamais le serveur ; le navigateur reprend le
 protocole ensuite, et seuls les messages d'un client VNC ordinaire (format,
-encodages, demandes d'image, touches, souris, presse-papiers) passent, entiers
-et bornés. Le navigateur n'envoie ni touche ni souris avant la fin de la
+encodages, demandes d'image, touches, souris, presse-papiers, taille d'écran
+demandée) passent, entiers et bornés. Le navigateur n'envoie ni touche ni souris avant la fin de la
 poignée, et une connexion que Proxmox coupe pendant la poignée est reprise une
 fois. Les touches partent avec leur code physique : la disposition du clavier
 est celle de la machine (AZERTY reste AZERTY). Ctrl+Alt+Suppr et le plein écran
-ont leur bouton.
+ont leur bouton ; en plein écran, l'image remplit l'écran sans être déformée.
+
+**Taille de l'écran.** « Ajuster la VM à la fenêtre » (menu Actions, activé par
+défaut, retenu par le navigateur) demande à la VM la résolution de la place
+visible, puis celle de l'écran entier en plein écran, et la suit quand la
+fenêtre change (ExtendedDesktopSize de VNC). Il faut l'affichage VirtIO-GPU, le
+seul dont QEMU transmet la taille à l'invité : Linux (GNOME, KDE) suit seul,
+Windows avec le pilote VirtIO-GPU de virtio-win. Une VM en « std » le refuse,
+et ProxLab le dit une fois ; « Passer en VirtIO-GPU… » (administrateur, avec
+renfort) change l'affichage en gardant ses options, presse-papiers compris,
+pour le prochain démarrage complet.
 
 **Presse-papiers de l'écran.** Dans les deux sens, par le presse-papiers étendu
 de VNC (UTF-8, 64 Kio au plus) : ⌘C/Ctrl+C dans l'écran rapporte ici ce que la

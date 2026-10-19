@@ -379,6 +379,16 @@ test('écran d\'une VM : poignée VNC faite par ProxLab, le ticket ne sort jamai
   assert.equal(longueurMessageClient(Buffer.from([6, 0, 0, 0, 0x10, 0, 0, 0]), false), -1, 'presse-papiers démesuré');
   assert.equal(longueurMessageClient(Buffer.from([255, 1]), false), -1, 'seule la touche étendue de QEMU passe');
   assert.equal(longueurMessageClient(Buffer.from([7]), false), -1);
+  // SetDesktopSize : un écran de 1920 × 1080, entier et borné.
+  const taille = Buffer.alloc(24); taille.writeUInt8(251, 0); taille.writeUInt16BE(1920, 2); taille.writeUInt16BE(1080, 4); taille.writeUInt8(1, 6);
+  assert.equal(longueurMessageClient(taille, false), 24);
+  assert.equal(longueurMessageClient(taille.subarray(0, 12), false), 0, 'écran incomplet : attendre');
+  const sansEcran = Buffer.from(taille); sansEcran.writeUInt8(0, 6);
+  assert.equal(longueurMessageClient(sansEcran, false), -1, 'au moins un écran');
+  const geant = Buffer.from(taille); geant.writeUInt16BE(9000, 2);
+  assert.equal(longueurMessageClient(geant, false), -1, 'taille bornée');
+  const trop = Buffer.from(taille); trop.writeUInt8(17, 6);
+  assert.equal(longueurMessageClient(trop, false), -1, 'seize écrans au plus');
 
   assert.equal((await membre.post('/api/console', { noeud: 'pve-a', type: 'lxc', vmid: '200', mode: 'ecran' })).status, 400, 'un conteneur n\'a pas d\'écran');
   assert.equal((await lecteur.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '101', mode: 'ecran' })).status, 403);
@@ -518,6 +528,17 @@ test('console d\'une VM sans port série : refus clair avant Proxmox, ajout par 
   await admin.post(machine('pve-b', 'qemu', 130) + '/acces', { pressePapiers: true });
   const vm130 = pve.etat.machines.find(m => m.vmid === 130);
   assert.equal(vm130.attente?.vga ?? vm130.conf.vga, 'virtio,memory=32,clipboard=vnc');
+  // L'écran à la taille de la fenêtre : l'affichage passe en VirtIO-GPU, ses
+  // options restent, et la fiche dit le genre du prochain démarrage.
+  vm130.conf = { vga: 'std,memory=32,clipboard=vnc' }; delete vm130.attente;
+  const aj = await admin.post(machine('pve-b', 'qemu', 130) + '/acces', { ajustement: true });
+  assert.deepEqual(aj.json.champs, ['vga'], JSON.stringify(aj.json));
+  assert.equal(vm130.attente?.vga ?? vm130.conf.vga, 'virtio,memory=32,clipboard=vnc');
+  assert.equal((await membre.get(machine('pve-b', 'qemu', 130))).json.vgaSuivant, 'virtio');
+  assert.equal((await admin.post(machine('pve-b', 'qemu', 130) + '/acces', { ajustement: true })).json.deja, true, 'déjà en VirtIO-GPU');
+  vm130.conf = { vga: 'serial0' }; delete vm130.attente;
+  assert.equal((await admin.post(machine('pve-b', 'qemu', 130) + '/acces', { ajustement: true })).status, 409, 'pas d\'écran graphique');
+  vm130.conf = { vga: 'virtio,memory=32,clipboard=vnc' };
   // Avec le port série, la console s'ouvre.
   const p = await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '102' });
   assert.equal(p.status, 200);

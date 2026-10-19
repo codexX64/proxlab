@@ -691,7 +691,22 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
   // connexion) ou passer par le presse-papiers de la VM (spice-vdagent, qui ne
   // relaie rien sous une session GNOME Wayland — Fedora par défaut).
   let modeColler = lireLocal('proxlab-coller', 'taper');
+  // L'écran de la VM prend la taille de la fenêtre (ou de l'écran, en plein
+  // écran) et la suit : il faut l'affichage VirtIO-GPU, que l'invité
+  // redimensionne seul (GNOME, KDE, Windows avec le pilote VirtIO).
+  const genreVga = String(f.config?.vga || '').split(',')[0] || 'std';
+  const virtioPrevu = !/^virtio/.test(genreVga) && /^virtio/.test(f.vgaSuivant || '');
+  let ajusterTaille = lireLocal('proxlab-ajuster', '1') === '1', refusSignale = false, minuteurTaille = null;
   const hote = h('div', { class: 'ecran-hote' });
+  const cibleTaille = () => document.fullscreenElement === hote
+    ? [hote.clientWidth, hote.clientHeight]
+    : [hote.clientWidth, Math.max(320, Math.min(innerHeight * 0.75, innerHeight - Math.max(0, hote.getBoundingClientRect().top) - 24))];
+  const reajuster = () => {
+    clearTimeout(minuteurTaille);
+    minuteurTaille = setTimeout(() => { if (ajusterTaille && ecran?.etendu && hote.isConnected) ecran.ajuster(...cibleTaille()); }, 250);
+  };
+  new ResizeObserver(reajuster).observe(hote);
+  hote.addEventListener('fullscreenchange', reajuster);
   const etat = h('span', { class: 'note', text: 'fermé' });
   let ecran = null, ouvertA = 0, reprise = false;
   // Le clavier de la VM : choisi à la main pour cette VM, sinon demandé à la VM
@@ -741,6 +756,12 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
     toast('Presse-papiers branché : redémarre la VM pour qu\'il prenne effet.');
     relire?.();
   }) }, 'Brancher le presse-papiers') : null;
+  const passerVirtio = sur(async () => {
+    if (!await confirmer('Passer l\'affichage en VirtIO-GPU ?', `Proxmox remplace l'affichage « ${genreVga} » par « virtio » (les autres options, dont le presse-papiers, restent) : pris en compte au prochain démarrage complet (Redémarrer depuis ProxLab suffit). L'écran de la VM peut alors prendre la taille de ta fenêtre. Linux le gère seul ; Windows demande le pilote VirtIO-GPU (virtio-win).`, { oui: 'Passer en VirtIO-GPU' })) return;
+    await api.post(`/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/acces`, { ajustement: true });
+    toast('Affichage VirtIO-GPU réglé : redémarre la VM pour qu\'il prenne effet.');
+    relire?.();
+  });
   const activerAgent = sur(async () => {
     if (!await confirmer('Activer l\'agent QEMU de cette VM ?', 'Proxmox coche « Agent QEMU » : pris en compte au prochain démarrage complet (Redémarrer depuis ProxLab suffit). Dans la VM, qemu-guest-agent doit être installé (déjà là sur Fedora ; sinon : sudo dnf install qemu-guest-agent, ou sudo apt install qemu-guest-agent). ProxLab lui demandera alors la disposition du clavier, par un script fixe qui ne fait que la lire.', { oui: 'Activer' })) return;
     await api.post(`/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/acces`, { agent: true });
@@ -811,6 +832,13 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
       { items: [
         { texte: panneau.hidden ? 'Afficher le presse-papiers' : 'Masquer le presse-papiers', ic: 'presse', agir: () => montrerPanneau() },
         { texte: document.fullscreenElement ? 'Quitter le plein écran' : 'Plein écran', ic: 'agrandir', inactif: off, agir: plein },
+        { texte: 'Ajuster la VM à la fenêtre', ic: ajusterTaille ? 'verifie' : null, agir: () => {
+          ajusterTaille = !ajusterTaille; poserLocal('proxlab-ajuster', ajusterTaille ? '1' : '0'); refusSignale = false;
+          if (!ajusterTaille) return toast('La VM garde sa résolution.');
+          if (!/^virtio/.test(genreVga)) return toast(`L'affichage de cette VM (${genreVga}) ne change pas de taille : il faut VirtIO-GPU${admin ? ' (« Passer en VirtIO-GPU… »)' : ' : demande-le à un administrateur'}.`, true);
+          toast('La VM prend la taille de la fenêtre, et la suit.'); reajuster();
+        } },
+        ...(admin && !/^virtio/.test(genreVga) && !virtioPrevu ? [{ texte: 'Passer en VirtIO-GPU…', ic: 'ecran', agir: passerVirtio }] : []),
       ] },
     ];
   });
@@ -826,7 +854,17 @@ function ecranMachine(f, garder, relire, { auto = false } = {}) {
     const ws = new WebSocket(`${proto}//${location.host}/ws/console?passe=${encodeURIComponent(passe)}`);
     ws.binaryType = 'arraybuffer';
     ecran = new Ecran(hote, ws, {
-      surEtat: (q, d) => { etat.textContent = q === 'taille' ? `ouvert · ${d}` : q === 'pret' ? 'ouvert' : q; },
+      surEtat: (q, d) => {
+        if (q === 'ajustable') return reajuster();
+        if (q === 'ajustement-refuse') {
+          // Dit une fois par VM et par affichage, pas à chaque ouverture.
+          const cle = `proxlab-ajuster-refus:${f.node}/${f.vmid}`;
+          if (!refusSignale && lireLocal(cle, '') !== genreVga) toast(`L'affichage de cette VM (${genreVga}) ne change pas de taille${/^virtio/.test(genreVga) ? '' : ' : il faut VirtIO-GPU (menu Actions)'}.`, true);
+          refusSignale = true; poserLocal(cle, genreVga);
+          return;
+        }
+        etat.textContent = q === 'taille' ? `ouvert · ${d}` : q === 'pret' ? 'ouvert' : q;
+      },
       surPresse: texte => {
         recu.textContent = texte || '(vide)'; recu.classList.toggle('vide-doux', !texte); copierIci.disabled = !texte;
         if (panneau.hidden) actions.bouton.classList.add('signal');

@@ -280,7 +280,16 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
     ecrans.push(e);
     let tampon = Buffer.alloc(0), etape = 'version', defi = crypto.randomBytes(16);
     ws.envoyerBinaire(Buffer.from('RFB 003.008\n', 'latin1'));
-    const longueur = b => ({ 0: 20, 3: 10, 4: 8, 5: 6, 255: 12 }[b[0]] ?? (b[0] === 2 && b.length >= 4 ? 4 + 4 * b.readUInt16BE(2) : b[0] === 6 && b.length >= 8 ? 8 + Math.abs(b.readInt32BE(4)) : 0));
+    const longueur = b => ({ 0: 20, 3: 10, 4: 8, 5: 6, 255: 12 }[b[0]] ?? (b[0] === 2 && b.length >= 4 ? 4 + 4 * b.readUInt16BE(2) : b[0] === 6 && b.length >= 8 ? 8 + Math.abs(b.readInt32BE(4)) : b[0] === 251 && b.length >= 8 ? 8 + 16 * b[6] : 0));
+    // Taille de l'écran : comme QEMU, ExtendedDesktopSize (-308) annoncé à qui
+    // le demande ; SetDesktopSize suivi par l'invité seulement en VirtIO-GPU.
+    let [L, H] = [EL, EH];
+    e.tailles = [];
+    const etendu = (raison, statut) => {
+      const t = Buffer.alloc(16 + 4 + 16); t.writeUInt16BE(1, 2); t.writeUInt16BE(raison, 4); t.writeUInt16BE(statut, 6);
+      t.writeUInt16BE(L, 8); t.writeUInt16BE(H, 10); t.writeInt32BE(-308, 12); t[16] = 1; t.writeUInt32BE(7, 20); t.writeUInt16BE(L, 28); t.writeUInt16BE(H, 30);
+      ws.envoyerBinaire(t);
+    };
     ws.on('message', d => {
       tampon = Buffer.concat([tampon, d]);
       for (;;) {
@@ -310,6 +319,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
           const encs = Array.from({ length: m.readUInt16BE(2) }, (_, i) => m.readInt32BE(4 + 4 * i));
           // QEMU accuse la touche étendue par un rectangle -258 vide.
           if (encs.includes(-258)) { const t = Buffer.alloc(16); t.writeUInt16BE(1, 2); t.writeInt32BE(-258, 12); ws.envoyerBinaire(t); }
+          if (encs.includes(-308)) etendu(0, 0);
           if (encs.includes(0xC0A1E5CE | 0)) { e.ext = true; const max = Buffer.alloc(4); max.writeUInt32BE(64 * 1024); couper(ext.CAPS | ext.REQUEST | ext.NOTIFY | ext.PROVIDE | ext.TEXTE, max); }
         }
         if (m[0] === 6) {
@@ -323,9 +333,21 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
             else if (flags & ext.PROVIDE && flags & ext.TEXTE) { const z = zlib.inflateSync(m.subarray(12)); e.presse = z.subarray(4, 4 + z.readUInt32BE(0)).toString('utf8').replace(/\0$/, '').replace(/\r\n/g, '\n'); }
           }
         }
+        if (m[0] === 251) {
+          const l = m.readUInt16BE(2), hh = m.readUInt16BE(4);
+          e.tailles.push([l, hh]);
+          const vm = etat.machines.find(x => `${x.type}/${x.vmid}` === vt.cle);
+          if (!/^virtio/.test(String(vm?.conf?.vga || ''))) etendu(1, 3);
+          else {
+            [L, H] = [l, hh];
+            etendu(1, 0);
+            const t = Buffer.alloc(16); t.writeUInt16BE(1, 2); t.writeUInt16BE(L, 8); t.writeUInt16BE(H, 10);
+            ws.envoyerBinaire(Buffer.concat([t, Buffer.alloc(L * H * 4, 90)]));
+          }
+        }
         if (m[0] === 3 && m[1] === 0) {
-          const t = Buffer.alloc(16); t.writeUInt16BE(1, 2); t.writeUInt16BE(EL, 8); t.writeUInt16BE(EH, 10); t.writeInt32BE(0, 12);
-          ws.envoyerBinaire(Buffer.concat([t, pixels]));
+          const t = Buffer.alloc(16); t.writeUInt16BE(1, 2); t.writeUInt16BE(L, 8); t.writeUInt16BE(H, 10); t.writeInt32BE(0, 12);
+          ws.envoyerBinaire(Buffer.concat([t, L === EL && H === EH ? pixels : Buffer.alloc(L * H * 4, 90)]));
         }
       }
     });
