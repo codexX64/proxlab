@@ -147,6 +147,9 @@ Commits de la passe :
 ## Suivi du 2026-10-19 (2.1.11)
 Un commit de correction : la garde des paramètres de requête devient commune à toutes les routes (`api.js`, après le gestionnaire). 22 essais du service, verts ; retirer la garde fait échouer « paramètres : un paramètre inconnu est refusé ». Surface publique inchangée.
 
+## Suivi du 2026-10-19 (2.1.12)
+Deux commits de fonction (plein écran qui remplit l'écran ; VM ajustée à la fenêtre) et la version. 22 essais du service, verts ; parcours du navigateur : les 28 vérifications de l'écran et de la console, et 14 nouvelles (refus en « std » dit une fois, passage en VirtIO-GPU, taille suivie à l'ouverture, au redimensionnement et en plein écran, image agrandie jusqu'aux bords sans ajustement, souris au bon pixel dans les bandes), toutes vertes. Surface publique : un champ ajouté (`ajustement` de `…/acces`, `vgaSuivant` de la fiche), rien de changé.
+
 ## Verification (chapter 49)
 - [x] Full suite passes and matches the baseline — les 83 essais de la référence, verts avant et après la passe, relancés à la génération de ce fichier ; delta 2.1 : 88 essais (21 du service, 67 du socle), verts sur l’arbre final
 - [x] Public API diff empty — inventaire de la surface publique identique ligne à ligne ; delta 2.1 : ajouts seuls, aucune route ni aucun schéma existants changés (« Behaviour freeze »)
