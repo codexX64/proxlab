@@ -960,6 +960,25 @@ function sansPortSerie(f, relire) {
         h('span', { class: 'cmd' }, h('code', { text: cmd }), h('button', { class: 'btn flat sm', type: 'button', 'aria-label': 'Copier la commande', onclick: async () => { try { await navigator.clipboard.writeText(cmd); toast('Commande copiée.'); } catch { toast(cmd); } } }, icone('copie', 12))))));
 }
 
+// Le port série est là mais l'invité n'y écoute pas : la commande à taper dans
+// la VM et, si l'agent QEMU tourne, le bouton qui la lance (administrateur).
+function consoleMuette(f, surActivee) {
+  const cmd = 'sudo systemctl enable --now serial-getty@ttyS0.service';
+  const agent = /^(1|enabled=1)(,|$)/.test(String(f.config?.agent || ''));
+  const activer = sur(async () => {
+    if (!await confirmer('Activer la connexion sur le port série ?', 'L\'agent QEMU lance dans la VM, en administrateur, la commande ci-dessous et rien d\'autre : la console texte affiche ensuite l\'invite de connexion. Inscrit au journal.', { oui: 'Activer' })) return;
+    const r = await api.post(`/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/console-serie`);
+    if (!r.ok) return toast(r.message, true);
+    toast('Connexion activée dans la VM : Entrée affiche l\'invite.');
+    surActivee();
+  });
+  return h('div', { class: 'pad sans-serie' },
+    h('p', { text: 'Le port série ne répond pas : la VM n\'y lance aucune connexion (c\'est le cas par défaut sur Fedora et Ubuntu de bureau). Une seule fois, dans la VM :' }),
+    h('span', { class: 'cmd' }, h('code', { text: cmd }), h('button', { class: 'btn flat sm', type: 'button', 'aria-label': 'Copier la commande', onclick: async () => { try { await navigator.clipboard.writeText(cmd); toast('Commande copiée.'); } catch { toast(cmd); } } }, icone('copie', 12))),
+    admin && agent ? h('p', {}, h('button', { class: 'btn sm solid', type: 'button', onclick: activer }, icone('terminal', 14), 'Activer par l\'agent QEMU'), h('small', { class: 'dim', text: ' — sans ouvrir la VM.' }))
+      : h('p', { class: 'hint', text: agent ? 'Un administrateur peut aussi l\'activer par l\'agent QEMU.' : 'Tape-la depuis l\'onglet Écran, dans un terminal de la VM.' }));
+}
+
 function consoleMachine(cible, garder, { f = null, relire = null, auto = false } = {}) {
   const hote = h('div', { class: 'console-hote' });
   const etat = h('span', { class: 'note', text: 'fermée' });
@@ -1007,12 +1026,19 @@ function consoleMachine(cible, garder, { f = null, relire = null, auto = false }
       // autre partirait) : on lui dit seulement quoi faire.
       if (cible.type === 'qemu') etat.textContent = 'ouverte · Entrée pour afficher l\'invite';
     });
-    hote.addEventListener('keydown', () => { if (/Entrée/.test(etat.textContent) && ws?.readyState === 1) etat.textContent = 'ouverte'; }, true);
-    ws.addEventListener('message', ev => { if (typeof ev.data === 'string') term.ecrire(ev.data); });
+    // Une touche, puis rien pendant quatre secondes : l'invité n'écoute pas son
+    // port série (Fedora et Ubuntu de bureau n'y lancent pas de connexion).
+    let silence = null;
+    hote.addEventListener('keydown', () => {
+      if (/Entrée/.test(etat.textContent) && ws?.readyState === 1) etat.textContent = 'ouverte';
+      if (cible.type === 'qemu' && f && !silence && !aide.isConnected) silence = setTimeout(() => { if (ws?.readyState === 1) carte.insertBefore(aide, hote); }, 4000);
+    }, true);
+    ws.addEventListener('message', ev => { if (typeof ev.data === 'string') { clearTimeout(silence); silence = null; term.ecrire(ev.data); } });
     ws.addEventListener('close', () => { etat.textContent = 'fermée'; });
     bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
   });
   const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: ouvrir }, icone('terminal', 14), 'Ouvrir');
+  const aide = cible.type === 'qemu' && f ? consoleMuette(f, () => { aide.remove(); term?.focus(); ws?.readyState === 1 && ws.send(JSON.stringify({ i: '\r' })); }) : h('div');
   const serie = cible.type !== 'qemu' || !f || Object.keys(f.config || {}).some(k => /^serial\d$/.test(k));
   if (serie) hote.append(h('p', { class: 'vide', text: cible.type === 'node' ? 'Shell du nœud, en administrateur : chaque ouverture est journalisée.' : `Console texte de la machine. Sélectionne pour copier (${estMac() ? '⌘C' : 'Ctrl+Maj+C'}), ${estMac() ? '⌘V' : 'Ctrl+Maj+V'} pour coller. Chaque ouverture est journalisée.` }));
   else { hote.append(sansPortSerie(f, relire)); bouton.disabled = true; actions.ancre.hidden = true; }

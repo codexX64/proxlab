@@ -85,6 +85,10 @@ poignée, et une connexion que Proxmox coupe pendant la poignée est reprise une
 fois. Les touches partent avec leur code physique : la disposition du clavier
 est celle de la machine (AZERTY reste AZERTY). Ctrl+Alt+Suppr et le plein écran
 ont leur bouton ; en plein écran, l'image remplit l'écran sans être déformée.
+Deux pleins écrans : celui du navigateur (l'écran entier), ou « dans la
+fenêtre », où l'écran de la VM couvre toute la page — le défaut sur Safari,
+qui floute une page en plein écran qui reçoit beaucoup de frappes ; la fenêtre
+de Safari se met elle-même en plein écran (⌃⌘F), et Échap part dans la VM.
 
 **Taille de l'écran.** « Ajuster la VM à la fenêtre » (menu Actions, activé par
 défaut, retenu par le navigateur) demande à la VM la résolution de la place
@@ -134,7 +138,11 @@ l'invite de connexion du port série.
 **Console d'une VM.** Elle passe par le port série de la VM : sans `serial0`,
 ProxLab le dit avant d'appeler Proxmox et propose de l'ajouter
 (`serial0: socket`, administrateur, au prochain redémarrage), puis
-`sudo systemctl enable --now serial-getty@ttyS0.service` dans l'invité. Copier :
+`sudo systemctl enable --now serial-getty@ttyS0.service` dans l'invité. Si le
+port série reste muet quatre secondes après une touche, la console le dit et
+donne cette commande ; quand l'agent QEMU tourne, un administrateur la fait
+lancer par l'agent (« Activer par l'agent QEMU », renfort, journalisé : la
+commande est fixe, rien de ce que demande le navigateur n'y entre). Copier :
 sélectionner puis ⌘C, Ctrl+Maj+C ou le bouton ; coller : ⌘V, Ctrl+Maj+V ou le
 bouton (collage encadré quand le shell le demande).
 

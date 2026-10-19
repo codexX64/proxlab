@@ -64,22 +64,33 @@ export const agentActif = v => /^(1|enabled=1)(,|$)/.test(String(v || ''));
 
 const pause = ms => new Promise(r => setTimeout(r, ms));
 
-// Interroge la VM ; rend { disposition, brut, source } ou { disposition: null, raison }.
-export async function detecterClavier(proxmox, base, { essais = 12, attente = 250 } = {}) {
+// Un script fixe passé à `sh` par l'agent QEMU, puis son état attendu.
+// Rend { st } (exited, exitcode, out-data, err-data) ou { raison, message }.
+async function executer(proxmox, base, script, { essais, attente, quoi }) {
   const config = await proxmox.get(base + '/config', { current: 1 });
-  if (!agentActif(config?.agent)) return { disposition: null, raison: 'agent', message: 'L\'agent QEMU n\'est pas activé dans cette VM.' };
+  if (!agentActif(config?.agent)) return { raison: 'agent', message: 'L\'agent QEMU n\'est pas activé dans cette VM.' };
   let pid;
   try {
-    ({ pid } = await proxmox.post(base + '/agent/exec', { command: 'sh', 'input-data': SCRIPT_CLAVIER }) || {});
+    ({ pid } = await proxmox.post(base + '/agent/exec', { command: 'sh', 'input-data': script }) || {});
   } catch (e) {
-    if (/permission check failed/i.test(e.message)) return { disposition: null, raison: 'droit', message: 'Le compte de ProxLab dans Proxmox n\'a pas le droit d\'interroger l\'agent (VM.GuestAgent.Unrestricted sur Proxmox VE 9, VM.Monitor sur la 8) : choisis la disposition à la main.' };
-    return { disposition: null, raison: 'injoignable', message: `L'agent QEMU ne répond pas dans la VM (qemu-guest-agent installé et démarré ?) : ${String(e.message).slice(0, 160)}` };
+    if (/permission check failed/i.test(e.message)) return { raison: 'droit', message: `Le compte de ProxLab dans Proxmox n'a pas le droit d'utiliser l'agent (VM.GuestAgent.Unrestricted sur Proxmox VE 9, VM.Monitor sur la 8) : ${quoi}.` };
+    return { raison: 'injoignable', message: `L'agent QEMU ne répond pas dans la VM (qemu-guest-agent installé et démarré ?) : ${String(e.message).slice(0, 160)}` };
   }
-  if (!Number.isInteger(Number(pid))) return { disposition: null, raison: 'injoignable', message: 'L\'agent QEMU n\'a pas lancé la lecture.' };
+  if (!Number.isInteger(Number(pid))) return { raison: 'injoignable', message: 'L\'agent QEMU n\'a pas lancé la commande.' };
   for (let i = 0; i < essais; i++) {
     await pause(attente);
     const st = await proxmox.get(base + '/agent/exec-status', { pid }).catch(() => null);
-    if (!st?.exited) continue;
+    if (st?.exited) return { st };
+  }
+  return { raison: 'delai', message: 'La VM a mis trop de temps à répondre.' };
+}
+
+// Interroge la VM ; rend { disposition, brut, source } ou { disposition: null, raison }.
+export async function detecterClavier(proxmox, base, { essais = 12, attente = 250 } = {}) {
+  const r = await executer(proxmox, base, SCRIPT_CLAVIER, { essais, attente, quoi: 'choisis la disposition à la main' });
+  if (!r.st) return { disposition: null, raison: r.raison, message: r.message };
+  {
+    const st = r.st;
     const { brut, source } = lireSortie(st['out-data']);
     const disposition = dispositionDe(brut);
     if (disposition) return { disposition, brut, source };
@@ -87,5 +98,18 @@ export async function detecterClavier(proxmox, base, { essais = 12, attente = 25
     const err = String(st['err-data'] || '').replace(/\s+/g, ' ').trim().slice(0, 200);
     return { disposition: null, raison: 'vide', message: `La VM n'a pas dit sa disposition (code ${st.exitcode ?? '?'}${err ? ` : ${err}` : ''}). Choisis-la à la main.` };
   }
-  return { disposition: null, raison: 'delai', message: 'La VM a mis trop de temps à répondre.' };
+}
+
+// La connexion sur le port série, dans l'invité : un service systemd, activé
+// et démarré par une commande fixe. Rien de ce que demande le navigateur
+// n'entre dans la commande.
+export const SCRIPT_CONSOLE_SERIE = 'systemctl enable --now serial-getty@ttyS0.service\n';
+export async function activerConsoleSerie(proxmox, base, { essais = 40, attente = 250 } = {}) {
+  const r = await executer(proxmox, base, SCRIPT_CONSOLE_SERIE, { essais, attente, quoi: 'tape la commande dans la VM, depuis l\'onglet Écran' });
+  if (!r.st) return { ok: false, raison: r.raison, message: r.message };
+  if (Number(r.st.exitcode) !== 0) {
+    const err = String(r.st['err-data'] || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    return { ok: false, raison: 'echec', message: `systemctl a échoué dans la VM (code ${r.st.exitcode ?? '?'}${err ? ` : ${err}` : ''}).` };
+  }
+  return { ok: true };
 }

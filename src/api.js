@@ -9,7 +9,7 @@
 // machine), admin sous renfort récent (arrêt forcé, migration, configuration,
 // retour et suppression d'instantané, suppression de sauvegarde, arrêt d'une
 // tâche, shell d'un nœud, liaison à Proxmox, alertes).
-import { detecterClavier, agentActif } from './clavier.js';
+import { detecterClavier, activerConsoleSerie, agentActif } from './clavier.js';
 import crypto from 'node:crypto';
 import { ErreurHttp, Routeur, lireCorps, valider, repondreJson, egal } from '../socle/src/index.js';
 import { ErreurProxmox, Proxmox, chemin } from './pve.js';
@@ -379,6 +379,26 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
       return r;
     } catch (e) { clavierConnu.delete(m.cible); throw e; }
   }, { role: 'membre', requete: { relire: { type: 'chaine', parmi: ['1'] } } });
+
+  // La connexion sur le port série dans l'invité (serial-getty), activée par
+  // l'agent QEMU avec une commande fixe : la console texte répond ensuite.
+  // Administrateur et renfort : c'est une commande lancée dans la VM, en root.
+  const serieEnCours = new Set();
+  r.post('/api/machines/:noeud/:type/:vmid/console-serie', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const m = machine(ctx.params);
+    if (m.type !== 'qemu') throw new ErreurHttp(400, 'Réservé aux machines virtuelles.');
+    await corps(ctx, {});
+    if (serieEnCours.has(m.cible)) throw new ErreurHttp(409, 'Activation déjà en cours pour cette VM.');
+    serieEnCours.add(m.cible);
+    try {
+      const r = await pve(() => activerConsoleSerie(proxmox, m.base));
+      const qui = acteur(ctx);
+      journal.ecrire({ acteur: qui.acteurCompte, action: 'machine.console_serie', objet: m.cible, ip: ctx.ip, resultat: r.ok ? 'ok' : 'erreur', details: { raison: r.raison || null } });
+      if (r.ok) evenements.noter({ genre: 'vm.configured', niveau: 'info', titre: `VM ${m.vmid} : connexion sur le port série activée`, corps: `serial-getty@ttyS0 activé par l'agent QEMU — par ${qui.acteur}.`, cible: m.cible, noeud: m.noeud, ...qui });
+      return r;
+    } finally { serieEnCours.delete(m.cible); }
+  }, { role: 'admin' });
 
   r.post('/api/machines/:noeud/:type/:vmid/instantanes', async ctx => {
     session(ctx, { role: 'membre' });

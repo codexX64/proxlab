@@ -155,6 +155,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
             if (m.clavierInvite === undefined) return repondre(500, null, 'QEMU guest agent is not running');
             const pid = 1000 + ++compteur;
             const sortie = params.command === 'sh' && /gsettings get org\.gnome\.desktop\.input-sources/.test(params['input-data'] || '') ? (m.clavierInvite.startsWith('vc ') ? `${m.clavierInvite}\n` : `gnome [('xkb', '${m.clavierInvite}'), ('xkb', 'de')]\n`) : '';
+            if (/^systemctl enable --now serial-getty@ttyS0\.service\n$/.test(params['input-data'] || '')) m.sansGetty = false;
             (etat.execs ||= new Map()).set(pid, { sortie, commande: params.command, entree: params['input-data'] });
             return repondre(200, { pid });
           }
@@ -240,13 +241,16 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
     const invite = `root@${vt.cle ? 'invite-' + vt.cle.split('/')[1] : vt.node}:~# `;
     ws.on('message', d => {
       const t = d.toString('utf8');
-      if (!authentifie) { if (t === `${UTILISATEUR.nom}:${url.searchParams.get('vncticket')}\n`) { authentifie = true; ws.envoyerBinaire(Buffer.from('OK')); ws.envoyerBinaire(Buffer.from(`Console d'essai (${c.cible})\r\n${invite}`)); } else ws.close(); return; }
+      // Une VM sans connexion sur son port série (sansGetty) : termproxy parle, l'invité se tait.
+      const vm = etat.machines.find(x => `${x.type}/${x.vmid}` === vt.cle);
+      if (!authentifie) { if (t === `${UTILISATEUR.nom}:${url.searchParams.get('vncticket')}\n`) { authentifie = true; ws.envoyerBinaire(Buffer.from('OK')); ws.envoyerBinaire(Buffer.from(vm?.sansGetty ? 'starting serial terminal on interface serial0\r\n' : `Console d'essai (${c.cible})\r\n${invite}`)); } else ws.close(); return; }
       if (t === '2') return;
       const r = /^1:(\d+):(\d+):$/.exec(t);
       if (r) { c.tailles.push([+r[1], +r[2]]); return; }
       const m = /^0:(\d+):([\s\S]*)$/.exec(t);
       if (!m) return;
       c.saisies.push(m[2]);
+      if (vm?.sansGetty) return;
       for (const ch of m[2]) {
         if (ch === '\r') {
           const sortie = ligne === 'hostname' ? (vt.cle ? 'invite-' + vt.cle.split('/')[1] : vt.node) : ligne === 'uname' ? 'Linux' : ligne ? `${ligne.split(' ')[0]}: commande inconnue` : '';

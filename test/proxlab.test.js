@@ -744,6 +744,28 @@ test('paramètres : un paramètre inconnu est refusé, même quand la route rend
   } finally { routes.pop(); }
 });
 
+test('console série muette : la connexion activée dans la VM par l\'agent QEMU, commande fixe, administrateur et renfort', async () => {
+  const vm = pve.etat.machines.find(m => m.vmid === 101);
+  const url = machine('pve-a', 'qemu', 101) + '/console-serie';
+  vm.conf.agent = '1'; vm.clavierInvite = 'fr'; vm.sansGetty = true;
+  assert.equal((await membre.post(url)).status, 403, 'un membre ne lance rien dans la VM');
+  assert.equal((await sansRenfort(() => admin.post(url))).status, 403, 'renfort exigé');
+  assert.equal((await admin.post(url, { commande: 'rm -rf /' })).status, 400, 'aucun paramètre accepté');
+  const r = await admin.post(url);
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.ok, true);
+  assert.equal(vm.sansGetty, false);
+  const appel = pve.appels.filter(a => /101\/agent\/exec$/.test(a.chemin)).at(-1);
+  assert.deepEqual([appel.params.command, appel.params['input-data']], ['sh', 'systemctl enable --now serial-getty@ttyS0.service\n']);
+  const j = (await admin.get('/api/compte/admin/journal')).json;
+  assert.ok(j.lignes.some(l => l.action === 'machine.console_serie' && l.resultat === 'ok'));
+  vm.conf.agent = '0';
+  const sans = await admin.post(url);
+  assert.deepEqual([sans.json.ok, sans.json.raison], [false, 'agent']);
+  assert.equal((await admin.post(machine('pve-a', 'lxc', 110) + '/console-serie')).status, 400);
+  vm.conf.agent = '1';
+});
+
 test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont rescellés, Proxmox reste joignable', async () => {
   await s.arreter();
   const neuve = crypto.randomBytes(32).toString('base64');
