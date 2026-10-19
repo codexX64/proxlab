@@ -486,7 +486,7 @@ Relancé à chaque génération de ce fichier (bash, LC_ALL=C.UTF-8) ; un résul
 | B.1.9 | `git log --all -p -- . ':!SECURITY.md' ':!NO-VIBE.md'` filtré par le motif « infrastructure personnelle » de l’annexe B.1, compté | `336` | le nom de l’hyperviseur que ProxLab pilote, objet du logiciel ; hors de ce nom, 6 lignes, toutes le mot « cadenas », qui contient le motif ; aucun terme d’infrastructure personnelle |
 | B.1.10 | `git log --all --format='%aI' \| rg -v '\+00:00' \| wc -l` | `0` | tout l’historique en UTC |
 | B.1.11 | `git log --all --format='%cI' \| rg -v '\+00:00' \| wc -l` | `0` | idem pour le validateur |
-| B.1.12 | `git grep -nIE '/home/[a-z]\|/[U]sers/[A-Za-z]\|/tmp/[c]laude\|[c]laude-0\|[s]cratchpad' $(git rev-list --all) \| wc -l` | `0` | aucun chemin d’un poste ni d’un espace de travail d’outil dans aucun arbre de l’historique, relevés compris |
+| B.1.12 | `git grep` de tout l’historique (`$(git rev-list --all)`) avec le motif des chemins de poste et d’espaces de travail d’outils (gardé hors dépôt) | `0` | aucun chemin d’un poste ni d’un espace de travail d’outil dans aucun arbre de l’historique, relevés compris |
 | B.1.13 | `git log --all --name-only --format= \| sort -u \| rg -i '\.(png\|jpe?g\|pdf\|mp4\|gif\|webp\|ico)$'` | 0 ligne | aucun binaire image ou document dans tout l’historique : exiftool n’a rien à lire |
 | B.1.14 | `git log --all -p -- . ':!SECURITY.md' ':!NO-VIBE.md'` filtré par la liste d’anonymat (hors dépôt), compté | `0` | liste d’anonymat propre à ce dépôt, hors dépôt, sur tout l’historique : arbres, messages, identités |
 | B.1.15 | messages, auteurs et validateurs de tout l’historique filtrés par la liste d’anonymat (hors dépôt), comptés | `0` | |
