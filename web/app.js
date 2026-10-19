@@ -820,9 +820,19 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const sortieFenetre = seul
     ? h('div', { class: 'sortie-fenetre barre' })
     : h('button', { class: 'btn sm sortie-fenetre', type: 'button', title: 'Revenir à la fiche', onclick: () => fenetre(false) }, icone('croix', 14), 'Réduire');
+  // Deux écrans de la même VM se disputeraient sa taille : celui de la fiche se
+  // ferme quand la fenêtre à part s'ouvre, et se reprend d'un clic.
+  let wsCourant = null;
   const apart = () => {
     const w = window.open(`/#ecran/${encodeURIComponent(f.node)}/qemu/${f.vmid}`, `proxlab-ecran-${f.node}-${f.vmid}`, 'popup,width=1280,height=800');
-    if (!w) toast('Le navigateur a bloqué la fenêtre : autorise les fenêtres de ProxLab, puis recommence.', true);
+    if (!w) return toast('Le navigateur a bloqué la fenêtre : autorise les fenêtres de ProxLab, puis recommence.', true);
+    fenetre(false);
+    const ancien = wsCourant; wsCourant = null;
+    try { ancien?.close(); } catch { /* déjà fermé */ }
+    ecran = null;
+    etat.textContent = 'dans une fenêtre à part';
+    hote.replaceChildren(h('p', { class: 'vide' }, 'L\'écran est ouvert dans une fenêtre à part (bouton vert de la fenêtre : plein écran dans son propre bureau). ',
+      h('button', { class: 'btn sm', type: 'button', onclick: () => { try { w.close(); } catch { /* fermée */ } reprise = false; ouvrir(); } }, icone('ecran', 14), 'Reprendre ici')));
   };
   const fenetre = on => {
     if (seul && !on) return;
@@ -870,7 +880,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
       ] },
       { items: [
         { texte: panneau.hidden ? 'Afficher le presse-papiers' : 'Masquer le presse-papiers', ic: 'presse', agir: () => montrerPanneau() },
-        { texte: document.fullscreenElement ? 'Quitter le plein écran' : 'Plein écran (écran entier)', ic: 'agrandir', inactif: off, agir: () => { modePlein = 'ecran'; poserLocal('proxlab-plein', 'ecran'); pleinEcran(); } },
+        ...(seul ? [] : [{ texte: document.fullscreenElement ? 'Quitter le plein écran' : 'Plein écran (écran entier)', ic: 'agrandir', inactif: off, agir: () => { modePlein = 'ecran'; poserLocal('proxlab-plein', 'ecran'); pleinEcran(); } }]),
         ...(seul ? [] : [
           { texte: 'Plein écran dans la fenêtre', ic: modePlein === 'fenetre' ? 'verifie' : 'agrandir', inactif: off, agir: () => { modePlein = 'fenetre'; poserLocal('proxlab-plein', 'fenetre'); fenetre(true); } },
           { texte: 'Ouvrir dans une fenêtre à part', ic: modePlein === 'apart' ? 'verifie' : 'lien', agir: () => { modePlein = 'apart'; poserLocal('proxlab-plein', 'apart'); apart(); } },
@@ -901,13 +911,16 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const outils = h('div', { class: 'ecran-outils' },
     boutonVirtio,
     actions.ancre,
-    h('button', { class: 'btn sm', type: 'button', disabled: true, 'aria-label': 'Plein écran', title: 'Plein écran', onclick: plein }, icone('agrandir', 14)));
+    // Dans la fenêtre à part, le plein écran est celui de la fenêtre (bouton vert) :
+    // celui du navigateur ferait flouter Safari.
+    seul ? null : h('button', { class: 'btn sm', type: 'button', disabled: true, 'aria-label': 'Plein écran', title: 'Plein écran', onclick: plein }, icone('agrandir', 14)));
   const activer = on => { for (const b of outils.querySelectorAll(':scope > button')) b.disabled = !on; copierIci.disabled = !on || !ecran?.dernierPresse; };
 
   const ouvrir = sur(async () => {
     const { passe } = await api.post('/api/console', { ...cible, mode: 'ecran' });
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/ws/console?passe=${encodeURIComponent(passe)}`);
+    wsCourant = ws;
     ws.binaryType = 'arraybuffer';
     ecran = new Ecran(hote, ws, {
       surEtat: (q, d) => {
@@ -934,7 +947,8 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     garder({ detruire: () => { ecran?.relacher(); fenetre(false); } }, ws);
     etat.textContent = 'connexion…';
     ws.addEventListener('message', ev => {
-      if (typeof ev.data !== 'string') return ecran.recevoir(ev.data);
+      if (ws !== wsCourant) return;
+      if (typeof ev.data !== 'string') return ecran?.recevoir(ev.data);
       let m; try { m = JSON.parse(ev.data); } catch { return; }
       if (m.pret) { ecran.demarrer(); ouvertA = Date.now(); activer(true); ecran.toile.focus(); if (!DISPOSITIONS[lireLocal(cleDispo, '')] && !detection?.disposition) detecter(); }
       if (m.fin) {
@@ -944,7 +958,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
         hote.append(h('p', { class: 'vide', text: m.fin }));
       }
     });
-    ws.addEventListener('close', () => { if (etat.textContent !== 'reprise…') etat.textContent = 'fermé'; activer(false); });
+    ws.addEventListener('close', () => { activer(false); if (ws === wsCourant && etat.textContent !== 'reprise…') etat.textContent = 'fermé'; });
     bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
   });
   const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: () => { reprise = false; ouvrir(); } }, icone('ecran', 14), 'Ouvrir');
