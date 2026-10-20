@@ -159,6 +159,26 @@ Lire le clavier d'une VM par son agent QEMU exige `VM.GuestAgent.Unrestricted`
 (Proxmox VE 9) ou `VM.Monitor` (Proxmox VE 8), compris dans `PVEVMAdmin` ;
 sans ce droit, ProxLab le dit et le choix reste à la main.
 
+Supprimer une machine exige `VM.Allocate` (compris dans `PVEVMAdmin`). Les
+images ISO exigent `Datastore.AllocateTemplate` sur leurs stockages (rôle
+`PVEDatastoreAdmin` par exemple) ; les télécharger depuis une adresse exige en
+plus, sur le nœud, `Sys.Audit` et `Sys.AccessNetwork` (Proxmox VE 8.2 et
+suivants) ou `Sys.Modify`.
+
+**Images ISO.** La page « Images ISO » liste les images de chaque stockage qui
+en accepte, avec les VM qui en ont une dans leur lecteur CD. Un administrateur
+(renfort) en télécharge une depuis une adresse — c'est le nœud qui la tire, somme
+de contrôle vérifiée si elle est donnée —, en envoie une depuis son ordinateur,
+l'insère dans une VM, l'éjecte, ou la supprime (refusé tant qu'une VM la tient).
+Par le tunnel Cloudflare, un envoi de plus de 100 Mo est refusé par Cloudflare :
+passer par l'adresse locale, ou télécharger depuis une adresse.
+
+**Supprimer une machine.** Fiche d'une machine arrêtée → « Supprimer », recopier
+son nom, « Supprimer avec ma clé ». La clé d'accès (à défaut le code TOTP) est
+demandée pour cette suppression seule : une confirmation sert une fois, deux
+minutes au plus. Disques et instantanés partent avec la machine ; ses
+sauvegardes restent. Une machine en marche ou protégée dans Proxmox est refusée.
+
 Les clés d'accès n'existent que sur une page HTTPS. Sans HTTPS, `SOCLE_HTTP=1`
 ouvre un mode dégradé, affiché comme tel partout : réservé à un réseau de
 confiance, le temps de servir ProxLab en HTTPS.
