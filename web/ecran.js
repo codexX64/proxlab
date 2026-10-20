@@ -236,6 +236,7 @@ export class Ecran {
         // Voyants de l'invité : bit 0 Arrêt défil., bit 1 Verr. num., bit 2 Verr. Maj.
         const s = this.prendre(1); if (!s) return false;
         this.verrous = { caps: !!(s[0] & 4) };
+        this.surEtat('verrous', { ...this.verrous });
       }
       else throw new Error(`encodage ${r.enc} non demandé`);
       this.rect = null;
@@ -456,7 +457,7 @@ export class Ecran {
   // écart d'un appui sur Verr. Maj.
   basculerCaps() {
     this.touche({ code: 'CapsLock', key: 'CapsLock' }, true); this.touche({ code: 'CapsLock', key: 'CapsLock' }, false);
-    if (this.verrous) this.verrous.caps = !this.verrous.caps;   // la VM le confirmera
+    if (this.verrous) { this.verrous.caps = !this.verrous.caps; this.surEtat('verrous', { ...this.verrous }); }   // la VM le confirmera
   }
   synchroniserCaps(e) {
     if (!this.verrous || e.code === 'CapsLock' || typeof e.getModifierState !== 'function') return;

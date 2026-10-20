@@ -861,10 +861,24 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const cibleTaille = () => document.fullscreenElement === hote || hote.classList.contains('fenetre')
     ? [hote.clientWidth, hote.clientHeight]
     : [hote.clientWidth, Math.max(320, Math.min(innerHeight * 0.75, innerHeight - Math.max(0, hote.getBoundingClientRect().top) - 24))];
+  // La VM grandit avec la fenêtre, elle ne rapetisse jamais d'elle-même :
+  // une console texte Linux (installeur, ISO) garde la taille de son démarrage
+  // et, rapetissée, n'affiche plus que son coin haut gauche — le bas et la
+  // droite disparaissent. Plus grande que la fenêtre, l'image est réduite pour
+  // tenir. Rapetisser reste possible, à la demande (menu Actions).
   const reajuster = () => {
     clearTimeout(minuteurTaille);
-    minuteurTaille = setTimeout(() => { if (ajusterTaille && ecran?.etendu && hote.isConnected) ecran.ajuster(...cibleTaille().map(v => Math.round(v * densite()))); }, 400);
+    minuteurTaille = setTimeout(() => {
+      if (!ajusterTaille || !ecran?.etendu || !hote.isConnected) return;
+      const [l, h] = cibleTaille().map(v => Math.round(v * densite()));
+      ecran.ajuster(Math.max(l, ecran.toile.width), Math.max(h, ecran.toile.height));
+    }, 400);
   };
+  // La plus grande taille vue pour cette VM, ici : celle à laquelle revenir
+  // si son écran a été rapetissé.
+  const cleTailleMax = `proxlab-taille-max:${f.node}/${f.vmid}`;
+  const tailleMax = () => { const [l, h] = String(lireLocal(cleTailleMax, '')).split('x').map(Number); return l > 0 && h > 0 ? [l, h] : null; };
+  const noterTaille = (l, h) => { const m = tailleMax(); if (!m || l * h > m[0] * m[1]) poserLocal(cleTailleMax, `${l}x${h}`); };
   new ResizeObserver(reajuster).observe(hote);
   hote.addEventListener('fullscreenchange', reajuster);
   // Fenêtre passée d'un écran à un autre de densité différente.
@@ -1047,6 +1061,12 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
           toast('La VM prend la taille de la fenêtre, et la suit.'); reajuster();
         } },
         { texte: 'Réveiller l\'écran', ic: 'ecran', inactif: off, agir: dansVm(() => ecran.reveiller()) },
+        { texte: 'Adapter la VM à cette fenêtre (même plus petite)', inactif: off || !ajusterTaille, agir: () => {
+          ecran.ajuster(...cibleTaille().map(v => Math.round(v * densite())));
+          toast('La VM prend la taille de la fenêtre. Une console texte Linux peut alors être rognée : « Revenir à … » la rend entière.');
+        } },
+        ...(() => { const m = tailleMax(); return m && !off && (m[0] !== ecran?.toile.width || m[1] !== ecran?.toile.height) ? [{ texte: `Revenir à ${m[0]} × ${m[1]} (écran entier)`, agir: () => { ecran.ajuster(m[0], m[1], { libre: true }); toast(`La VM revient à ${m[0]} × ${m[1]}.`); } }] : []; })(),
+        ...(ecran?.verrous ? [{ texte: `Verr. Maj de la VM : ${ecran.verrous.caps ? 'allumé — l’éteindre' : 'éteint — l’allumer'}`, inactif: off, agir: dansVm(() => ecran.basculerCaps()) }] : []),
         { texte: 'Revenir à 1280 × 800', inactif: off, agir: () => {
           ajusterTaille = false; poserLocal('proxlab-ajuster', '0');
           ecran.ajuster(1280, 800, { libre: true });
@@ -1064,8 +1084,8 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
 
   // Taille fixe (affichage sans redimensionnement) : dit en permanence à côté
   // de la résolution, avec le geste qui la débloque à portée de main.
-  let fixe = false, tailleVue = '';
-  const peindreEtat = () => { etat.textContent = `ouvert · ${tailleVue}${fixe && ajusterTaille ? ` · taille fixe : affichage ${virtioPrevu ? 'VirtIO-GPU au prochain démarrage' : genreVga}` : ''}`; };
+  let fixe = false, tailleVue = '', majVm = false;
+  const peindreEtat = () => { etat.textContent = `ouvert · ${tailleVue}${majVm ? ' · VERR. MAJ' : ''}${fixe && ajusterTaille ? ` · taille fixe : affichage ${virtioPrevu ? 'VirtIO-GPU au prochain démarrage' : genreVga}` : ''}`; };
   const boutonVirtio = admin && !/^virtio/.test(genreVga) && !virtioPrevu
     ? h('button', { class: 'btn sm', type: 'button', hidden: true, title: 'L\'écran de la VM suivra la taille de la fenêtre', onclick: () => passerVirtio() }, icone('ecran', 14), 'Passer en VirtIO-GPU')
     : null;
@@ -1101,7 +1121,8 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
           fixe = true; if (boutonVirtio) boutonVirtio.hidden = false;
           return peindreEtat();
         }
-        if (q === 'taille') { tailleVue = d; return peindreEtat(); }
+        if (q === 'taille') { tailleVue = d; const [l, h] = d.split(' × ').map(Number); noterTaille(l, h); return peindreEtat(); }
+        if (q === 'verrous') { majVm = d.caps; return peindreEtat(); }
         etat.textContent = q === 'pret' ? 'ouvert' : q;
       },
       surPresse: texte => {
