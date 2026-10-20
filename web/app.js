@@ -856,8 +856,12 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   // et l'image est affichée sans agrandissement ; sinon, un pixel de la VM par
   // point CSS (moins de pixels à transmettre, image adoucie sur un écran dense).
   let nette = lireLocal('proxlab-ajuster-nette', '1') === '1';
+  // Plein écran : l'image remplit tout l'écran, quitte à être un peu étirée,
+  // plutôt que de laisser des bandes noires quand la VM n'a pas les mêmes
+  // proportions que l'écran (console texte qui ne change pas de taille).
+  let remplir = lireLocal('proxlab-remplir', '1') === '1';
   const densite = () => (nette ? Math.min(3, Math.max(1, window.devicePixelRatio || 1)) : 1);
-  const hote = h('div', { class: 'ecran-hote' });
+  const hote = h('div', { class: 'ecran-hote' + (remplir ? ' remplir' : '') });
   const cibleTaille = () => document.fullscreenElement === hote || hote.classList.contains('fenetre')
     ? [hote.clientWidth, hote.clientHeight]
     : [hote.clientWidth, Math.max(320, Math.min(innerHeight * 0.75, innerHeight - Math.max(0, hote.getBoundingClientRect().top) - 24))];
@@ -1054,6 +1058,11 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
           { texte: 'Plein écran dans la fenêtre', ic: modePlein === 'fenetre' ? 'verifie' : 'agrandir', inactif: off, agir: () => { modePlein = 'fenetre'; poserLocal('proxlab-plein', 'fenetre'); fenetre(true); } },
           { texte: 'Ouvrir dans une fenêtre à part', ic: modePlein === 'apart' ? 'verifie' : 'lien', agir: () => { modePlein = 'apart'; poserLocal('proxlab-plein', 'apart'); apart(); } },
         ]),
+        { texte: 'Plein écran sans bandes noires (image étirée)', ic: remplir ? 'verifie' : null, agir: () => {
+          remplir = !remplir; poserLocal('proxlab-remplir', remplir ? '1' : '0');
+          hote.classList.toggle('remplir', remplir); if (ecran) ecran.remplir = remplir;
+          toast(remplir ? 'En plein écran, l’image remplit tout l’écran.' : 'En plein écran, l’image garde ses proportions (bandes noires possibles).');
+        } },
         { texte: 'Ajuster la VM à la fenêtre', ic: ajusterTaille ? 'verifie' : null, agir: () => {
           ajusterTaille = !ajusterTaille; poserLocal('proxlab-ajuster', ajusterTaille ? '1' : '0'); refusSignale = false; if (tailleVue) peindreEtat();
           if (!ajusterTaille) return toast('La VM garde sa résolution.');
@@ -1105,13 +1114,19 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     try { await ouvrirMaintenant(); } finally { ouverture = false; bouton.disabled = false; }
   });
   async function ouvrirMaintenant() {
+    // Une première connexion qui n'aboutit pas (Proxmox encore en train de
+    // préparer l'écran, coupure pendant la poignée) : ProxLab refait lui-même ce
+    // que faisait « Rouvrir », deux fois au plus, jusqu'à la première image.
+    let vivante = false, chien = null;
     const { passe } = await api.post('/api/console', { ...cible, mode: 'ecran' });
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/ws/console?passe=${encodeURIComponent(passe)}`);
     wsCourant = ws;
     ws.binaryType = 'arraybuffer';
     ecran = new Ecran(hote, ws, {
+      remplir,
       surEtat: (q, d) => {
+        if (q === 'pret') { vivante = true; essaisOuverture = 0; clearTimeout(chien); }
         if (q === 'ajustable') return reajuster();
         if (q === 'ajustement-refuse') {
           // Dit une fois par VM et par affichage, pas à chaque ouverture.
@@ -1149,7 +1164,21 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
         hote.append(h('p', { class: 'vide', text: m.fin }));
       }
     });
-    ws.addEventListener('close', () => { activer(false); if (ws === wsCourant && etat.textContent !== 'reprise…') etat.textContent = 'fermé'; setTimeout(revenir, 1500); });
+    const nouvelEssai = () => {
+      clearTimeout(chien);
+      if (ws !== wsCourant || vivante || !hote.isConnected || essaisOuverture >= 2) return false;
+      essaisOuverture++; etat.textContent = 'nouvel essai…';
+      try { ws.close(); } catch { /* déjà fermé */ }
+      setTimeout(ouvrir, 800);
+      return true;
+    };
+    chien = setTimeout(nouvelEssai, 10000);
+    ws.addEventListener('close', () => {
+      activer(false);
+      if (nouvelEssai()) return;
+      if (ws === wsCourant && etat.textContent !== 'reprise…') etat.textContent = 'fermé';
+      setTimeout(revenir, 1500);
+    });
     dernier = Date.now();
     bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
   }
@@ -1158,7 +1187,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   // tombé ou sans nouvelles depuis 70 s (ProxLab bat toutes les 25 s), sinon
   // l'image entière est redemandée. Trois essais d'affilée au plus ; jamais
   // après une session fermée, ni quand l'écran est dans une fenêtre à part.
-  let dernier = 0, essaisAuto = 0, sansRetour = false, monte = false;
+  let dernier = 0, essaisAuto = 0, essaisOuverture = 0, sansRetour = false, monte = false;
   const morte = () => !!wsCourant && (wsCourant.readyState > 1 || Date.now() - dernier > 70e3);
   function revenir() {
     if (!hote.isConnected || document.visibilityState !== 'visible' || ouverture || sansRetour) return;
@@ -1175,7 +1204,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   }, 20e3);
   document.addEventListener('visibilitychange', surRetour);
   window.addEventListener('focus', surRetour);
-  const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: () => { reprise = false; ouvrir(); } }, icone('ecran', 14), 'Ouvrir');
+  const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: () => { reprise = false; essaisOuverture = 0; ouvrir(); } }, icone('ecran', 14), 'Ouvrir');
   // Ouvert dès le premier affichage de l'onglet ; ensuite il reste ouvert.
   if (auto && enMarche) setTimeout(() => { reprise = false; ouvrir(); }, 0);
   hote.append(h('p', { class: 'vide', text: enMarche ? `L'écran de la machine, avec le clavier et la souris. Clique dans l'image pour lui donner le clavier ; ${MOD}C et ${MOD}V copient et collent. Chaque ouverture est journalisée.` : 'La machine est arrêtée : démarre-la pour voir son écran.' }));

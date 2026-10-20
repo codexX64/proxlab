@@ -103,8 +103,8 @@ export const intapables = (texte, d) => [...new Set([...texte.replace(/\r\n?/g, 
 export const estMac = () => /mac|iphone|ipad/i.test(navigator.userAgentData?.platform || navigator.platform || '');
 
 export class Ecran {
-  constructor(hote, ws, { surEtat = () => {}, surPresse = () => {}, surColler = null } = {}) {
-    this.ws = ws; this.surEtat = surEtat; this.surPresse = surPresse; this.surColler = surColler;
+  constructor(hote, ws, { surEtat = () => {}, surPresse = () => {}, surColler = null, remplir = false } = {}) {
+    this.ws = ws; this.surEtat = surEtat; this.surPresse = surPresse; this.surColler = surColler; this.remplir = remplir;
     this.actif = false; this.capsPresse = 0; this.aFournir = null; this.dernierPresse = ''; this.copie = null;
     this.mac = estMac(); this.metaSeul = null;
     this.morceaux = []; this.dispo = 0;
@@ -428,8 +428,10 @@ export class Ecran {
   }
   // L'image est contenue dans la toile sans être déformée (object-fit:
   // contain) : en plein écran, des bandes l'entourent, hors de l'image.
+  // Image étirée pour remplir l'écran (remplir) : une échelle par axe, sans bande.
   position(e) {
     const r = this.toile.getBoundingClientRect(), l = this.toile.width, h = this.toile.height;
+    if (this.remplir) return [(e.clientX - r.left) / ((r.width / l) || 1), (e.clientY - r.top) / ((r.height / h) || 1)];
     const k = Math.min(r.width / l, r.height / h) || 1;
     return [(e.clientX - r.left - (r.width - l * k) / 2) / k, (e.clientY - r.top - (r.height - h * k) / 2) / k];
   }
