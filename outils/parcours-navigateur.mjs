@@ -135,7 +135,7 @@ await page.getByRole('dialog').getByRole('button', { name: 'Fermer' }).click();
 await rail('Images ISO');
 await titre('Images ISO');
 await controle('isos');
-await page.getByRole('button', { name: 'Télécharger' }).click();
+await page.getByRole('button', { name: 'Importer' }).click();
 await page.getByRole('dialog').waitFor();
 await controle('iso-telecharger');
 await page.getByRole('dialog').getByRole('button', { name: 'Annuler' }).click();

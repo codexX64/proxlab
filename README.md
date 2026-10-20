@@ -161,17 +161,21 @@ sans ce droit, ProxLab le dit et le choix reste à la main.
 
 Supprimer une machine exige `VM.Allocate` (compris dans `PVEVMAdmin`). Les
 images ISO exigent `Datastore.AllocateTemplate` sur leurs stockages (rôle
-`PVEDatastoreAdmin` par exemple) ; les télécharger depuis une adresse exige en
-plus, sur le nœud, `Sys.Audit` et `Sys.AccessNetwork` (Proxmox VE 8.2 et
-suivants) ou `Sys.Modify`.
+`PVEDatastoreAdmin` par exemple).
 
 **Images ISO.** La page « Images ISO » liste les images de chaque stockage qui
 en accepte, avec les VM qui en ont une dans leur lecteur CD. Un administrateur
-(renfort) en télécharge une depuis une adresse — c'est le nœud qui la tire, somme
-de contrôle vérifiée si elle est donnée —, en envoie une depuis son ordinateur,
-l'insère dans une VM, l'éjecte, ou la supprime (refusé tant qu'une VM la tient).
-Par le tunnel Cloudflare, un envoi de plus de 100 Mo est refusé par Cloudflare :
-passer par l'adresse locale, ou télécharger depuis une adresse.
+(renfort) en importe une depuis une adresse publique en https, en envoie une
+depuis son ordinateur, l'insère dans une VM, l'éjecte, ou la supprime (refusé
+tant qu'une VM la tient). Dans les deux cas l'image passe par ProxLab, qui la
+remet à Proxmox à mesure : taille annoncée (64 Gio au plus) et place libre
+vérifiées, signature d'une image de disque lue dans les premiers octets (ISO
+9660, UDF, disque amorçable), somme de contrôle comparée si elle est donnée —
+une image différente est retirée. Une adresse qui mène au réseau local (ou à une
+plage réservée) est refusée, redirections comprises : une image du réseau local
+s'envoie depuis l'ordinateur. Par le tunnel Cloudflare, un envoi de plus de
+100 Mo est refusé par Cloudflare : passer par l'adresse locale, ou importer
+depuis une adresse. L'importation demande que ProxLab sorte en https.
 
 **Supprimer une machine.** Fiche d'une machine arrêtée → « Supprimer », recopier
 son nom, « Supprimer avec ma clé ». La clé d'accès (à défaut le code TOTP) est
