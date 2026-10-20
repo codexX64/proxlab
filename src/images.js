@@ -126,7 +126,7 @@ export class Images {
     await this.proxmox.del(chemin('nodes', noeud, 'storage', stockage, 'content', encodeURIComponent(`${stockage}:iso/${nom}`))).catch(e => this.log.warn?.(`[images] ${nom} non retirée : ${e.message}`));
   }
 
-  // ---- importations depuis une adresse, en tâche de fond ----
+  // Importations depuis une adresse, en tâche de fond.
 
   /** Ce qu'annonce l'adresse (nom, taille), lu sans télécharger l'image. */
   async apercu(url) {
