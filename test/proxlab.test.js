@@ -915,6 +915,44 @@ test('images ISO : inventaire avec les lecteurs qui les tiennent, téléchargeme
   assert.ok(s.db.prepare("SELECT 1 FROM socle_journal WHERE action = 'iso.suppression'").get());
 });
 
+test('créer une VM : choix revérifiés contre le nœud, configuration par système, démarrée à la demande', async () => {
+  const o = await admin.get('/api/machines/options?noeud=pve-a');
+  assert.equal(o.status, 200, JSON.stringify(o.json));
+  assert.deepEqual([o.json.stockages.map(x => x.storage), o.json.ponts], [['local-lvm'], ['vmbr0']]);
+  assert.ok(o.json.isos.some(i => i.volid === 'local:iso/debian-13.1.0-amd64-netinst.iso'));
+  assert.equal((await membre.get('/api/machines/options?noeud=pve-a')).status, 403);
+  const base = { noeud: 'pve-a', nom: 'labo-debian', systeme: 'linux', coeurs: 2, memoire: 2048, disque: 20, stockage: 'local-lvm', iso: 'local:iso/debian-13.1.0-amd64-netinst.iso', pont: 'vmbr0', demarrer: true };
+  assert.equal((await membre.post('/api/machines', base)).status, 403);
+  for (const [extra, motif] of [[{ coeurs: 64 }, /n’a que 16 cœurs/], [{ memoire: 1048576 }, /Mio de mémoire/], [{ stockage: 'local' }, /ne prend pas de disque/], [{ disque: 100 }, /Pas assez de place/],
+    [{ pont: 'vmbr9' }, /Pas de pont vmbr9/], [{ iso: 'local:iso/ubuntu-24.04.3-live-server-amd64.iso' }, /pas visible de ce nœud/], [{ nom: 'nom avec espaces' }, /./], [{ iso: 'local:iso/../x.iso' }, /./]]) {
+    const r = await admin.post('/api/machines', { ...base, ...extra });
+    assert.ok([400, 409].includes(r.status), `${JSON.stringify(extra)} : ${r.status}`);
+    assert.match(r.json.error, motif);
+  }
+  const n0 = pve.etat.machines.length;
+  const r = await admin.post('/api/machines', base);
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  const vm = pve.etat.machines.find(m => m.vmid === r.json.vmid);
+  assert.equal(pve.etat.machines.length, n0 + 1);
+  assert.deepEqual([vm.name, vm.status, r.json.demarree], ['labo-debian', 'running', true]);
+  const c = vm.creation;
+  assert.deepEqual([c.ostype, c.scsi0, c.ide2, c.net0, c.serial0, c.vga, c.boot, c.cores, c.memory], ['l26', 'local-lvm:20,iothread=1,discard=on', 'local:iso/debian-13.1.0-amd64-netinst.iso,media=cdrom', 'virtio,bridge=vmbr0', 'socket', 'virtio', 'order=scsi0;ide2;net0', '2', '2048']);
+  // Windows : UEFI, TPM, disque SATA et carte e1000 ; sans image, lecteur vide ; pas démarrée.
+  const w = await admin.post('/api/machines', { ...base, nom: 'labo-windows', systeme: 'windows', memoire: 4096, iso: '', demarrer: false });
+  assert.equal(w.status, 200, JSON.stringify(w.json));
+  const cw = pve.etat.machines.find(m => m.vmid === w.json.vmid);
+  assert.deepEqual([cw.status, cw.creation.bios, cw.creation.machine, cw.creation.ostype, cw.creation.sata0, cw.creation.net0, cw.creation.ide2, cw.creation.tpmstate0, cw.creation.efidisk0],
+    ['stopped', 'ovmf', 'q35', 'win11', 'local-lvm:20', 'e1000,bridge=vmbr0', 'none,media=cdrom', 'local-lvm:1,version=v2.0', 'local-lvm:1,efitype=4m,pre-enrolled-keys=1']);
+  assert.ok(s.db.prepare("SELECT 1 FROM socle_journal WHERE action = 'machine.creation'").get());
+  const echec = await admin.post('/api/machines', { ...base, nom: 'tache-en-echec' });
+  assert.equal(echec.status, 502);
+  assert.match(echec.json.error, /Proxmox n’a pas créé la VM : .*insufficient free space/);
+  assert.doesNotMatch(echec.json.error, /\/dev\/pve/, 'sans chemin de l’hyperviseur');
+  // Créée sans renfort récent : refusée.
+  await sansRenfort(async () => assert.equal((await admin.post('/api/machines', { ...base, nom: 'sans-renfort' })).status, 403));
+
+});
+
 test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont rescellés, Proxmox reste joignable', async () => {
   await s.arreter();
   const neuve = crypto.randomBytes(32).toString('base64');

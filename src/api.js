@@ -9,8 +9,8 @@
 // machine), admin sous renfort récent (arrêt forcé, migration, configuration,
 // retour et suppression d'instantané, suppression de sauvegarde, arrêt d'une
 // tâche, shell d'un nœud, liaison à Proxmox, alertes, images ISO et lecteur
-// CD). Supprimer une machine demande en plus son nom recopié et une
-// confirmation d'identité faite pour elle seule.
+// CD, création d'une VM). Supprimer une machine demande en plus son nom
+// recopié et une confirmation d'identité faite pour elle seule.
 import { detecterClavier, activerConsoleSerie, agentActif } from './clavier.js';
 import crypto from 'node:crypto';
 import { ErreurHttp, Routeur, lireCorps, valider, repondreJson, egal } from '../socle/src/index.js';
@@ -30,6 +30,7 @@ const VOLID = /^[A-Za-z][A-Za-z0-9._-]{0,99}:[A-Za-z0-9._\/-]{1,250}$/;
 const TYPES = ['qemu', 'lxc'];
 const VOLID_ISO = /^[A-Za-z][A-Za-z0-9._-]{0,99}:iso\/[A-Za-z0-9][A-Za-z0-9._+-]{0,200}\.(iso|img)$/i;
 const LECTEUR = /^(ide|sata|scsi)\d{1,2}$/;
+const PONT = /^[A-Za-z][A-Za-z0-9._-]{0,15}$/;
 // La confirmation d'identité d'une suppression : faite dans les deux minutes,
 // et pour cette suppression seulement.
 const RENFORT_SUPPRESSION_MS = 2 * 60e3;
@@ -86,6 +87,15 @@ const S = {
   envoi: { nom: { type: 'chaine', requis: true, max: 205, motif: FICHIER_ISO } },
   apercu: { url: { type: 'chaine', requis: true, max: 2000 } },
   iso: { volid: { type: 'chaine', requis: true, max: 320, motif: VOLID_ISO } },
+  options: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD } },
+  creation: {
+    noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, nom: { type: 'chaine', requis: true, max: 63, motif: NOEUD },
+    systeme: { type: 'chaine', parmi: ['linux', 'windows', 'autre'], defaut: 'linux' },
+    coeurs: { type: 'entier', min: 1, max: 128, defaut: 2 }, memoire: { type: 'entier', min: 256, max: 1048576, defaut: 2048 },
+    disque: { type: 'entier', min: 1, max: 65536, defaut: 32 }, stockage: { type: 'chaine', requis: true, max: 100, motif: STOCKAGE },
+    iso: { type: 'chaine', max: 320, motif: /^$|^[A-Za-z][A-Za-z0-9._-]{0,99}:iso\/[A-Za-z0-9][A-Za-z0-9._+-]{0,200}\.(iso|img)$/i, defaut: '' },
+    pont: { type: 'chaine', requis: true, max: 16, motif: PONT }, demarrer: { type: 'booleen', defaut: true },
+  },
 };
 
 // Le refus d'une image ou d'une adresse, dit tel quel à l'opérateur.
@@ -94,6 +104,18 @@ function versClientImage(e) {
   throw e;
 }
 const LONGUEUR_SOMME = { md5: 32, sha1: 40, sha256: 64, sha512: 128 };
+
+// La configuration d'une VM neuve, par famille de système. Linux : VirtIO
+// partout, agent QEMU, port série (la console de ProxLab) et VirtIO-GPU
+// (l'écran s'ajuste à la fenêtre). Windows 11 : UEFI, TPM, disque SATA et
+// carte e1000, que l'installeur reconnaît sans pilote. Le reste : matériel
+// le plus courant.
+export function configurationNeuve({ vmid, nom, systeme, coeurs, memoire, disque, stockage, iso, pont }) {
+  const commun = { vmid, name: nom, cores: coeurs, sockets: 1, memory: memoire, ide2: `${iso || 'none'},media=cdrom`, onboot: 0 };
+  if (systeme === 'linux') return { ...commun, ostype: 'l26', scsihw: 'virtio-scsi-single', scsi0: `${stockage}:${disque},iothread=1,discard=on`, net0: `virtio,bridge=${pont}`, agent: '1', vga: 'virtio', serial0: 'socket', boot: 'order=scsi0;ide2;net0' };
+  if (systeme === 'windows') return { ...commun, ostype: 'win11', machine: 'q35', bios: 'ovmf', efidisk0: `${stockage}:1,efitype=4m,pre-enrolled-keys=1`, tpmstate0: `${stockage}:1,version=v2.0`, sata0: `${stockage}:${disque}`, net0: `e1000,bridge=${pont}`, agent: '1', boot: 'order=sata0;ide2;net0' };
+  return { ...commun, ostype: 'other', sata0: `${stockage}:${disque}`, net0: `e1000,bridge=${pont}`, boot: 'order=sata0;ide2;net0' };
+}
 
 const ACTIONS = {
   start: ['guest.started', 'démarrée'], shutdown: ['guest.stopped', 'arrêtée proprement'], reboot: ['guest.rebooted', 'redémarrée'],
@@ -513,6 +535,67 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     journal.ecrire({ acteur: qui.acteurCompte, action: volid ? 'lecteur.insertion' : 'lecteur.ejection', objet: m.cible, ip: ctx.ip, details: { lecteur: cle, ...(volid ? { volid } : {}) } });
     evenements.noter({ genre: 'vm.configured', niveau: 'info', titre: volid ? `${volid.split('/').pop()} insérée dans ${m.cible}` : `Lecteur CD de ${m.cible} vidé`, corps: `Lecteur ${cle}, par ${qui.acteur}.`, cible: m.cible, noeud: m.noeud, ...qui });
     return { lecteur: cle };
+  }, { role: 'admin' });
+
+  // Ce qu'il faut pour créer une VM sur un nœud : ses ressources, les
+  // stockages qui prennent un disque, ses ponts réseau, les images qu'il voit.
+  async function optionsCreation(n) {
+    const { noeuds } = await pve(etatGrappe);
+    const nd = noeuds.find(x => x.node === n && x.status === 'online');
+    if (!nd) throw new ErreurHttp(404, 'Nœud introuvable ou hors ligne.');
+    const [stockages, reseau, inv, suivant] = await pve(() => Promise.all([
+      proxmox.get(chemin('nodes', n, 'storage'), { content: 'images', enabled: 1 }),
+      proxmox.get(chemin('nodes', n, 'network')),
+      inventaireIso(),
+      proxmox.get('/cluster/nextid'),
+    ]));
+    return {
+      noeud: { node: nd.node, maxcpu: nd.maxcpu, maxmem: nd.maxmem },
+      stockages: (stockages || []).filter(x => STOCKAGE.test(x.storage || '') && x.active !== 0 && String(x.content || '').includes('images')).map(x => ({ storage: x.storage, avail: nombre(x.avail), total: nombre(x.total) })),
+      ponts: (reseau || []).filter(x => /bridge/.test(x.type || '') && PONT.test(x.iface || '')).map(x => x.iface).sort(),
+      isos: inv.isos.filter(i => i.shared || i.node === n).map(i => ({ volid: i.volid, nom: i.nom, size: i.size })),
+      vmid: nombre(suivant),
+    };
+  }
+  r.get('/api/machines/options', async ctx => {
+    session(ctx, { role: 'admin' });
+    return optionsCreation(ctx.q.noeud);
+  }, { role: 'admin', requete: S.options });
+
+  // Une tâche Proxmox suivie jusqu'à sa fin : rend son statut de sortie.
+  async function attendreTache(n, upid, ms = 90000) {
+    for (const fin = Date.now() + ms; Date.now() < fin;) {
+      const st = await pve(() => proxmox.get(chemin('nodes', n, 'tasks', upid, 'status')));
+      if (st?.status === 'stopped') return String(st.exitstatus || '');
+      await new Promise(ok => setTimeout(ok, 1000));
+    }
+    throw new ErreurHttp(504, 'Proxmox n’a pas fini à temps : la tâche continue, suis-la dans Tâches.');
+  }
+
+  // Créer une VM : chaque choix revérifié contre le nœud (ressources, stockage
+  // qui prend un disque, pont existant, image visible), numéro libre tiré
+  // par Proxmox, puis démarrée si on le demande.
+  r.post('/api/machines', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const b = await corps(ctx, S.creation);
+    const o = await optionsCreation(b.noeud);
+    if (b.coeurs > o.noeud.maxcpu) throw new ErreurHttp(400, `${b.noeud} n’a que ${o.noeud.maxcpu} cœurs.`);
+    if (b.memoire * 1048576 > o.noeud.maxmem) throw new ErreurHttp(400, `${b.noeud} n’a que ${Math.floor(o.noeud.maxmem / 1048576)} Mio de mémoire.`);
+    const st = o.stockages.find(x => x.storage === b.stockage);
+    if (!st) throw new ErreurHttp(400, `${b.stockage} ne prend pas de disque de VM sur ${b.noeud}.`);
+    if (st.avail && b.disque * 1024 ** 3 > st.avail) throw new ErreurHttp(409, `Pas assez de place sur ${b.stockage} pour ${b.disque} Gio.`);
+    if (!o.ponts.includes(b.pont)) throw new ErreurHttp(400, `Pas de pont ${b.pont} sur ${b.noeud}.`);
+    if (b.iso && !o.isos.some(i => i.volid === b.iso)) throw new ErreurHttp(400, 'Cette image n’est pas visible de ce nœud.');
+    if (!VMID.test(String(o.vmid))) throw new ErreurHttp(502, 'Proxmox n’a pas donné de numéro libre.');
+    const upid = await pve(() => proxmox.post(chemin('nodes', b.noeud, 'qemu'), configurationNeuve({ ...b, vmid: o.vmid })));
+    const sortie = await attendreTache(b.noeud, String(upid || ''));
+    if (sortie !== 'OK') throw new ErreurHttp(502, `Proxmox n’a pas créé la VM : ${sortie.replace(/\/[\w./-]+/g, '…').slice(0, 200)}`);
+    const qui = acteur(ctx);
+    journal.ecrire({ acteur: qui.acteurCompte, action: 'machine.creation', objet: `qemu/${o.vmid}`, ip: ctx.ip, details: { noeud: b.noeud, nom: b.nom, systeme: b.systeme, coeurs: b.coeurs, memoire: b.memoire, disque: b.disque, stockage: b.stockage, iso: b.iso || null } });
+    evenements.noter({ genre: 'vm.create_requested', niveau: 'info', titre: `VM ${o.vmid} « ${b.nom} » créée`, corps: `${b.coeurs} cœurs, ${b.memoire} Mio, ${b.disque} Gio sur ${b.stockage}${b.iso ? `, ${b.iso.split('/').pop()} dans le lecteur` : ''}. Par ${qui.acteur}.`, cible: `qemu/${o.vmid}`, noeud: b.noeud, ...qui });
+    let demarree = false;
+    if (b.demarrer) { await pve(() => proxmox.post(chemin('nodes', b.noeud, 'qemu', o.vmid, 'status', 'start'), {})); demarree = true; }
+    return { vmid: o.vmid, noeud: b.noeud, demarree };
   }, { role: 'admin' });
 
   // Images ISO : chaque stockage qui en accepte (un stockage partagé, une

@@ -131,6 +131,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
         if (p === '/version') return repondre(200, { version: '8.4.1', release: '8.4', repoid: 'essai' });
         if (p === '/cluster/resources') return repondre(200, [...etat.noeuds.map(n => ({ type: 'node', id: 'node/' + n.node, ...n })), ...etat.machines.map(m => ({ id: `${m.type}/${m.vmid}`, ...m })), ...etat.stockages.map(x => ({ type: 'storage', id: `storage/${x.node}/${x.storage}`, ...x }))]);
         if (p === '/cluster/tasks') return repondre(200, etat.taches.slice(0, 50));
+        if (p === '/cluster/nextid') { let n = 100; while (etat.machines.some(m => m.vmid === n)) n++; return repondre(200, String(n)); }
         if (s[0] !== 'nodes' || !etat.noeuds.some(n => n.node === s[1])) return repondre(404, null, 'no such node');
         const node = s[1];
         if (s[2] === 'network') return repondre(200, [{ iface: 'vmbr0', type: 'bridge', cidr: node === 'pve-a' ? '192.0.2.10/24' : '192.0.2.11/24', gateway: '192.0.2.1', bridge_ports: 'eno1', active: 1 }, { iface: 'eno1', type: 'eth', active: 1 }]);
@@ -172,6 +173,15 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
             etat.sauvegardes.splice(i, 1);
             return repondre(200, tache(node, 'imgdel', st));
           }
+        }
+        if (s[2] === 'qemu' && s.length === 3 && req.method === 'POST') {
+          const vmid = Number(params.vmid);
+          if (etat.machines.some(m => m.vmid === vmid)) return repondre(500, null, `VM ${vmid} already exists`);
+          // Une création qui échoue dans sa tâche (stockage plein, par exemple).
+          if (params.name === 'tache-en-echec') return repondre(200, tache(node, 'qmcreate', vmid, "unable to create VM 100 - lvcreate 'pve/vm-100-disk-0' error: /dev/pve: insufficient free space"));
+          const conf = Object.fromEntries(Object.entries(params).filter(([k]) => !['vmid', 'name', 'memory'].includes(k)));
+          etat.machines.push({ node, type: 'qemu', vmid, name: params.name, status: 'stopped', cpu: 0, maxcpu: Number(params.cores), mem: 0, maxmem: Number(params.memory) * 1048576, disk: 0, maxdisk: 0, uptime: 0, conf, creation: params });
+          return repondre(200, tache(node, 'qmcreate', vmid));
         }
         if (['qemu', 'lxc'].includes(s[2])) {
           const m = trouver(node, s[2], s[3]);
