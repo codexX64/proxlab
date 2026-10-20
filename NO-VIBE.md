@@ -202,3 +202,7 @@ Verr. Maj de l'invité aligné sur les voyants annoncés par QEMU. Les 31 essais
 ## Suivi du 2026-10-20 (2.8.0)
 
 Taille de l'écran : agrandir seulement, rapetisser à la demande, revenir à la plus grande taille vue ; voyant Verr. Maj. Les 31 essais restent verts sans retouche.
+
+## Suivi du 2026-10-20 (2.9.0)
+
+Ouverture de l'écran refaite jusqu'à la première image ; plein écran rempli. Les 31 essais restent verts sans retouche.

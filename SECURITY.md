@@ -73,6 +73,8 @@ Suivi du 2026-10-20 (2.7.0) : **majuscules dans l'écran d'une VM**. macOS ne do
 
 Suivi du 2026-10-20 (2.8.0) : **écran rogné en plein écran**. Une console texte Linux garde la taille de son démarrage ; rapetissée à la taille d'une fenêtre plus petite, elle n'affichait plus que son coin haut gauche. La VM grandit avec la fenêtre mais ne rapetisse plus d'elle-même ; l'image est réduite pour tenir (`web/app.js:869`). Rapetisser se fait à la demande, et « Revenir à … (écran entier) » rend la plus grande taille vue pour cette VM. Verr. Maj de la VM affiché dans l'état de l'écran, avec une action pour le basculer. Changements d'interface seulement : aucun contrôle ne change de statut. Essais : 31 du service ; parcours du navigateur : 9 vérifications (agrandir, ne pas rapetisser, image réduite, rapetisser à la demande, revenir, voyant Verr. Maj).
 
+Suivi du 2026-10-20 (2.9.0) : **écran qui ne se lançait qu'au second essai** : une première connexion sans image (Proxmox qui prépare l'écran, coupure pendant la poignée) est refaite par ProxLab, deux fois au plus, sans qu'il faille cliquer sur « Rouvrir » (`web/app.js:1167`) ; chaque essai tire une passe neuve et passe par les mêmes contrôles qu'une ouverture. **Plein écran sans bandes noires** : l'image remplit l'écran (option, coupable dans Actions), la souris suit l'échelle de chaque axe. Changements d'interface seulement : aucun contrôle ne change de statut. Essais : 31 du service ; parcours du navigateur : lancement malgré trois coupures, remplissage et position de la souris, option coupée.
+
 ## Control status
 | ID | Severity | Status | Evidence | Notes |
 |---|---|---|---|---|
