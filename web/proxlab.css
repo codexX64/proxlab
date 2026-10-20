@@ -191,3 +191,5 @@ canvas.ecran:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 }
 .tw td.mono,.tw td.dim{white-space:nowrap}
 .rowline>.grow1.dim{white-space:nowrap;flex:1 0 auto}
+.nom-iso{min-width:0}
+.nom-iso b{display:block;overflow-wrap:anywhere}

@@ -8,7 +8,7 @@
 // graphiques du socle (nœuds SVG).
 import {
   Api, porte, pageSecurite, pageComptes, h, icone, basculeTheme, appliquerTheme,
-  toast, confirmer, dialogue, feuille, ajouterPictos,
+  toast, confirmer, dialogue, feuille, ajouterPictos, renforcer, confirmerIdentite, raisonCle,
 } from './socle/compte.js';
 import { courbe, anneau, jauge, calendrier, capacite, tuiles } from './socle/graphes.js';
 import { Terminal } from './terminal.js';
@@ -50,6 +50,9 @@ ajouterPictos({
   actions: '<circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/>',
   reseau: '<circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v4M12 11 6 17M12 11l6 6"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
+  iso: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.3"/><path d="M12 5.8a6.2 6.2 0 0 1 5.4 3.2"/>',
+  envoi: '<path d="M12 15.5V4.5M7.5 9 12 4.5 16.5 9"/><path d="M4.5 15v3.5c0 .8.7 1.5 1.5 1.5h12c.8 0 1.5-.7 1.5-1.5V15"/>',
+  ejecter: '<path d="M5.5 14 12 6.5l6.5 7.5z"/><path d="M5.5 18h13"/>',
 });
 
 const nf = (v, d = 0) => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: d }).format(v);
@@ -87,6 +90,7 @@ const GENRES = {
   'vm.destroyed': 'Destruction', 'vm.restored': 'Restauration', 'vm.start_failed': 'Démarrage échoué', 'vm.migrated': 'Migration',
   'vm.configured': 'Configuration', 'snapshot.created': 'Instantané', 'snapshot.rolled_back': 'Retour d\'instantané',
   'snapshot.deleted': 'Instantané supprimé', 'backup.started': 'Sauvegarde', 'backup.deleted': 'Sauvegarde supprimée', 'panel.configured': 'Liaison',
+  'vm.delete_requested': 'Suppression demandée', 'iso.added': 'Image ISO ajoutée', 'iso.deleted': 'Image ISO supprimée',
 };
 const tagNiveau = n => h('span', { class: 'tag ' + (n === 'critique' ? 'held' : n === 'avertissement' ? 'warn' : 'idle') }, h('i', { class: 'd' }), n === 'critique' ? 'Critique' : n === 'avertissement' ? 'Avertissement' : 'Info');
 function tagMachine(m) {
@@ -117,6 +121,7 @@ const PAGES = {
   machines: { titre: 'Machines', ic: 'vm', rendre: pageMachines },
   noeuds: { titre: 'Nœuds', ic: 'noeud', rendre: pageNoeuds },
   stockage: { titre: 'Stockage', ic: 'disque', rendre: pageStockage },
+  isos: { titre: 'Images ISO', ic: 'iso', rendre: pageIsos },
   taches: { titre: 'Tâches', ic: 'taches', rendre: pageTaches },
   evenements: { titre: 'Événements', ic: 'cloche', rendre: pageEvenements },
   ...(admin ? { reglages: { titre: 'Réglages', ic: 'reglages', rendre: pageReglages } } : {}),
@@ -136,7 +141,7 @@ const railBarre = h('i');
 const app = h('div', { class: 'app' },
   h('nav', { class: 'rail', 'aria-label': 'Navigation' },
     h('div', { class: 'mark' }, h('div', { class: 'g' }, icone('grappe', 15)), h('b', { text: SERVICE }), h('i', { class: 'pulse' })),
-    groupe('Grappe', ['over', 'machines', 'noeuds', 'stockage']),
+    groupe('Grappe', ['over', 'machines', 'noeuds', 'stockage', 'isos']),
     groupe('Activité', ['taches', 'evenements']),
     groupe('Système', ['reglages', 'securite', 'comptes']),
     h('div', { class: 'railcard' },
@@ -466,6 +471,7 @@ async function pageFiche(noeud, type, vmid) {
         membre && !f.template && !marche ? h('button', { class: 'btn solid', type: 'button', onclick: action('start', 'Démarrer') }, icone('marche', 14), h('span', { class: 'cache-s', text: 'Démarrer' })) : null,
         membre && marche ? h('button', { class: 'btn', type: 'button', onclick: action('shutdown', 'Arrêter', { question: 'Arrêter proprement la machine ?' }) }, icone('arret', 14), h('span', { class: 'cache-s', text: 'Arrêter' })) : null,
         membre && marche ? h('button', { class: 'btn', type: 'button', onclick: action('reboot', 'Redémarrer', { question: 'Redémarrer la machine ?' }) }, icone('relance', 14), h('span', { class: 'cache-s', text: 'Redémarrer' })) : null,
+        admin && f.status === 'stopped' ? h('button', { class: 'btn danger', type: 'button', onclick: sur(() => supprimerMachine(f, base)) }, icone('corbeille', 14), h('span', { class: 'cache-s', text: 'Supprimer' })) : null,
         plus.length ? h('button', { class: 'btn', type: 'button', 'aria-label': 'Autres actions', onclick: () => feuille('Autres actions', plus) }, icone('actions', 16)) : null));
   }
   async function montrer(k) {
@@ -554,6 +560,37 @@ function instantanes(f, base, relire) {
             await api.del(`${base}/instantanes/${encodeURIComponent(s.name)}`); toast('Suppression demandée.'); setTimeout(() => relire().catch(() => {}), 1500);
           }) }, icone('corbeille', 14)))) : null))
         : h('tr', {}, h('td', { colspan: admin ? 4 : 3, class: 'vide', text: 'Aucun instantané.' }))))));
+}
+
+// Supprimer une machine arrêtée : son nom recopié, puis la confirmation
+// d'identité (la clé d'accès de l'administrateur) d'un même geste. Le serveur
+// revérifie tout et ne prend une confirmation que pour une suppression.
+async function supprimerMachine(f, base) {
+  const attendu = String((f.type === 'qemu' ? f.config?.name : f.config?.hostname) || f.name || f.vmid);
+  const { methodesRenfort: [methode = 'motdepasse'] = [] } = await api.get('/api/compte/securite');
+  const champ = h('input', { class: 'field', type: 'text', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', placeholder: attendu, 'aria-label': `Recopie ${attendu}` });
+  const facteur = methode === 'totp' ? h('input', { class: 'field mt9', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 6, placeholder: 'Code de ton application', 'aria-label': 'Code TOTP' })
+    : methode === 'motdepasse' ? h('input', { class: 'field mt9', type: 'password', autocomplete: 'current-password', placeholder: 'Mot de passe', 'aria-label': 'Mot de passe' }) : null;
+  const err = h('p', { class: 'erreur', role: 'alert' });
+  const fini = dialogue({
+    titre: `Supprimer ${attendu} ?`,
+    texte: `${genreMachine(f)} ${f.vmid} sur ${f.node} : sa configuration, ses disques et ses instantanés sont effacés, sans retour. Ses sauvegardes restent. Recopie son nom${methode === 'cle' ? ', puis confirme avec ta clé d’accès' : ' et confirme ton identité'}.`,
+    contenu: [champ, facteur, err].filter(Boolean),
+    boutons: [{ texte: 'Annuler', classe: 'flat', valeur: false }, { texte: methode === 'cle' ? 'Supprimer avec ma clé' : 'Supprimer', classe: 'danger solid', agir: async () => {
+      if (champ.value.trim() !== attendu) { err.textContent = `Recopie exactement « ${attendu} ».`; return false; }
+      try {
+        await confirmerIdentite(api, methode, { code: facteur?.value || '', motDePasse: facteur?.value || '' });
+        await api.post(base + '/suppression', { nom: champ.value.trim() });
+        return true;
+      } catch (x) { err.textContent = x instanceof DOMException ? raisonCle(x) : x.message; return false; }
+    } }],
+  });
+  const bouton = document.querySelector('.voile:last-of-type .pied .btn.danger');
+  if (bouton) { bouton.disabled = true; champ.addEventListener('input', () => { bouton.disabled = champ.value.trim() !== attendu; }); }
+  if (!await fini) return;
+  toast(`${attendu} : suppression demandée.`);
+  setTimeout(() => rafraichir(), 1500);
+  aller('machines');
 }
 
 async function sauvegardes(f, base) {
@@ -1154,6 +1191,153 @@ async function contenuStockage(s) {
   choix.addEventListener('change', charger);
   charger();
   await dialogue({ titre: `${s.storage} sur ${s.node}`, large: true, contenu: [choix, liste], boutons: [{ texte: 'Fermer', valeur: null }] });
+}
+
+// Images ISO : celles de chaque stockage qui en accepte, les VM qui en ont
+// une dans leur lecteur, et pour l'administrateur : télécharger depuis une
+// adresse, envoyer depuis l'ordinateur, insérer, éjecter, supprimer.
+const FICHIER_ISO = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,200}\.(iso|img)$/i;
+const TUNNEL_MAX = 100 * 1024 ** 2;
+async function pageIsos() {
+  const page = h('div', { class: 'page' });
+  let d = { relie: true, stockages: [], isos: [] };
+  const libelleStockage = x => `${x.storage} · ${x.shared ? 'partagé' : x.node} — ${octets(x.avail)} libres`;
+  const choixStockage = () => h('select', { class: 'field', 'aria-label': 'Stockage' }, d.stockages.map((x, i) => h('option', { value: String(i), text: libelleStockage(x) })));
+  const recharger = async () => { d = await api.get('/api/isos'); peindre(); };
+  const apres = msg => { toast(msg); setTimeout(() => recharger().catch(() => {}), 2500); };
+
+  const telecharger = sur(async () => {
+    const url = h('input', { class: 'field', type: 'url', placeholder: 'https://…/image.iso', 'aria-label': 'Adresse de l\'image', spellcheck: 'false' });
+    const nom = h('input', { class: 'field mt9', placeholder: 'nom-de-l-image.iso', 'aria-label': 'Nom du fichier', spellcheck: 'false' });
+    const st = choixStockage();
+    st.classList.add('mt9');
+    const somme = h('input', { class: 'field', placeholder: 'Somme de contrôle (facultative)', 'aria-label': 'Somme de contrôle', spellcheck: 'false' });
+    const algo = h('select', { class: 'field', 'aria-label': 'Algorithme' }, ['sha256', 'sha512', 'sha1', 'md5'].map(a => h('option', { value: a, text: a })));
+    const certif = h('input', { type: 'checkbox', checked: true });
+    const info = h('p', { class: 'hint' });
+    const err = h('p', { class: 'erreur', role: 'alert' });
+    url.addEventListener('change', async () => {
+      info.textContent = '';
+      if (!/^https?:\/\//.test(url.value.trim())) return;
+      try {
+        const x = d.stockages[Number(st.value)];
+        const m = await api.get(`/api/isos/metadonnees?noeud=${encodeURIComponent(x.node)}&url=${encodeURIComponent(url.value.trim())}`);
+        if (m.nom && !nom.value) nom.value = m.nom;
+        info.textContent = m.taille ? `${octets(m.taille)} à télécharger.` : '';
+      } catch (x) { info.textContent = x.message; }
+    });
+    const ok = await dialogue({ titre: 'Télécharger une image', texte: 'Le nœud la télécharge lui-même, en tâche Proxmox : rien ne passe par ton ordinateur.', large: true,
+      contenu: [url, nom, st, h('div', { class: 'row2 mt9' }, somme, algo), h('label', { class: 'chk mt10' }, certif, 'Vérifier le certificat du site'), info, err],
+      boutons: [{ texte: 'Annuler', classe: 'flat', valeur: false }, { texte: 'Télécharger', classe: 'solid', agir: async () => {
+        const x = d.stockages[Number(st.value)];
+        try {
+          await api.post(`/api/isos/${encodeURIComponent(x.node)}/${encodeURIComponent(x.storage)}/telechargement`, { url: url.value.trim(), nom: nom.value.trim(), somme: somme.value.trim(), algorithme: algo.value, verifierCertificat: certif.checked });
+          return true;
+        } catch (e) { err.textContent = e.message; return false; }
+      } }] });
+    if (ok) apres('Téléchargement lancé : il avance dans les tâches.');
+  });
+
+  const envoyer = sur(async () => {
+    const fichier = h('input', { class: 'field', type: 'file', accept: '.iso,.img', 'aria-label': 'Image à envoyer' });
+    const st = choixStockage();
+    st.classList.add('mt9');
+    const note = h('p', { class: 'hint' });
+    const err = h('p', { class: 'erreur', role: 'alert' });
+    const rail = h('i');
+    const pourcent = h('b', { text: '' });
+    const progression = h('div', { class: 'jaugette mt9', hidden: true }, h('div', { class: 'rail2' }, rail), pourcent);
+    fichier.addEventListener('change', () => {
+      const f = fichier.files[0];
+      note.textContent = !f ? '' : f.size > TUNNEL_MAX
+        ? `${octets(f.size)}. Par le tunnel Cloudflare, un envoi de plus de 100 Mo est refusé : ouvre ProxLab par son adresse locale, ou télécharge l'image depuis une adresse.`
+        : `${octets(f.size)}.`;
+    });
+    let xhr = null;
+    const ok = await dialogue({ titre: 'Envoyer une image', texte: 'Depuis cet ordinateur vers un stockage de la grappe.', large: true,
+      contenu: [fichier, st, note, progression, err],
+      boutons: [{ texte: 'Annuler', classe: 'flat', agir: () => { xhr?.abort(); }, valeur: false }, { texte: 'Envoyer', classe: 'solid', agir: async () => {
+        const f = fichier.files[0];
+        if (!f) { err.textContent = 'Choisis un fichier.'; return false; }
+        if (!FICHIER_ISO.test(f.name)) { err.textContent = 'Nom de fichier en .iso ou .img, lettres, chiffres, points et tirets : renomme-le avant de l\'envoyer.'; return false; }
+        const x = d.stockages[Number(st.value)];
+        try {
+          // Le renfort d'abord : un refus après des Gio envoyés ne servirait à rien.
+          const sec = await api.get('/api/compte/securite');
+          if (!(sec.renfortJusqua > Date.now() + 60e3) && !await renforcer(api, sec.methodesRenfort)) return false;
+          progression.hidden = false; err.textContent = '';
+          await new Promise((resolve, reject) => {
+            xhr = new XMLHttpRequest();
+            xhr.open('PUT', `/api/isos/${encodeURIComponent(x.node)}/${encodeURIComponent(x.storage)}/envoi?nom=${encodeURIComponent(f.name)}`);
+            xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+            if (api.csrf) xhr.setRequestHeader('X-CSRF', api.csrf);
+            xhr.upload.onprogress = e => { if (e.lengthComputable) { const v = pct(e.loaded, e.total); rail.style.width = `${v}%`; pourcent.textContent = `${v} %`; } };
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) return resolve();
+              let msg = '';
+              try { msg = JSON.parse(xhr.responseText).error; } catch { /* page d'un relais, pas de JSON */ }
+              reject(new Error(msg || (xhr.status === 413 ? 'Refusé par un relais (taille) : par le tunnel Cloudflare, 100 Mo au plus.' : `Erreur ${xhr.status}`)));
+            };
+            xhr.onerror = () => reject(new Error('Envoi interrompu (réseau, ou relais qui refuse la taille).'));
+            xhr.onabort = () => reject(new Error('Envoi annulé.'));
+            xhr.send(f);
+          });
+          return true;
+        } catch (e) { err.textContent = e.message; return false; } finally { xhr = null; }
+      } }] });
+    xhr?.abort();   // fermé par Échap pendant l'envoi
+    if (ok) apres('Image envoyée : Proxmox la range dans le stockage.');
+  });
+
+  const inserer = i => sur(async () => {
+    const vms = E.etat.machines.filter(m => m.type === 'qemu' && !m.template && (i.shared || m.node === i.node));
+    if (!vms.length) { toast('Aucune VM ne peut lire ce stockage.', true); return; }
+    const vm = h('select', { class: 'field', 'aria-label': 'Machine' }, vms.map((m, k) => h('option', { value: String(k), text: `${m.vmid} · ${m.name || 'VM'} (${m.node})` })));
+    const err = h('p', { class: 'erreur', role: 'alert' });
+    const ok = await dialogue({ titre: `Insérer ${i.nom}`, texte: 'Dans le lecteur CD de la machine (le premier, ou ide2 s\'il est libre). Une VM en marche voit le disque tout de suite.', contenu: [vm, err],
+      boutons: [{ texte: 'Annuler', classe: 'flat', valeur: false }, { texte: 'Insérer', classe: 'solid', agir: async () => {
+        const m = vms[Number(vm.value)];
+        try { await api.post(`/api/machines/${encodeURIComponent(m.node)}/qemu/${m.vmid}/lecteur`, { volid: i.volid }); return true; } catch (e) { err.textContent = e.message; return false; }
+      } }] });
+    if (ok) apres(`${i.nom} insérée.`);
+  });
+  const ejecter = u => sur(async () => {
+    if (!await confirmer(`Éjecter le disque de ${u.vmid} ?`, `${u.name || 'VM'} sur ${u.node}, lecteur ${u.lecteur}.`, { oui: 'Éjecter' })) return;
+    await api.post(`/api/machines/${encodeURIComponent(u.node)}/qemu/${u.vmid}/lecteur`, { volid: '' });
+    apres('Lecteur vidé.');
+  });
+  const supprimer = i => sur(async () => {
+    if (!await confirmer(`Supprimer ${i.nom} ?`, `Du stockage ${i.storage}${i.shared ? '' : ` de ${i.node}`}, ${octets(i.size)}.`, { danger: true, oui: 'Supprimer' })) return;
+    await api.del(`/api/isos/${encodeURIComponent(i.node)}/${encodeURIComponent(i.storage)}?volid=${encodeURIComponent(i.volid)}`);
+    apres(`${i.nom} : suppression demandée.`);
+  });
+
+  const peindre = () => {
+    const tete = h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Images ISO' }), h('p', { class: 'lede', text: 'Les images d\'installation de chaque stockage, et les VM qui en ont une dans leur lecteur.' })),
+      admin && d.relie && d.stockages.length ? h('div', { class: 'actions' },
+        h('button', { class: 'btn', type: 'button', onclick: envoyer }, icone('envoi', 14), h('span', { class: 'cache-s', text: 'Envoyer' })),
+        h('button', { class: 'btn solid', type: 'button', onclick: telecharger }, icone('telecharge', 14), h('span', { class: 'cache-s', text: 'Télécharger' }))) : null);
+    if (!d.relie) { page.replaceChildren(tete, nonRelie()); return; }
+    const colonnes = admin ? 5 : 4;
+    page.replaceChildren(tete, h('div', { class: 'card' },
+      h('header', {}, h('h2', { text: 'Images' }), h('span', { class: 'note', text: `${d.isos.length} · ${octets(d.isos.reduce((n, i) => n + i.size, 0))}` })),
+      h('div', { class: 'tw' }, h('table', {},
+        h('thead', {}, h('tr', {}, h('th', { text: 'Image' }), h('th', { class: 'cache-m', text: 'Stockage' }), h('th', { class: 'cache-s', text: 'Taille' }), h('th', { class: 'cache-s', text: 'Dans le lecteur de' }), admin ? h('th', { class: 'fin' }) : null)),
+        h('tbody', {}, d.isos.length ? d.isos.map(i => h('tr', {},
+          h('td', { class: 'principal' }, h('div', { class: 'who-cell' }, h('span', { class: 'itile' }, icone('iso')), h('div', { class: 'nom-iso' }, h('b', { text: i.nom }),
+            h('small', { class: 'mono', text: [i.ctime ? dateHeure(i.ctime) : '', i.utilisePar.length ? `dans ${i.utilisePar.map(u => u.vmid).join(', ')}` : ''].filter(Boolean).join(' · ') })))),
+          h('td', { class: 'cache-m dim', text: `${i.storage} · ${i.shared ? 'partagé' : i.node}` }),
+          h('td', { class: 'cache-s mono', text: octets(i.size) }),
+          h('td', { class: 'cache-s' }, i.utilisePar.length ? i.utilisePar.map(u => h('span', { class: 'tag idle' }, `${u.vmid} ${u.name || ''}`.trim(),
+            admin ? h('button', { class: 'ghost', type: 'button', 'aria-label': `Éjecter de ${u.vmid}`, title: 'Éjecter', onclick: ejecter(u) }, icone('ejecter', 12)) : null)) : h('span', { class: 'dim', text: '—' })),
+          admin ? h('td', { class: 'fin' }, h('div', { class: 'actions' },
+            h('button', { class: 'btn sm', type: 'button', onclick: inserer(i) }, 'Insérer'),
+            h('button', { class: 'btn sm flat danger', type: 'button', 'aria-label': `Supprimer ${i.nom}`, title: i.utilisePar.length ? 'Éjecte-la d\'abord' : 'Supprimer', disabled: i.utilisePar.length > 0, onclick: supprimer(i) }, icone('corbeille', 14)))) : null))
+          : h('tr', {}, h('td', { colspan: colonnes, class: 'vide', text: d.stockages.length ? 'Aucune image : télécharge-en une, ou envoie-la depuis ton ordinateur.' : 'Aucun stockage n\'accepte d\'images ISO.' })))))));
+  };
+  enregistrer(() => recharger().catch(() => {}));
+  await recharger();
+  return page;
 }
 
 async function pageTaches() {
