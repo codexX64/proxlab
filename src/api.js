@@ -564,7 +564,8 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     const b = await corps(ctx, S.telechargement);
     if (b.somme && b.somme.length !== LONGUEUR_SOMME[b.algorithme]) throw new ErreurHttp(400, `Une somme ${b.algorithme} fait ${LONGUEUR_SOMME[b.algorithme]} caractères hexadécimaux.`);
     try { lireUrl(b.url); } catch (e) { versClientImage(e); }
-    const id = images.importer({ url: b.url, nom: b.nom, noeud: n, stockage, somme: b.somme ? { algorithme: b.algorithme, valeur: b.somme } : null, acteur: acteur(ctx) });
+    let id;
+    try { id = images.importer({ url: b.url, nom: b.nom, noeud: n, stockage, somme: b.somme ? { algorithme: b.algorithme, valeur: b.somme } : null, acteur: acteur(ctx) }); } catch (e) { versClientImage(e); }
     return { importation: id };
   }, { role: 'admin' });
   r.get('/api/isos/importations', ctx => { session(ctx, { role: 'admin' }); return images.liste(); }, { role: 'admin' });

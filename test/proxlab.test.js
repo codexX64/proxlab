@@ -884,6 +884,10 @@ test('images ISO : inventaire avec les lecteurs qui les tiennent, téléchargeme
   assert.equal(e.status, 200, JSON.stringify(e.json));
   const recue = pve.etat.isos.find(i => i.volid === 'local:iso/outils-v2.iso');
   assert.ok(recue.octets.equals(fichier), 'le fichier arrive entier');
+  assert.equal((await envoi('outils-v2.iso')).status, 409, 'une image du même nom n’est jamais écrasée');
+  s.api.images.relais = 3;
+  assert.equal((await envoi('autre.iso')).status, 429, 'trois images en route au plus');
+  s.api.images.relais = 0;
   // Un flux plus long ou plus court que la taille annoncée n'arrive jamais entier chez Proxmox.
   const n0 = pve.etat.isos.length;
   const flux = octets => Readable.from([octets]);

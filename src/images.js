@@ -11,6 +11,7 @@ import { telecharger, DestinationRefusee } from './sortie.js';
 export const ISO_MAX = 64 * 1024 ** 3;
 export const FICHIER_ISO = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,200}\.(iso|img)$/i;
 const ENTETE = 34816;   // le descripteur de volume ISO 9660 / UDF est au secteur 16 (32 768 octets)
+const RELAIS_MAX = 3;   // envois et importations en même temps
 
 export class ImageRefusee extends Error {
   constructor(message, status = 400) { super(message); this.name = 'ImageRefusee'; this.status = status; }
@@ -60,6 +61,7 @@ export class Images {
   constructor({ proxmox, journal, evenements, log = console, maintenant = () => Date.now() }) {
     Object.assign(this, { proxmox, journal, evenements, log, maintenant });
     this.travaux = new Map();
+    this.relais = 0;
   }
 
   /** Les octets libres d'un stockage vus du nœud, ou null si Proxmox ne le dit pas. */
@@ -70,16 +72,30 @@ export class Images {
     return Number.isFinite(+s.avail) ? +s.avail : null;
   }
 
+  // Une image du même nom n'est jamais écrasée : le nom, contraint par
+  // FICHIER_ISO (ni séparateur, ni point en tête), ne peut ni sortir du
+  // stockage ni prendre la place d'une autre.
+  async exigerNomLibre(noeud, stockage, nom) {
+    const contenu = await this.proxmox.get(chemin('nodes', noeud, 'storage', stockage, 'content'), { content: 'iso' });
+    if ((contenu || []).some(c => c.volid === `${stockage}:iso/${nom}`)) throw new ImageRefusee(`${nom} existe déjà sur ${stockage} : choisis un autre nom, ou supprime l’ancienne.`, 409);
+  }
+
   /**
    * Relaie une image vers Proxmox. `flux` : le corps (navigateur ou adresse),
    * `taille` : sa longueur annoncée. `progres(octets)` suit l'envoi, `somme`
    * { algorithme, valeur } est comparée à la fin : une image différente est
    * retirée du stockage.
    */
-  async relayer({ noeud, stockage, nom, flux, taille, somme = null, progres = () => {} }) {
+  async relayer(options) {
+    if (this.relais >= RELAIS_MAX) throw new ImageRefusee(`Déjà ${RELAIS_MAX} images en route : attends la fin de l’une d’elles.`, 429);
+    this.relais++;
+    try { return await this.relayerMaintenant(options); } finally { this.relais--; }
+  }
+  async relayerMaintenant({ noeud, stockage, nom, flux, taille, somme = null, progres = () => {} }) {
     if (!FICHIER_ISO.test(nom)) throw new ImageRefusee('Nom d’image en .iso ou .img : lettres, chiffres, points, tirets.');
     if (!Number.isSafeInteger(taille) || taille <= 0) throw new ImageRefusee('Taille de l’image inconnue : elle est exigée.', 411);
     if (taille > ISO_MAX) throw new ImageRefusee('Image de plus de 64 Gio : refusée.', 413);
+    await this.exigerNomLibre(noeud, stockage, nom);
     const libre = await this.placeLibre(noeud, stockage);
     if (libre !== null && taille > libre) throw new ImageRefusee(`Pas assez de place sur ${stockage} : ${Math.ceil(taille / 1048576)} Mio demandés.`, 409);
     const { tete, suite } = await lireEntete(flux);
@@ -121,6 +137,7 @@ export class Images {
   }
 
   importer({ url, nom, noeud, stockage, somme, acteur }) {
+    if ([...this.travaux.values()].filter(x => x.etat === 'en cours').length >= RELAIS_MAX) throw new ImageRefusee(`Déjà ${RELAIS_MAX} importations en cours : attends la fin de l’une d’elles.`, 429);
     const id = crypto.randomBytes(9).toString('base64url');
     const controleur = new AbortController();
     const t = { id, nom, noeud, stockage, hote: new URL(url).host, etat: 'en cours', octets: 0, taille: 0, debut: this.maintenant(), fin: null, erreur: '', acteur, controleur };
