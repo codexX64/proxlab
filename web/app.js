@@ -1194,16 +1194,25 @@ async function contenuStockage(s) {
 }
 
 // Images ISO : celles de chaque stockage qui en accepte, les VM qui en ont
-// une dans leur lecteur, et pour l'administrateur : télécharger depuis une
-// adresse, envoyer depuis l'ordinateur, insérer, éjecter, supprimer.
+// une dans leur lecteur, et pour l'administrateur : importer depuis une
+// adresse (suivie ici jusqu'au bout), envoyer depuis l'ordinateur, insérer,
+// éjecter, supprimer.
 const FICHIER_ISO = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,200}\.(iso|img)$/i;
 const TUNNEL_MAX = 100 * 1024 ** 2;
 async function pageIsos() {
   const page = h('div', { class: 'page' });
   let d = { relie: true, stockages: [], isos: [] };
+  let importations = [];
   const libelleStockage = x => `${x.storage} · ${x.shared ? 'partagé' : x.node} — ${octets(x.avail)} libres`;
   const choixStockage = () => h('select', { class: 'field', 'aria-label': 'Stockage' }, d.stockages.map((x, i) => h('option', { value: String(i), text: libelleStockage(x) })));
-  const recharger = async () => { d = await api.get('/api/isos'); peindre(); };
+  let suivi = null;
+  const recharger = async () => {
+    [d, importations] = await Promise.all([api.get('/api/isos'), admin ? api.get('/api/isos/importations') : []]);
+    peindre();
+    // Une importation en cours : suivie toutes les deux secondes, jusqu'à sa fin.
+    clearTimeout(suivi);
+    if (importations.some(t => t.etat === 'en cours')) suivi = setTimeout(() => { if (courante.cle === 'isos') recharger().catch(() => {}); }, 2000);
+  };
   const apres = msg => { toast(msg); setTimeout(() => recharger().catch(() => {}), 2500); };
 
   const telecharger = sur(async () => {
@@ -1211,31 +1220,29 @@ async function pageIsos() {
     const nom = h('input', { class: 'field mt9', placeholder: 'nom-de-l-image.iso', 'aria-label': 'Nom du fichier', spellcheck: 'false' });
     const st = choixStockage();
     st.classList.add('mt9');
-    const somme = h('input', { class: 'field', placeholder: 'Somme de contrôle (facultative)', 'aria-label': 'Somme de contrôle', spellcheck: 'false' });
+    const somme = h('input', { class: 'field', placeholder: 'Somme de contrôle (recommandée)', 'aria-label': 'Somme de contrôle', spellcheck: 'false' });
     const algo = h('select', { class: 'field', 'aria-label': 'Algorithme' }, ['sha256', 'sha512', 'sha1', 'md5'].map(a => h('option', { value: a, text: a })));
-    const certif = h('input', { type: 'checkbox', checked: true });
     const info = h('p', { class: 'hint' });
     const err = h('p', { class: 'erreur', role: 'alert' });
     url.addEventListener('change', async () => {
       info.textContent = '';
-      if (!/^https?:\/\//.test(url.value.trim())) return;
+      if (!/^https:\/\//.test(url.value.trim())) return;
       try {
-        const x = d.stockages[Number(st.value)];
-        const m = await api.get(`/api/isos/metadonnees?noeud=${encodeURIComponent(x.node)}&url=${encodeURIComponent(url.value.trim())}`);
+        const m = await api.get(`/api/isos/apercu?url=${encodeURIComponent(url.value.trim())}`);
         if (m.nom && !nom.value) nom.value = m.nom;
-        info.textContent = m.taille ? `${octets(m.taille)} à télécharger.` : '';
+        info.textContent = m.taille ? `${octets(m.taille)} à importer.` : 'Taille non annoncée par le serveur : l’importation sera refusée.';
       } catch (x) { info.textContent = x.message; }
     });
-    const ok = await dialogue({ titre: 'Télécharger une image', texte: 'Le nœud la télécharge lui-même, en tâche Proxmox : rien ne passe par ton ordinateur.', large: true,
-      contenu: [url, nom, st, h('div', { class: 'row2 mt9' }, somme, algo), h('label', { class: 'chk mt10' }, certif, 'Vérifier le certificat du site'), info, err],
-      boutons: [{ texte: 'Annuler', classe: 'flat', valeur: false }, { texte: 'Télécharger', classe: 'solid', agir: async () => {
+    const ok = await dialogue({ titre: 'Importer une image', texte: 'Depuis une adresse publique en https. ProxLab la télécharge, vérifie que c’est une image de disque (et sa somme de contrôle si tu la donnes), puis la remet à Proxmox. Une image du réseau local s’envoie depuis l’ordinateur.', large: true,
+      contenu: [url, nom, st, h('div', { class: 'row2 mt9' }, somme, algo), info, err],
+      boutons: [{ texte: 'Annuler', classe: 'flat', valeur: false }, { texte: 'Importer', classe: 'solid', agir: async () => {
         const x = d.stockages[Number(st.value)];
         try {
-          await api.post(`/api/isos/${encodeURIComponent(x.node)}/${encodeURIComponent(x.storage)}/telechargement`, { url: url.value.trim(), nom: nom.value.trim(), somme: somme.value.trim(), algorithme: algo.value, verifierCertificat: certif.checked });
+          await api.post(`/api/isos/${encodeURIComponent(x.node)}/${encodeURIComponent(x.storage)}/telechargement`, { url: url.value.trim(), nom: nom.value.trim(), somme: somme.value.trim(), algorithme: algo.value });
           return true;
         } catch (e) { err.textContent = e.message; return false; }
       } }] });
-    if (ok) apres('Téléchargement lancé : il avance dans les tâches.');
+    if (ok) { toast('Importation lancée : elle avance en haut de la page.'); recharger().catch(() => {}); }
   });
 
   const envoyer = sur(async () => {
@@ -1316,10 +1323,17 @@ async function pageIsos() {
     const tete = h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Images ISO' }), h('p', { class: 'lede', text: 'Les images d\'installation de chaque stockage, et les VM qui en ont une dans leur lecteur.' })),
       admin && d.relie && d.stockages.length ? h('div', { class: 'actions' },
         h('button', { class: 'btn', type: 'button', onclick: envoyer }, icone('envoi', 14), h('span', { class: 'cache-s', text: 'Envoyer' })),
-        h('button', { class: 'btn solid', type: 'button', onclick: telecharger }, icone('telecharge', 14), h('span', { class: 'cache-s', text: 'Télécharger' }))) : null);
+        h('button', { class: 'btn solid', type: 'button', onclick: telecharger }, icone('telecharge', 14), h('span', { class: 'cache-s', text: 'Importer' }))) : null);
     if (!d.relie) { page.replaceChildren(tete, nonRelie()); return; }
     const colonnes = admin ? 5 : 4;
-    page.replaceChildren(tete, h('div', { class: 'card' },
+    const etatImport = t => t.etat === 'en cours' ? barreImport(t) : h('span', { class: 'tag ' + (t.etat === 'terminée' ? '' : t.etat === 'annulée' ? 'idle' : 'held') }, h('i', { class: 'd' }), t.etat);
+    const carteImports = importations.length ? h('div', { class: 'card mb16' }, h('header', {}, h('h2', { text: 'Importations' }), h('span', { class: 'note', text: String(importations.length) })),
+      h('div', { class: 'tw' }, h('table', {}, h('tbody', {}, importations.slice().reverse().map(t => h('tr', {},
+        h('td', { class: 'principal' }, h('div', { class: 'nom-iso' }, h('b', { text: t.nom }), h('small', { class: 'mono', text: `${t.hote} → ${t.stockage} · ${t.par}` }), t.erreur ? h('small', { class: 'erreur bloc', text: t.erreur }) : null)),
+        h('td', {}, etatImport(t)),
+        h('td', { class: 'fin' }, t.etat === 'en cours' ? h('button', { class: 'btn sm flat', type: 'button', onclick: sur(async () => { await api.del(`/api/isos/importations/${t.id}`); recharger().catch(() => {}); }) }, 'Annuler') : null)))))))
+      : null;
+    page.replaceChildren(tete, ...[carteImports].filter(Boolean), h('div', { class: 'card' },
       h('header', {}, h('h2', { text: 'Images' }), h('span', { class: 'note', text: `${d.isos.length} · ${octets(d.isos.reduce((n, i) => n + i.size, 0))}` })),
       h('div', { class: 'tw' }, h('table', {},
         h('thead', {}, h('tr', {}, h('th', { text: 'Image' }), h('th', { class: 'cache-m', text: 'Stockage' }), h('th', { class: 'cache-s', text: 'Taille' }), h('th', { class: 'cache-s', text: 'Dans le lecteur de' }), admin ? h('th', { class: 'fin' }) : null)),
@@ -1338,6 +1352,13 @@ async function pageIsos() {
   enregistrer(() => recharger().catch(() => {}));
   await recharger();
   return page;
+}
+
+function barreImport(t) {
+  const v = t.taille ? pct(t.octets, t.taille) : 0;
+  const i = h('i');
+  i.style.width = `${v}%`;
+  return h('div', { class: 'jaugette' }, h('div', { class: 'rail2' }, i), h('b', { text: t.taille ? `${v} %` : octets(t.octets) }));
 }
 
 async function pageTaches() {
