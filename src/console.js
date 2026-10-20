@@ -24,7 +24,7 @@ export async function ouvrirTermproxy(proxmox, { noeud, type, vmid }) {
 }
 
 // navigateur : Connexion serveur ; ouvrir() rend la Connexion vers Proxmox.
-export function relayer(navigateur, ouvrir, { vivante = () => true, surFin = () => {} } = {}) {
+export function relayer(navigateur, ouvrir, { vivante = () => true, surFin = () => {}, battementMs = 25e3 } = {}) {
   let amont = null, fini = false;
   const finir = message => {
     if (fini) return;
@@ -36,7 +36,9 @@ export function relayer(navigateur, ouvrir, { vivante = () => true, surFin = () 
     surFin();
   };
   const garde = setInterval(() => { if (!vivante()) finir('— session fermée —'); }, 60e3);
-  const battement = setInterval(() => { try { amont?.envoyerTexte('2'); } catch { /* fermé */ } }, 30e3);
+  // « 2 » garde termproxy en vie ; le ping, la connexion du navigateur (un
+  // tunnel coupe une connexion muette).
+  const battement = setInterval(() => { try { amont?.envoyerTexte('2'); navigateur.ping(); } catch { /* fermé */ } }, battementMs);
   garde.unref?.(); battement.unref?.();
 
   navigateur.on('message', (donnees, texte) => {

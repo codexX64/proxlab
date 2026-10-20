@@ -17,7 +17,8 @@ import { connecter as connecterTls, empreinte } from '../src/tls.js';
 import { Connexion } from '../src/websocket.js';
 import { corpsTicket, urgence } from '../src/alerte.js';
 import { desChiffrer, reponseVnc } from '../src/des.js';
-import { longueurMessageClient } from '../src/ecran.js';
+import { longueurMessageClient, relayerEcran } from '../src/ecran.js';
+import { relayer } from '../src/console.js';
 import { dispositionDe, lireSortie, detecterClavier } from '../src/clavier.js';
 
 const JETON_HUB = 'jeton-du-hub-pour-les-essais-de-proxlab-0123';
@@ -1051,6 +1052,25 @@ test('dupliquer une machine : copie complète par Proxmox, de son état actuel o
   assert.doesNotMatch(e.json.error, /\/dev\/pve/);
   assert.ok(s.db.prepare("SELECT 1 FROM socle_journal WHERE action = 'machine.duplication' AND objet = 'qemu/101'").get());
   for (const v of [r.json.vmid, i.json.vmid, rc.json.vmid]) pve.etat.machines.splice(pve.etat.machines.findIndex(x => x.vmid === v), 1);
+});
+
+test('battement : un écran ou une console immobile garde sa connexion, de bout en bout', async () => {
+  const faux = () => Object.assign(new EventEmitter(), { textes: [], pings: 0, envoyerTexte(t) { this.textes.push(t); }, envoyerBinaire() {}, ping() { this.pings++; }, close() { this.ferme = true; } });
+  const nav = faux(), amont = faux();
+  relayerEcran(nav, async () => ({ amont, deja: Buffer.alloc(0) }), { battementMs: 30 });
+  await new Promise(r => setTimeout(r, 110));
+  assert.ok(nav.textes.filter(t => t === '{"b":1}').length >= 2, 'le navigateur reçoit le battement');
+  assert.ok(nav.pings >= 2 && amont.pings >= 2, 'ping des deux côtés');
+  nav.emit('fermeture');
+  const n = nav.textes.length;
+  await new Promise(r => setTimeout(r, 80));
+  assert.equal(nav.textes.length, n, 'plus rien une fois fermé');
+  const navC = faux(), amontC = faux();
+  relayer(navC, async () => amontC, { battementMs: 30 });
+  await new Promise(r => setTimeout(r, 110));
+  assert.ok(navC.pings >= 2 && amontC.textes.filter(t => t === '2').length >= 2, 'console : ping au navigateur, « 2 » à termproxy');
+  assert.ok(!navC.textes.some(t => t.includes('"b"')), 'rien d\'autre dans le terminal');
+  navC.emit('fermeture');
 });
 
 test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont rescellés, Proxmox reste joignable', async () => {

@@ -338,7 +338,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
     // demande, fourniture compressée en zlib ; l'ancien ClientCutText aussi.
     const ext = { CAPS: 1 << 24, REQUEST: 1 << 25, NOTIFY: 1 << 27, PROVIDE: 1 << 28, TEXTE: 1 };
     const couper = (flags, donnees = Buffer.alloc(0)) => { const t = Buffer.alloc(12); t[0] = 3; t.writeInt32BE(-(4 + donnees.length), 4); t.writeUInt32BE(flags >>> 0, 8); ws.envoyerBinaire(Buffer.concat([t, donnees])); };
-    const e = { cible: vt.cle, authentifie: false, messages: [], presse: null, invite: '', ext: false,
+    const e = { cible: vt.cle, authentifie: false, messages: [], presse: null, invite: '', ext: false, couper: () => ws.close(),
       copierInvite(texte) { e.invite = texte; if (e.ext) couper(ext.NOTIFY | ext.TEXTE); } };
     ecrans.push(e);
     let tampon = Buffer.alloc(0), etape = 'version', defi = crypto.randomBytes(16);

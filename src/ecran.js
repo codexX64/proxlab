@@ -115,19 +115,28 @@ export function longueurMessageClient(b, debut) {
   }
 }
 
-export function relayerEcran(navigateur, ouvrir, { vivante = () => true, surFin = () => {} } = {}) {
+// Un écran qui ne change pas ne fait passer aucun octet : un tunnel ou un
+// mandataire coupe alors la connexion au bout d'une minute ou deux, et l'image
+// fige. Un battement toutes les 25 s la garde ouverte de bout en bout, et dit
+// au navigateur que ProxLab est toujours là.
+export const BATTEMENT_MS = 25e3;
+
+export function relayerEcran(navigateur, ouvrir, { vivante = () => true, surFin = () => {}, battementMs = BATTEMENT_MS } = {}) {
   let amont = null, fini = false, tampon = Buffer.alloc(0), debut = true;
   const finir = message => {
     if (fini) return;
     fini = true;
-    clearInterval(garde);
+    clearInterval(garde); clearInterval(battement);
     if (message) { try { navigateur.envoyerTexte(JSON.stringify({ fin: message })); } catch { /* fermé */ } }
     try { navigateur.close(); } catch { /* fermé */ }
     try { amont?.close(); } catch { /* fermé */ }
     surFin();
   };
   const garde = setInterval(() => { if (!vivante()) finir('session fermée'); }, 60e3);
-  garde.unref?.();
+  const battement = setInterval(() => {
+    try { navigateur.envoyerTexte('{"b":1}'); navigateur.ping(); amont?.ping(); } catch { /* fermé : la fermeture le dira */ }
+  }, battementMs);
+  garde.unref?.(); battement.unref?.();
   const transmettre = () => {
     for (;;) {
       // Une touche ou un mouvement de souris envoyé avant ClientInit (un ancien
