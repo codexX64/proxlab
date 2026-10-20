@@ -835,6 +835,13 @@ test('images ISO : inventaire avec les lecteurs qui les tiennent, téléchargeme
   assert.equal(e.status, 200, JSON.stringify(e.json));
   const recue = pve.etat.isos.find(i => i.volid === 'local:iso/outils-v2.iso');
   assert.ok(recue.octets.equals(fichier), 'le fichier arrive entier');
+  // Un flux plus long ou plus court que la taille annoncée n'arrive jamais entier chez Proxmox.
+  const { Readable } = await import('node:stream');
+  const n0 = pve.etat.isos.length;
+  const flux = octets => Readable.from([octets]);
+  await assert.rejects(s.proxmox.envoyerFichier('/nodes/pve-b/storage/local/upload', { champs: { content: 'iso' }, champFichier: 'filename', nom: 'trop.iso', flux: flux(Buffer.alloc(20)), taille: 10 }), /plus long/);
+  await assert.rejects(s.proxmox.envoyerFichier('/nodes/pve-b/storage/local/upload', { champs: { content: 'iso' }, champFichier: 'filename', nom: 'court.iso', flux: flux(Buffer.alloc(5)), taille: 10 }), /interrompu/);
+  assert.equal(pve.etat.isos.length, n0);
   assert.equal(recue.node, 'pve-b');
 
   // Lecteur CD : insérer, éjecter ; un conteneur n'en a pas.
