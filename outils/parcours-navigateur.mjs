@@ -132,6 +132,27 @@ await page.waitForTimeout(300);
 await controle('stockage-contenu');
 await page.getByRole('dialog').getByRole('button', { name: 'Fermer' }).click();
 
+await rail('Images ISO');
+await titre('Images ISO');
+await controle('isos');
+await page.getByRole('button', { name: 'Télécharger' }).click();
+await page.getByRole('dialog').waitFor();
+await controle('iso-telecharger');
+await page.getByRole('dialog').getByRole('button', { name: 'Annuler' }).click();
+await page.getByRole('button', { name: 'Envoyer' }).click();
+await page.getByRole('dialog').waitFor();
+await controle('iso-envoyer');
+await page.getByRole('dialog').getByRole('button', { name: 'Annuler' }).click();
+
+// Supprimer une machine arrêtée : le dialogue, sans aller jusqu'au bout.
+await rail('Machines');
+await page.locator('tbody tr', { hasText: 'bureau-essai' }).first().click();
+await titre('bureau-essai');
+await page.getByRole('button', { name: 'Supprimer', exact: true }).click();
+await page.getByRole('dialog').waitFor();
+await controle('machine-supprimer');
+await page.getByRole('dialog').getByRole('button', { name: 'Annuler' }).click();
+
 await rail('Tâches');
 await titre('Tâches');
 await controle('taches');
