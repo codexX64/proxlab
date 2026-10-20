@@ -591,7 +591,7 @@ async function creerMachine({ iso = '', noeud = '' } = {}) {
   const charger = async () => {
     err.textContent = '';
     o = await api.get(`/api/machines/options?noeud=${encodeURIComponent(nd.value)}`);
-    image.replaceChildren(h('option', { value: '', text: 'Aucune (lecteur vide)' }), ...o.isos.map(i => h('option', { value: i.volid, text: i.nom, selected: i.volid === iso })));
+    image.replaceChildren(h('option', { value: '', text: 'Aucune (lecteur vide)' }), ...o.isos.map(i => h('option', { value: i.volid, text: i.alias || i.nom, selected: i.volid === iso })));
     stockage.replaceChildren(...o.stockages.map(x => h('option', { value: x.storage, text: `${x.storage} — ${octets(x.avail)} libres` })));
     pont.replaceChildren(...o.ponts.map(b => h('option', { value: b, text: b })));
     coeurs.max = o.noeud.maxcpu;
@@ -1364,12 +1364,21 @@ async function pageIsos() {
     if (!vms.length) { toast('Aucune VM ne peut lire ce stockage.', true); return; }
     const vm = h('select', { class: 'field', 'aria-label': 'Machine' }, vms.map((m, k) => h('option', { value: String(k), text: `${m.vmid} · ${m.name || 'VM'} (${m.node})` })));
     const err = h('p', { class: 'erreur', role: 'alert' });
-    const ok = await dialogue({ titre: `Insérer ${i.nom}`, texte: 'Dans le lecteur CD de la machine (le premier, ou ide2 s\'il est libre). Une VM en marche voit le disque tout de suite.', contenu: [vm, err],
+    const ok = await dialogue({ titre: `Insérer ${i.alias || i.nom}`, texte: 'Dans le lecteur CD de la machine (le premier, ou ide2 s\'il est libre). Une VM en marche voit le disque tout de suite.', contenu: [vm, err],
       boutons: [{ texte: 'Annuler', classe: 'flat', valeur: false }, { texte: 'Insérer', classe: 'solid', agir: async () => {
         const m = vms[Number(vm.value)];
         try { await api.post(`/api/machines/${encodeURIComponent(m.node)}/qemu/${m.vmid}/lecteur`, { volid: i.volid }); return true; } catch (e) { err.textContent = e.message; return false; }
       } }] });
     if (ok) apres(`${i.nom} insérée.`);
+  });
+  const renommer = i => sur(async () => {
+    const champ = h('input', { class: 'field', maxlength: 80, value: i.alias, placeholder: i.nom, 'aria-label': 'Nom affiché' });
+    const err = h('p', { class: 'erreur', role: 'alert' });
+    const ok = await dialogue({ titre: 'Renommer l’image', texte: `Le nom que ProxLab affiche. Le fichier garde le sien dans Proxmox (${i.nom}) : Proxmox ne sait pas renommer une image. Vide, le nom du fichier revient.`, contenu: [champ, err],
+      boutons: [{ texte: 'Annuler', classe: 'flat', valeur: false }, { texte: 'Renommer', classe: 'solid', agir: async () => {
+        try { await api.put('/api/isos/nom', { noeud: i.node, volid: i.volid, nom: champ.value }); return true; } catch (e) { err.textContent = e.message; return false; }
+      } }] });
+    if (ok) apres('Nom changé.');
   });
   const ejecter = u => sur(async () => {
     if (!await confirmer(`Éjecter le disque de ${u.vmid} ?`, `${u.name || 'VM'} sur ${u.node}, lecteur ${u.lecteur}.`, { oui: 'Éjecter' })) return;
@@ -1377,7 +1386,7 @@ async function pageIsos() {
     apres('Lecteur vidé.');
   });
   const supprimer = i => sur(async () => {
-    if (!await confirmer(`Supprimer ${i.nom} ?`, `Du stockage ${i.storage}${i.shared ? '' : ` de ${i.node}`}, ${octets(i.size)}.`, { danger: true, oui: 'Supprimer' })) return;
+    if (!await confirmer(`Supprimer ${i.alias || i.nom} ?`, `Du stockage ${i.storage}${i.shared ? '' : ` de ${i.node}`}, ${octets(i.size)}.`, { danger: true, oui: 'Supprimer' })) return;
     await api.del(`/api/isos/${encodeURIComponent(i.node)}/${encodeURIComponent(i.storage)}?volid=${encodeURIComponent(i.volid)}`);
     apres(`${i.nom} : suppression demandée.`);
   });
@@ -1401,16 +1410,17 @@ async function pageIsos() {
       h('div', { class: 'tw' }, h('table', {},
         h('thead', {}, h('tr', {}, h('th', { text: 'Image' }), h('th', { class: 'cache-m', text: 'Stockage' }), h('th', { class: 'cache-s', text: 'Taille' }), h('th', { class: 'cache-s', text: 'Dans le lecteur de' }), admin ? h('th', { class: 'fin' }) : null)),
         h('tbody', {}, d.isos.length ? d.isos.map(i => h('tr', {},
-          h('td', { class: 'principal' }, h('div', { class: 'who-cell' }, h('span', { class: 'itile' }, icone('iso')), h('div', { class: 'nom-iso' }, h('b', { text: i.nom }),
-            h('small', { class: 'mono', text: [i.ctime ? dateHeure(i.ctime) : '', i.utilisePar.length ? `dans ${i.utilisePar.map(u => u.vmid).join(', ')}` : ''].filter(Boolean).join(' · ') })))),
+          h('td', { class: 'principal' }, h('div', { class: 'who-cell' }, h('span', { class: 'itile' }, icone('iso')), h('div', { class: 'nom-iso' }, h('b', { text: i.alias || i.nom }),
+            h('small', { class: 'mono', text: [i.alias ? i.nom : '', i.ctime ? dateHeure(i.ctime) : '', i.utilisePar.length ? `dans ${i.utilisePar.map(u => u.vmid).join(', ')}` : ''].filter(Boolean).join(' · ') })))),
           h('td', { class: 'cache-m dim', text: `${i.storage} · ${i.shared ? 'partagé' : i.node}` }),
           h('td', { class: 'cache-s mono', text: octets(i.size) }),
           h('td', { class: 'cache-s' }, i.utilisePar.length ? i.utilisePar.map(u => h('span', { class: 'tag idle' }, `${u.vmid} ${u.name || ''}`.trim(),
             admin ? h('button', { class: 'ghost', type: 'button', 'aria-label': `Éjecter de ${u.vmid}`, title: 'Éjecter', onclick: ejecter(u) }, icone('ejecter', 12)) : null)) : h('span', { class: 'dim', text: '—' })),
           admin ? h('td', { class: 'fin' }, h('div', { class: 'actions' },
             h('button', { class: 'btn sm', type: 'button', onclick: sur(() => creerMachine({ iso: i.volid, noeud: i.node })) }, icone('plus', 13), h('span', { class: 'cache-s', text: 'Créer une VM' })),
-            h('button', { class: 'btn sm flat', type: 'button', 'aria-label': `Actions pour ${i.nom}`, onclick: () => feuille(i.nom, [
+            h('button', { class: 'btn sm flat', type: 'button', 'aria-label': `Actions pour ${i.alias || i.nom}`, onclick: () => feuille(i.alias || i.nom, [
               { texte: 'Insérer dans une VM', agir: inserer(i) },
+              { texte: 'Renommer', agir: renommer(i) },
               { texte: i.utilisePar.length ? 'Supprimer (éjecte-la d’abord)' : 'Supprimer', danger: true, agir: i.utilisePar.length ? () => toast(`Dans le lecteur de ${i.utilisePar.map(u => u.vmid).join(', ')} : éjecte-la d’abord.`, true) : supprimer(i) },
             ]) }, icone('actions', 15)))) : null))
           : h('tr', {}, h('td', { colspan: colonnes, class: 'vide', text: d.stockages.length ? 'Aucune image : télécharge-en une, ou envoie-la depuis ton ordinateur.' : 'Aucun stockage n\'accepte d\'images ISO.' })))))));
