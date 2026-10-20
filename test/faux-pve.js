@@ -40,7 +40,7 @@ function grappeInitiale() {
       { node: 'pve-b', status: 'online', cpu: 0.06, maxcpu: 8, mem: 8589934592, maxmem: 34359738368, disk: 10737418240, maxdisk: 107374182400, uptime: 432000 },
     ],
     machines: [
-      g('pve-a', 'qemu', 101, 'passerelle', 'running', 1073741824, 2147483648, { tags: 'reseau', conf: { serial0: 'socket', vga: 'std,clipboard=vnc' } }),
+      g('pve-a', 'qemu', 101, 'passerelle', 'running', 1073741824, 2147483648, { tags: 'reseau', conf: { serial0: 'socket', vga: 'std,clipboard=vnc', ide2: 'local:iso/debian-13.1.0-amd64-netinst.iso,media=cdrom' } }),
       g('pve-a', 'qemu', 102, 'base-de-donnees-du-service-de-facturation-interne', 'running', 6442450944, 8589934592),
       g('pve-a', 'lxc', 110, 'mandataire', 'running', 268435456, 1073741824),
       g('pve-b', 'lxc', 120, 'supervision', 'stopped', 0, 2147483648),
@@ -54,6 +54,11 @@ function grappeInitiale() {
       { node: 'pve-b', storage: 'sauvegardes', plugintype: 'nfs', status: 'available', content: 'backup', disk: 429496729600, maxdisk: 1099511627776, shared: 1 },
     ],
     instantanes: { 'qemu/101': [{ name: 'avant-maj', description: 'Avant la mise à jour du noyau', snaptime: 1791700000, vmstate: 0 }] },
+    isos: [
+      { node: 'pve-a', storage: 'local', volid: 'local:iso/debian-13.1.0-amd64-netinst.iso', size: 754974720, ctime: 1791500000, format: 'iso', content: 'iso' },
+      { node: 'pve-a', storage: 'local', volid: 'local:iso/alpine-virt-3.22.iso', size: 67108864, ctime: 1791400000, format: 'iso', content: 'iso' },
+      { node: 'pve-b', storage: 'local', volid: 'local:iso/ubuntu-24.04.3-live-server-amd64.iso', size: 3221225472, ctime: 1791300000, format: 'iso', content: 'iso' },
+    ],
     sauvegardes: [{ storage: 'sauvegardes', volid: 'sauvegardes:backup/vzdump-qemu-101-2026_10_10-02_00_00.vma.zst', ctime: 1791600000, size: 1610612736, vmid: 101, format: 'vma.zst', content: 'backup' }],
     taches: historiqueSauvegardes(),
   };
@@ -72,6 +77,20 @@ function historiqueSauvegardes() {
 
 const rrd = n => Array.from({ length: 70 }, (_, i) => ({ time: 1791780000 + i * 60, cpu: 0.05 + 0.04 * Math.sin(i / 6 + n), mem: 1e9 + 2e8 * Math.sin(i / 9), maxmem: 2147483648, netin: 2e4 + 1e4 * Math.sin(i / 4), netout: 1e4 + 5e3 * Math.cos(i / 5), diskread: 3e4 * (1 + Math.sin(i / 7)), diskwrite: 2e4 * (1 + Math.cos(i / 8)) }));
 
+// Un corps multipart/form-data, lu comme Proxmox : un champ de fichier rend
+// son nom, sa taille et ses octets.
+function partiesMultipart(corps, borne) {
+  const out = {};
+  for (const partie of corps.split(`--${borne}`).slice(1, -1)) {
+    const i = partie.indexOf('\r\n\r\n');
+    const tete = partie.slice(0, i), valeur = partie.slice(i + 4, -2);
+    const nom = /name="([^"]+)"/.exec(tete)?.[1];
+    const fichier = /filename="([^"]+)"/.exec(tete)?.[1];
+    if (nom) out[nom] = fichier ? { nom: fichier, taille: Buffer.byteLength(valeur, 'latin1'), octets: Buffer.from(valeur, 'latin1') } : valeur;
+  }
+  return out;
+}
+
 export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [4, 2] } = {}) {
   const etat = grappeInitiale();
   const appels = [];
@@ -87,11 +106,13 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
 
   const serveur = https.createServer({ key: certificats.cle, cert: certificats.cert }, (req, res) => {
     const url = new URL(req.url, 'https://pve');
-    let corps = '';
-    req.on('data', d => { corps += d; });
+    const morceaux = [];
+    req.on('data', d => { morceaux.push(d); });
     req.on('end', () => {
+      const corps = Buffer.concat(morceaux).toString(/^multipart\//.test(req.headers['content-type'] || '') ? 'latin1' : 'utf8');
       const p = url.pathname.replace(/^\/api2\/json/, '');
-      const params = req.method === 'GET' || req.method === 'DELETE' ? Object.fromEntries(url.searchParams) : Object.fromEntries(new URLSearchParams(corps));
+      const multipart = /^multipart\/form-data; boundary=(.+)$/.exec(req.headers['content-type'] || '');
+      const params = req.method === 'GET' || req.method === 'DELETE' ? Object.fromEntries(url.searchParams) : multipart ? partiesMultipart(corps, multipart[1]) : Object.fromEntries(new URLSearchParams(corps));
       appels.push({ methode: req.method, chemin: p, params, auth: req.headers.authorization || (req.headers.cookie ? 'ticket' : '') });
       const repondre = (code, data, message) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(code < 400 ? { data } : { data: null, message })); };
       if (p === '/access/ticket' && req.method === 'POST') {
@@ -114,6 +135,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
         const node = s[1];
         if (s[2] === 'network') return repondre(200, [{ iface: 'vmbr0', type: 'bridge', cidr: node === 'pve-a' ? '192.0.2.10/24' : '192.0.2.11/24', gateway: '192.0.2.1', bridge_ports: 'eno1', active: 1 }, { iface: 'eno1', type: 'eth', active: 1 }]);
         if (s[2] === 'rrddata') return repondre(200, rrd(1));
+        if (s[2] === 'query-url-metadata') return repondre(200, { filename: new URL(params.url).pathname.split('/').pop(), size: 2147483648, mimetype: 'application/x-iso9660-image' });
         if (s[2] === 'vzdump' && req.method === 'POST') {
           const m = etat.machines.find(x => String(x.vmid) === params.vmid);
           etat.sauvegardes.unshift({ storage: params.storage, volid: `${params.storage}:backup/vzdump-${m.type}-${m.vmid}-essai-${compteur}.vma.zst`, ctime: Math.floor(Date.now() / 1000), size: 1e9, vmid: m.vmid, format: 'vma.zst', content: 'backup' });
@@ -129,9 +151,25 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
         }
         if (s[2] === 'storage') {
           const local = etat.stockages.filter(x => x.node === node || x.shared);
-          if (s.length === 3) return repondre(200, local.filter(x => !params.content || x.content.includes(params.content)).map(x => ({ storage: x.storage, type: x.plugintype, enabled: 1, content: x.content })));
+          if (s.length === 3) return repondre(200, local.filter(x => !params.content || x.content.includes(params.content)).map(x => ({ storage: x.storage, type: x.plugintype, enabled: 1, active: 1, shared: x.shared ? 1 : 0, content: x.content, avail: x.maxdisk - x.disk, total: x.maxdisk })));
           const st = s[3];
+          if (s[4] === 'content' && s.length === 5 && params.content === 'iso') return repondre(200, etat.isos.filter(i => i.storage === st && i.node === node));
           if (s[4] === 'content' && s.length === 5) return repondre(200, etat.sauvegardes.filter(b => b.storage === st && (!params.vmid || String(b.vmid) === params.vmid)));
+          if (s[4] === 'content' && req.method === 'DELETE' && /:iso\//.test(decodeURIComponent(s[5]))) {
+            const i = etat.isos.findIndex(x => x.volid === decodeURIComponent(s[5]) && x.node === node);
+            if (i < 0) return repondre(500, null, 'volume does not exist');
+            etat.isos.splice(i, 1);
+            return repondre(200, tache(node, 'imgdel', st));
+          }
+          if (s[4] === 'upload' && req.method === 'POST') {
+            if (params.content !== 'iso' || !params.filename) return repondre(400, null, 'parameter verification failed');
+            etat.isos.push({ node, storage: st, volid: `${st}:iso/${params.filename.nom}`, size: params.filename.taille, ctime: Math.floor(Date.now() / 1000), format: 'iso', content: 'iso', octets: params.filename.octets });
+            return repondre(200, tache(node, 'imgcopy', ''));
+          }
+          if (s[4] === 'download-url' && req.method === 'POST') {
+            etat.isos.push({ node, storage: st, volid: `${st}:iso/${params.filename}`, size: 1048576, ctime: Math.floor(Date.now() / 1000), format: 'iso', content: 'iso', depuis: params.url });
+            return repondre(200, tache(node, 'download', ''));
+          }
           if (s[4] === 'content' && req.method === 'DELETE') {
             const volid = decodeURIComponent(s[5]);
             const i = etat.sauvegardes.findIndex(b => b.volid === volid);
@@ -145,9 +183,14 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
           if (!m) return repondre(500, null, `Configuration file 'nodes/${node}/${s[2]}/${s[3]}.conf' does not exist`);
           const cle = `${m.type}/${m.vmid}`;
           const reste = s.slice(4).join('/');
+          if (s.length === 4 && req.method === 'DELETE') {
+            if (m.status !== 'stopped') return repondre(500, null, `VM ${m.vmid} is running - destroy failed`);
+            etat.machines.splice(etat.machines.indexOf(m), 1);
+            return repondre(200, tache(node, m.type === 'qemu' ? 'qmdestroy' : 'vzdestroy', m.vmid));
+          }
           if (reste === 'status/current') return repondre(200, { ...m, qmpstatus: m.status });
           if (reste === 'config' && req.method === 'GET') return repondre(200, { name: m.name, cores: 2, sockets: 1, memory: Math.round(m.maxmem / 1048576), ostype: 'l26', onboot: 1, net0: 'virtio=02:00:00:00:01:01,bridge=vmbr0', scsi0: 'local-lvm:vm-' + m.vmid + '-disk-0,size=32G', cipassword: '**********', sshkeys: 'ssh-ed25519%20AAAA', ciuser: 'essai', digest: 'abc', description: 'Machine fabriquée pour les essais.', ...m.conf, ...(params.current ? {} : m.attente) });
-          if (reste === 'config' && req.method === 'PUT') { if (params.name) m.name = params.name; if (params.hostname) m.name = params.hostname; if (params.memory) m.maxmem = Number(params.memory) * 1048576; for (const k of ['serial0', 'vga', 'agent']) if (params[k]) (m.status === 'running' ? (m.attente ||= {}) : (m.conf ||= {}))[k] = params[k]; return repondre(200, null); }
+          if (reste === 'config' && req.method === 'PUT') { for (const [k, v] of Object.entries(params)) if (/^(ide|sata|scsi)\d+$/.test(k)) (m.conf ||= {})[k] = v; if (params.name) m.name = params.name; if (params.hostname) m.name = params.hostname; if (params.memory) m.maxmem = Number(params.memory) * 1048576; for (const k of ['serial0', 'vga', 'agent']) if (params[k]) (m.status === 'running' ? (m.attente ||= {}) : (m.conf ||= {}))[k] = params[k]; return repondre(200, null); }
           if (reste === 'rrddata') return repondre(200, rrd(m.vmid));
           // L'agent QEMU : coché dans la configuration, puis présent dans la VM (m.clavierInvite).
           if (reste === 'agent/exec' && req.method === 'POST') {

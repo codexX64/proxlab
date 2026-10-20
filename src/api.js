@@ -8,7 +8,9 @@
 // redémarre, prend un instantané, lance une sauvegarde, ouvre la console d'une
 // machine), admin sous renfort récent (arrêt forcé, migration, configuration,
 // retour et suppression d'instantané, suppression de sauvegarde, arrêt d'une
-// tâche, shell d'un nœud, liaison à Proxmox, alertes).
+// tâche, shell d'un nœud, liaison à Proxmox, alertes, images ISO et lecteur
+// CD). Supprimer une machine demande en plus son nom recopié et une
+// confirmation d'identité faite pour elle seule.
 import { detecterClavier, activerConsoleSerie, agentActif } from './clavier.js';
 import crypto from 'node:crypto';
 import { ErreurHttp, Routeur, lireCorps, valider, repondreJson, egal } from '../socle/src/index.js';
@@ -24,6 +26,13 @@ const VMID = /^[1-9]\d{1,8}$/;
 const UPID = /^UPID:[A-Za-z0-9.!@_:-]{10,250}$/;
 const VOLID = /^[A-Za-z][A-Za-z0-9._-]{0,99}:[A-Za-z0-9._\/-]{1,250}$/;
 const TYPES = ['qemu', 'lxc'];
+const FICHIER_ISO = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,200}\.(iso|img)$/i;
+const VOLID_ISO = /^[A-Za-z][A-Za-z0-9._-]{0,99}:iso\/[A-Za-z0-9][A-Za-z0-9._+-]{0,200}\.(iso|img)$/i;
+const ISO_MAX = 64 * 1024 ** 3;
+const LECTEUR = /^(ide|sata|scsi)\d{1,2}$/;
+// La confirmation d'identité d'une suppression : faite dans les deux minutes,
+// et pour cette suppression seulement.
+const RENFORT_SUPPRESSION_MS = 2 * 60e3;
 const PERIODES = ['hour', 'day', 'week', 'month', 'year'];
 
 // Ce que la fiche d'une machine montre de sa configuration. Le reste (mots de
@@ -67,7 +76,27 @@ const S = {
   journal: { debut: { type: 'entier', min: 0, max: 1e6, defaut: 0 } },
   evenements: { limite: { type: 'entier', min: 1, max: 200, defaut: 50 }, avant: { type: 'chaine', max: 20, motif: /^[A-Za-z0-9_-]{12}$/ } },
   volume: { volid: { type: 'chaine', requis: true, max: 360, motif: VOLID } },
+  suppression: { nom: { type: 'chaine', requis: true, max: 100 } },
+  lecteur: { volid: { type: 'chaine', max: 320, motif: VOLID_ISO, defaut: '' } },
+  telechargement: {
+    url: { type: 'chaine', requis: true, max: 2000 }, nom: { type: 'chaine', requis: true, max: 205, motif: FICHIER_ISO },
+    somme: { type: 'chaine', max: 128, motif: /^([A-Fa-f0-9]{32,128})?$/, defaut: '' },
+    algorithme: { type: 'chaine', parmi: ['md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512'], defaut: 'sha256' },
+    verifierCertificat: { type: 'booleen', defaut: true },
+  },
+  envoi: { nom: { type: 'chaine', requis: true, max: 205, motif: FICHIER_ISO } },
+  metadonnees: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, url: { type: 'chaine', requis: true, max: 2000 } },
+  iso: { volid: { type: 'chaine', requis: true, max: 320, motif: VOLID_ISO } },
 };
+
+// L'adresse d'une image à télécharger : http ou https, sans identifiants.
+function urlTelechargement(u) {
+  let x;
+  try { x = new URL(u); } catch { throw new ErreurHttp(400, 'Adresse invalide.'); }
+  if (!['http:', 'https:'].includes(x.protocol)) throw new ErreurHttp(400, 'Adresse en http ou https seulement.');
+  if (x.username || x.password) throw new ErreurHttp(400, 'Pas d’identifiants dans l’adresse.');
+  return x.href;
+}
 
 const ACTIONS = {
   start: ['guest.started', 'démarrée'], shutdown: ['guest.stopped', 'arrêtée proprement'], reboot: ['guest.rebooted', 'redémarrée'],
@@ -96,7 +125,7 @@ const tachePublique = t => ({ upid: t.upid, node: t.node, type: t.type, id: t.id
 
 export function creerApi({ socle, cfg, reglages, evenements, surveillance, emetteur, proxmox, log = console }) {
   const r = new Routeur();
-  const { portail, journal, limiteur } = socle;
+  const { portail, journal, limiteur, comptes } = socle;
   const pve = (fn) => fn().catch(e => versClient(e, log));
 
   // Le jeton du Hub : vérifié en temps constant, un faux compte comme un échec
@@ -443,6 +472,141 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     evenements.noter({ genre: 'backup.started', niveau: 'info', titre: `Sauvegarde de ${m.cible} lancée`, corps: `Vers ${b.stockage}, mode ${b.mode}, par ${qui.acteur}.`, cible: m.cible, noeud: m.noeud, ...qui });
     return { upid: String(upid || '') };
   }, { role: 'membre' });
+
+  // Supprimer une machine : arrêtée, pas protégée, son nom recopié, et une
+  // confirmation d'identité faite pour cette suppression (deux minutes au
+  // plus, jamais réemployée). Ses disques partent avec elle ; ses sauvegardes
+  // restent.
+  const renfortsEmployes = new Map();
+  r.post('/api/machines/:noeud/:type/:vmid/suppression', async ctx => {
+    const s = session(ctx, { role: 'admin', renfort: true });
+    const m = machine(ctx.params);
+    const { nom } = await corps(ctx, S.suppression);
+    const [statut, config] = await pve(() => Promise.all([proxmox.get(m.base + '/status/current'), proxmox.get(m.base + '/config')]));
+    const attendu = String((m.type === 'qemu' ? config?.name : config?.hostname) || statut?.name || m.vmid);
+    if (nom.trim() !== attendu) throw new ErreurHttp(400, `Recopie exactement « ${attendu} » pour confirmer.`);
+    if (statut?.status !== 'stopped') throw new ErreurHttp(409, 'Arrête d’abord la machine : une machine en marche ne se supprime pas.');
+    if (String(config?.protection) === '1') throw new ErreurHttp(409, 'Machine protégée dans Proxmox : retire d’abord sa protection.');
+    if (!s.renfort || Date.now() - s.renfort > RENFORT_SUPPRESSION_MS || renfortsEmployes.get(s.compte) === s.renfort) {
+      throw new ErreurHttp(403, 'Confirme ton identité pour supprimer cette machine.', { renfort: true, methodes: comptes.methodesRenfort(s.compteLigne, s.rp) });
+    }
+    renfortsEmployes.set(s.compte, s.renfort);
+    const upid = await pve(() => proxmox.del(m.base, { purge: 1, 'destroy-unreferenced-disks': 1 }));
+    clavierConnu.delete(m.cible);
+    const qui = acteur(ctx);
+    journal.ecrire({ acteur: qui.acteurCompte, action: 'machine.suppression', objet: m.cible, ip: ctx.ip, details: { noeud: m.noeud, nom: attendu } });
+    evenements.noter({ genre: 'vm.delete_requested', niveau: 'avertissement', titre: `${m.type === 'qemu' ? 'VM' : 'CT'} ${m.vmid} « ${attendu} » : suppression demandée`, corps: `Disques compris, sauvegardes gardées. Par ${qui.acteur}.`, cible: m.cible, noeud: m.noeud, ...qui });
+    return { upid: String(upid || '') };
+  }, { role: 'admin' });
+
+  // Le lecteur CD d'une VM : une image ISO insérée, ou éjectée (volid vide).
+  // Le premier lecteur CD de la machine ; sans lecteur, ide2 s'il est libre.
+  r.post('/api/machines/:noeud/:type/:vmid/lecteur', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const m = machine(ctx.params);
+    if (m.type !== 'qemu') throw new ErreurHttp(400, 'Un conteneur n’a pas de lecteur CD.');
+    const { volid } = await corps(ctx, S.lecteur);
+    const config = await pve(() => proxmox.get(m.base + '/config'));
+    const cle = Object.keys(config || {}).filter(k => LECTEUR.test(k) && /media=cdrom/.test(String(config[k]))).sort()[0] || (config?.ide2 ? null : 'ide2');
+    if (!cle) throw new ErreurHttp(409, 'Pas de lecteur CD sur cette machine, et ide2 est déjà pris : ajoute un lecteur dans Proxmox.');
+    await pve(() => proxmox.put(m.base + '/config', { [cle]: `${volid || 'none'},media=cdrom` }));
+    const qui = acteur(ctx);
+    journal.ecrire({ acteur: qui.acteurCompte, action: volid ? 'lecteur.insertion' : 'lecteur.ejection', objet: m.cible, ip: ctx.ip, details: { lecteur: cle, ...(volid ? { volid } : {}) } });
+    evenements.noter({ genre: 'vm.configured', niveau: 'info', titre: volid ? `${volid.split('/').pop()} insérée dans ${m.cible}` : `Lecteur CD de ${m.cible} vidé`, corps: `Lecteur ${cle}, par ${qui.acteur}.`, cible: m.cible, noeud: m.noeud, ...qui });
+    return { lecteur: cle };
+  }, { role: 'admin' });
+
+  // Images ISO : chaque stockage qui en accepte (un stockage partagé, une
+  // fois), ses images, et les VM qui en ont une dans leur lecteur CD.
+  async function inventaireIso() {
+    const { noeuds, machines } = await pve(etatGrappe);
+    const stockages = [], isos = [], vus = new Set();
+    for (const n of noeuds.filter(x => x.status === 'online' && NOEUD.test(x.node))) {
+      const liste = await proxmox.get(chemin('nodes', n.node, 'storage'), { content: 'iso', enabled: 1 }).catch(() => []);
+      for (const st of (liste || []).filter(x => STOCKAGE.test(x.storage || '') && x.active !== 0)) {
+        const cle = st.shared ? st.storage : `${n.node}/${st.storage}`;
+        if (vus.has(cle)) continue;
+        vus.add(cle);
+        stockages.push({ node: n.node, storage: st.storage, shared: !!st.shared, avail: nombre(st.avail), total: nombre(st.total) });
+        const contenu = await proxmox.get(chemin('nodes', n.node, 'storage', st.storage, 'content'), { content: 'iso' }).catch(() => []);
+        for (const c of contenu || []) if (VOLID_ISO.test(c.volid || '')) isos.push({ node: n.node, storage: st.storage, shared: !!st.shared, volid: c.volid, nom: c.volid.split('/').pop(), size: nombre(c.size), ctime: nombre(c.ctime), utilisePar: [] });
+      }
+    }
+    const vms = machines.filter(x => x.type === 'qemu' && NOEUD.test(x.node)).slice(0, 300);
+    const configs = await Promise.all(vms.map(x => proxmox.get(chemin('nodes', x.node, 'qemu', x.vmid, 'config')).then(c => [x, c], () => [x, null])));
+    for (const [x, c] of configs) {
+      for (const [k, v] of Object.entries(c || {})) {
+        if (!LECTEUR.test(k) || !/media=cdrom/.test(String(v))) continue;
+        const volid = String(v).split(',')[0];
+        for (const i of isos) if (i.volid === volid && (i.shared || i.node === x.node)) i.utilisePar.push({ vmid: x.vmid, name: x.name, node: x.node, lecteur: k });
+      }
+    }
+    isos.sort((a, b) => a.nom.localeCompare(b.nom) || a.node.localeCompare(b.node));
+    return { stockages, isos };
+  }
+  r.get('/api/isos', async ctx => {
+    session(ctx);
+    if (!reglages.lire('liaison')) return { relie: false, stockages: [], isos: [] };
+    return { relie: true, ...(await inventaireIso()) };
+  }, { role: 'lecture' });
+
+  // Le nom et la taille d'une image avant de la télécharger, lus par le nœud.
+  r.get('/api/isos/metadonnees', async ctx => {
+    session(ctx, { role: 'admin' });
+    const { noeud: n, url } = ctx.q;
+    const d = await pve(() => proxmox.get(chemin('nodes', n, 'query-url-metadata'), { url: urlTelechargement(url), 'verify-certificates': 1 }));
+    const nom = String(d?.filename || '').split('/').pop().replace(/[^A-Za-z0-9._+-]/g, '-').replace(/^[^A-Za-z0-9]+/, '').slice(0, 200);
+    return { nom: FICHIER_ISO.test(nom) ? nom : '', taille: nombre(d?.size), type: String(d?.mimetype || '').slice(0, 100) };
+  }, { role: 'admin', requete: S.metadonnees });
+
+  // Télécharger une image depuis une adresse : c'est le nœud qui la tire, en
+  // tâche Proxmox, somme de contrôle vérifiée si elle est donnée.
+  r.post('/api/isos/:noeud/:stockage/telechargement', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const { n, stockage } = stockageDe(ctx.params);
+    const b = await corps(ctx, S.telechargement);
+    const url = urlTelechargement(b.url);
+    const upid = await pve(() => proxmox.post(chemin('nodes', n, 'storage', stockage, 'download-url'), {
+      url, filename: b.nom, content: 'iso', 'verify-certificates': b.verifierCertificat ? 1 : 0,
+      ...(b.somme ? { checksum: b.somme.toLowerCase(), 'checksum-algorithm': b.algorithme } : {}),
+    }));
+    const qui = acteur(ctx);
+    journal.ecrire({ acteur: qui.acteurCompte, action: 'iso.telechargement', objet: `${stockage}:iso/${b.nom}`, ip: ctx.ip, details: { noeud: n, hote: new URL(url).host, somme: !!b.somme } });
+    evenements.noter({ genre: 'iso.added', niveau: 'info', titre: `${b.nom} : téléchargement lancé vers ${stockage}`, corps: `Depuis ${new URL(url).host}, par ${qui.acteur}.`, noeud: n, ...qui });
+    return { upid: String(upid || '') };
+  }, { role: 'admin' });
+
+  // Envoyer une image depuis le navigateur : le corps est le fichier, relayé
+  // vers Proxmox à mesure qu'il arrive.
+  r.put('/api/isos/:noeud/:stockage/envoi', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const { n, stockage } = stockageDe(ctx.params);
+    const { nom } = ctx.q;
+    const taille = Number(ctx.req.headers['content-length']);
+    if (!Number.isSafeInteger(taille) || taille <= 0) throw new ErreurHttp(411, 'Taille du fichier attendue.');
+    if (taille > ISO_MAX) throw new ErreurHttp(413, 'Image de plus de 64 Gio : télécharge-la depuis une adresse.');
+    const upid = await pve(() => proxmox.envoyerFichier(chemin('nodes', n, 'storage', stockage, 'upload'), { champs: { content: 'iso' }, champFichier: 'filename', nom, flux: ctx.req, taille }));
+    const qui = acteur(ctx);
+    journal.ecrire({ acteur: qui.acteurCompte, action: 'iso.envoi', objet: `${stockage}:iso/${nom}`, ip: ctx.ip, details: { noeud: n, taille } });
+    evenements.noter({ genre: 'iso.added', niveau: 'info', titre: `${nom} envoyée vers ${stockage}`, corps: `Par ${qui.acteur}.`, noeud: n, ...qui });
+    return { upid: String(upid || '') };
+  }, { role: 'admin', requete: S.envoi });
+
+  // Supprimer une image : refusé tant qu'une VM l'a dans son lecteur.
+  r.del('/api/isos/:noeud/:stockage', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const { n, stockage } = stockageDe(ctx.params);
+    const { volid } = ctx.q;
+    if (!volid.startsWith(stockage + ':iso/')) throw new ErreurHttp(400, 'Image hors de ce stockage.');
+    const i = (await inventaireIso()).isos.find(x => x.volid === volid && (x.shared || x.node === n));
+    if (!i) throw new ErreurHttp(404, 'Image introuvable.');
+    if (i.utilisePar.length) throw new ErreurHttp(409, `Image dans le lecteur de ${i.utilisePar.map(x => `${x.vmid}${x.name ? ` (${x.name})` : ''}`).join(', ')} : éjecte-la d’abord.`);
+    const upid = await pve(() => proxmox.del(chemin('nodes', n, 'storage', stockage, 'content', encodeURIComponent(volid))));
+    const qui = acteur(ctx);
+    journal.ecrire({ acteur: qui.acteurCompte, action: 'iso.suppression', objet: volid, ip: ctx.ip, details: { noeud: n } });
+    evenements.noter({ genre: 'iso.deleted', niveau: 'info', titre: `${i.nom} supprimée de ${stockage}`, corps: `Par ${qui.acteur}.`, noeud: n, ...qui });
+    return { upid: String(upid || '') };
+  }, { role: 'admin', requete: S.iso });
 
   r.del('/api/sauvegardes/:noeud/:stockage', async ctx => {
     session(ctx, { role: 'admin', renfort: true });

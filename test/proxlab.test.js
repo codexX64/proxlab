@@ -24,7 +24,7 @@ const JETON_HUB = 'jeton-du-hub-pour-les-essais-de-proxlab-0123';
 const INSTALL = 'jeton-installation-proxlab-essai';
 const SILENCE = { info() {}, warn() {}, error() {} };
 const CLE = crypto.randomBytes(32).toString('base64');
-let s, pve, admin, membre, lecteur, base, journalServeur = [];
+let s, pve, admin, cleAdmin, membre, lecteur, base, journalServeur = [];
 
 async function lancer(dossier, extra = {}) {
   const env = { PORT: '0', HOTE: '127.0.0.1', DATA_DIR: dossier, PROXLAB_HUB_TOKEN: JETON_HUB, PROXLAB_INTERVAL: '3600', SOCLE_CLE: CLE, SOCLE_JETON_INSTALLATION: INSTALL, ...extra };
@@ -85,7 +85,7 @@ before(async () => {
   base = fs.mkdtempSync(path.join(os.tmpdir(), 'proxlab-'));
   s = await lancer(base);
   admin = s.client();
-  await adminComplet(admin, { jeton: INSTALL });
+  ({ auth: cleAdmin } = await adminComplet(admin, { jeton: INSTALL }));
   ({ client: membre } = await membreInvite(admin, () => s.client(), { identifiant: 'bruno' }));
   ({ client: lecteur } = await membreInvite(admin, () => s.client(), { identifiant: 'lea', role: 'lecture' }));
 });
@@ -764,6 +764,96 @@ test('console série muette : la connexion activée dans la VM par l\'agent QEMU
   assert.deepEqual([sans.json.ok, sans.json.raison], [false, 'agent']);
   assert.equal((await admin.post(machine('pve-a', 'lxc', 110) + '/console-serie')).status, 400);
   vm.conf.agent = '1';
+});
+
+// La clé d'accès de l'administrateur, comme le navigateur la présente.
+async function renforcerParCle(c = admin) {
+  const o = await c.post('/api/compte/renfort/options');
+  const r = await c.post('/api/compte/renfort', { methode: 'cle', reponse: cleAdmin.signer(o.json, c.origine) });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+}
+
+test('suppression d\'une machine : administrateur, nom recopié, machine arrêtée, et une confirmation par clé pour elle seule', async () => {
+  const vm = machine('pve-b', 'qemu', 130);
+  for (const m of pve.etat.machines.filter(x => [120, 130].includes(x.vmid))) m.status = 'stopped';   // démarrées par les essais d'avant
+  assert.equal((await membre.post(vm + '/suppression', { nom: 'bureau-essai' })).status, 403);
+  await renforcerParCle();
+  const faux = await admin.post(vm + '/suppression', { nom: 'bureau-essa' });
+  assert.equal(faux.status, 400);
+  assert.match(faux.json.error, /Recopie exactement « bureau-essai »/);
+  const enMarche = await admin.post(machine() + '/suppression', { nom: pve.etat.machines.find(m => m.vmid === 101).name });
+  assert.equal(enMarche.status, 409, 'une machine en marche ne se supprime pas');
+  const n0 = pve.appels.length;
+  const ok = await admin.post(vm + '/suppression', { nom: 'bureau-essai' });
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  const appel = pve.appels.slice(n0).find(a => a.methode === 'DELETE');
+  assert.deepEqual([appel.chemin, appel.params.purge, appel.params['destroy-unreferenced-disks']], ['/nodes/pve-b/qemu/130', '1', '1']);
+  assert.ok(!pve.etat.machines.some(m => m.vmid === 130));
+  // La même confirmation ne sert pas deux fois : la suivante redemande la clé.
+  const encore = await admin.post(machine('pve-b', 'lxc', 120) + '/suppression', { nom: 'supervision' });
+  assert.equal(encore.status, 403);
+  assert.ok(encore.json.details?.renfort);
+  assert.deepEqual(encore.json.details.methodes, ['cle'], 'la clé d\'accès, facteur le plus fort de l\'administrateur');
+  assert.ok(pve.etat.machines.some(m => m.vmid === 120));
+  // Une confirmation de plus de deux minutes ne vaut plus pour une suppression.
+  await renforcerParCle();
+  s.db.prepare("UPDATE socle_sessions SET renfort = renfort - 180000 WHERE compte = (SELECT id FROM socle_comptes WHERE identifiant = 'ana')").run();
+  assert.equal((await admin.post(machine('pve-b', 'lxc', 120) + '/suppression', { nom: 'supervision' })).status, 403);
+  await renforcerParCle();
+  assert.equal((await admin.post(machine('pve-b', 'lxc', 120) + '/suppression', { nom: 'supervision' })).status, 200);
+  const ev = (await admin.get('/api/evenements')).json;
+  assert.ok(ev.some(e => e.kind === 'vm.delete_requested' && /130 « bureau-essai »/.test(e.title) && e.by === 'ana'));
+  assert.ok(s.db.prepare("SELECT 1 FROM socle_journal WHERE action = 'machine.suppression'").get(), 'au journal de sécurité');
+});
+
+test('images ISO : inventaire avec les lecteurs qui les tiennent, téléchargement, envoi, lecteur CD, suppression', async () => {
+  const inv = (await lecteur.get('/api/isos')).json;
+  assert.equal(inv.relie, true);
+  assert.deepEqual(inv.stockages.map(x => `${x.node}/${x.storage}`).sort(), ['pve-a/local', 'pve-b/local']);
+  const debian = inv.isos.find(i => i.nom.startsWith('debian'));
+  assert.deepEqual(debian.utilisePar.map(u => [u.vmid, u.lecteur]), [[101, 'ide2']]);
+  assert.equal((await membre.post('/api/isos/pve-a/local/telechargement', { url: 'https://exemple.test/a.iso', nom: 'a.iso' })).status, 403);
+
+  // Téléchargement : http(s) seulement, sans identifiants, nom d'image valide.
+  for (const url of ['file:///etc/passwd', 'ftp://exemple.test/a.iso', 'https://moi:secret@exemple.test/a.iso', 'pas une adresse']) {
+    assert.equal((await admin.post('/api/isos/pve-a/local/telechargement', { url, nom: 'a.iso' })).status, 400, url);
+  }
+  assert.equal((await admin.post('/api/isos/pve-a/local/telechargement', { url: 'https://exemple.test/a.iso', nom: '../a.iso' })).status, 400);
+  assert.equal((await admin.post('/api/isos/pve-a/local/telechargement', { url: 'https://exemple.test/a.iso', nom: 'a.exe' })).status, 400);
+  const meta = await admin.get(`/api/isos/metadonnees?noeud=pve-a&url=${encodeURIComponent('https://exemple.test/images/fedora-43.iso')}`);
+  assert.deepEqual([meta.json.nom, meta.json.taille], ['fedora-43.iso', 2147483648]);
+  const tl = await admin.post('/api/isos/pve-a/local/telechargement', { url: 'https://exemple.test/images/fedora-43.iso', nom: 'fedora-43.iso', somme: 'AB'.repeat(32) });
+  assert.equal(tl.status, 200, JSON.stringify(tl.json));
+  const p = pve.appels.at(-1).params;
+  assert.deepEqual([p.filename, p.content, p.checksum, p['checksum-algorithm'], p['verify-certificates']], ['fedora-43.iso', 'iso', 'ab'.repeat(32), 'sha256', '1']);
+
+  // Envoi depuis le navigateur : relayé tel quel en multipart, octet pour octet.
+  const fichier = crypto.randomBytes(300000);
+  const envoi = n => admin.req('PUT', `/api/isos/pve-b/local/envoi?nom=${encodeURIComponent(n)}`, undefined, { brut: fichier, entetes: { 'content-type': 'application/octet-stream' } });
+  assert.equal((await envoi('x/../a.iso')).status, 400);
+  const e = await envoi('outils-v2.iso');
+  assert.equal(e.status, 200, JSON.stringify(e.json));
+  const recue = pve.etat.isos.find(i => i.volid === 'local:iso/outils-v2.iso');
+  assert.ok(recue.octets.equals(fichier), 'le fichier arrive entier');
+  assert.equal(recue.node, 'pve-b');
+
+  // Lecteur CD : insérer, éjecter ; un conteneur n'en a pas.
+  assert.equal((await admin.post(machine() + '/lecteur', { volid: 'local:iso/../../etc/passwd' })).status, 400);
+  assert.equal((await admin.post(machine('pve-a', 'lxc', 110) + '/lecteur', { volid: 'local:iso/alpine-virt-3.22.iso' })).status, 400);
+  const ins = await admin.post(machine() + '/lecteur', { volid: 'local:iso/alpine-virt-3.22.iso' });
+  assert.deepEqual([ins.status, ins.json.lecteur, pve.appels.at(-1).params.ide2], [200, 'ide2', 'local:iso/alpine-virt-3.22.iso,media=cdrom']);
+
+  // Supprimer : refusé tant qu'une VM la tient ; possible une fois éjectée.
+  const tenue = await admin.del(`/api/isos/pve-a/local?volid=${encodeURIComponent('local:iso/alpine-virt-3.22.iso')}`);
+  assert.equal(tenue.status, 409);
+  assert.match(tenue.json.error, new RegExp(`101 \\(${pve.etat.machines.find(m => m.vmid === 101).name}\\)`));
+  assert.equal((await admin.post(machine() + '/lecteur', { volid: '' })).status, 200);
+  assert.equal(pve.appels.at(-1).params.ide2, 'none,media=cdrom');
+  assert.equal((await membre.del(`/api/isos/pve-a/local?volid=${encodeURIComponent('local:iso/alpine-virt-3.22.iso')}`)).status, 403);
+  assert.equal((await admin.del(`/api/isos/pve-a/sauvegardes?volid=${encodeURIComponent('local:iso/alpine-virt-3.22.iso')}`)).status, 400, 'hors du stockage nommé');
+  assert.equal((await admin.del(`/api/isos/pve-a/local?volid=${encodeURIComponent('local:iso/alpine-virt-3.22.iso')}`)).status, 200);
+  assert.ok(!pve.etat.isos.some(i => i.volid === 'local:iso/alpine-virt-3.22.iso'));
+  assert.ok(s.db.prepare("SELECT 1 FROM socle_journal WHERE action = 'iso.suppression'").get());
 });
 
 test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont rescellés, Proxmox reste joignable', async () => {
