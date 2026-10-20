@@ -223,6 +223,15 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
             m.mem = m.status === 'running' ? Math.round(m.maxmem / 3) : 0;
             return repondre(200, tache(node, `qm${action}`, m.vmid));
           }
+          if (reste === 'clone' && req.method === 'POST') {
+            const vmid = Number(params.newid);
+            if (etat.machines.some(x => x.vmid === vmid)) return repondre(500, null, `unable to create VM ${vmid}: config file already exists`);
+            if (params.snapname && !(etat.instantanes[cle] || []).some(x => x.name === params.snapname)) return repondre(500, null, `snapshot '${params.snapname}' does not exist`);
+            const nom = params.name || params.hostname;
+            if (nom === 'tache-en-echec') return repondre(200, tache(node, m.type === 'qemu' ? 'qmclone' : 'vzclone', m.vmid, "clone failed: lvcreate 'pve/vm-100-disk-0' error: /dev/pve: insufficient free space"));
+            etat.machines.push({ ...m, vmid, name: nom, status: 'stopped', cpu: 0, mem: 0, uptime: 0, template: 0, conf: { ...m.conf }, clone: { ...params, source: m.vmid } });
+            return repondre(200, tache(node, m.type === 'qemu' ? 'qmclone' : 'vzclone', m.vmid));
+          }
           if (reste === 'migrate' && req.method === 'POST') { m.node = params.target; return repondre(200, tache(node, 'qmigrate', m.vmid)); }
           if (s[4] === 'snapshot') {
             const liste = etat.instantanes[cle] ||= [];

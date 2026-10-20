@@ -9,7 +9,7 @@
 // machine), admin sous renfort récent (arrêt forcé, migration, configuration,
 // retour et suppression d'instantané, suppression de sauvegarde, arrêt d'une
 // tâche, shell d'un nœud, liaison à Proxmox, alertes, images ISO et lecteur
-// CD, création d'une VM, étiquettes). Supprimer une machine demande en plus son nom
+// CD, création et duplication d'une VM, étiquettes). Supprimer une machine demande en plus son nom
 // recopié et une confirmation d'identité faite pour elle seule.
 import { detecterClavier, activerConsoleSerie, agentActif } from './clavier.js';
 import crypto from 'node:crypto';
@@ -96,6 +96,11 @@ const S = {
   apercu: { url: { type: 'chaine', requis: true, max: 2000 } },
   iso: { volid: { type: 'chaine', requis: true, max: 320, motif: VOLID_ISO } },
   nomIso: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, volid: { type: 'chaine', requis: true, max: 320, motif: VOLID_ISO }, nom: { type: 'chaine', max: 80, defaut: '' } },
+  duplication: {
+    nom: { type: 'chaine', requis: true, max: 63, motif: NOEUD },
+    instantane: { type: 'chaine', max: 40, motif: new RegExp(`^$|${INSTANTANE.source}`), defaut: '' },
+    stockage: { type: 'chaine', max: 100, motif: new RegExp(`^$|${STOCKAGE.source}`), defaut: '' },
+  },
   etiquette: {
     genre: { type: 'chaine', requis: true, parmi: GENRES_ETIQUETTE }, noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD },
     objet: { type: 'chaine', requis: true, max: 320 }, etiquette: { type: 'chaine', max: 80, defaut: '' },
@@ -666,6 +671,31 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
   // dans Proxmox (qui ne sait pas renommer une image). Vide : le nom du fichier revient.
   // Clé d'un nom : le volume, précédé du nœud quand le stockage n'est pas
   // partagé (« local:iso/x.iso » existe sur chaque nœud, chacun le sien).
+  // Dupliquer une machine : copie complète faite par Proxmox, de son état
+  // actuel ou d'un de ses instantanés, sous un numéro libre, arrêtée. Proxmox
+  // donne une adresse MAC neuve à chaque carte réseau de la copie. Une grosse
+  // copie continue après la réponse : elle se suit dans Tâches.
+  r.post('/api/machines/:noeud/:type/:vmid/duplication', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const m = machine(ctx.params);
+    const b = await corps(ctx, S.duplication);
+    const [suivant, liste] = await pve(() => Promise.all([proxmox.get('/cluster/nextid'), b.instantane ? proxmox.get(m.base + '/snapshot') : []]));
+    if (b.instantane && !(liste || []).some(x => x.name === b.instantane && x.name !== 'current')) throw new ErreurHttp(404, 'Instantané introuvable.');
+    const vmid = nombre(suivant);
+    if (!VMID.test(String(vmid))) throw new ErreurHttp(502, 'Proxmox n’a pas donné de numéro libre.');
+    const upid = String(await pve(() => proxmox.post(m.base + '/clone', {
+      newid: vmid, full: 1, [m.type === 'qemu' ? 'name' : 'hostname']: b.nom,
+      ...(b.instantane ? { snapname: b.instantane } : {}), ...(b.stockage ? { storage: b.stockage } : {}),
+    })) || '');
+    const qui = acteur(ctx);
+    journal.ecrire({ acteur: qui.acteurCompte, action: 'machine.duplication', objet: m.cible, ip: ctx.ip, details: { copie: `${m.type}/${vmid}`, nom: b.nom, instantane: b.instantane || null, stockage: b.stockage || null } });
+    evenements.noter({ genre: 'vm.create_requested', niveau: 'info', titre: `${m.type === 'qemu' ? 'VM' : 'CT'} ${vmid} « ${b.nom} » : copie de ${m.cible}`, corps: `${b.instantane ? `Depuis l’instantané « ${b.instantane} »` : 'Depuis son état actuel'}${b.stockage ? `, sur ${b.stockage}` : ''}. Par ${qui.acteur}.`, cible: `${m.type}/${vmid}`, noeud: m.noeud, ...qui });
+    let sortie = null;
+    try { sortie = await attendreTache(m.noeud, upid, 60000); } catch (e) { if (!(e instanceof ErreurHttp) || e.status !== 504) throw e; }
+    if (sortie !== null && sortie !== 'OK') throw new ErreurHttp(502, `Proxmox n’a pas dupliqué la machine : ${sortie.replace(/\/[\w./-]+/g, '…').slice(0, 200)}`);
+    return { vmid, noeud: m.noeud, type: m.type, fini: sortie === 'OK', upid };
+  }, { role: 'admin' });
+
   // Gardée pour les clients d'avant : c'est l'étiquette d'une image.
   r.put('/api/isos/nom', async ctx => {
     session(ctx, { role: 'admin', renfort: true });

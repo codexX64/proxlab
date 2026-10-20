@@ -1016,6 +1016,43 @@ test('étiquettes : posées par ProxLab sur une image, une interface, un stockag
   } finally { pve.etat.reseau['pve-a'] = []; }
 });
 
+test('dupliquer une machine : copie complète par Proxmox, de son état actuel ou d\'un instantané, administrateur sous renfort', async () => {
+  const url = machine() + '/duplication';
+  assert.equal((await membre.post(url, { nom: 'copie' })).status, 403);
+  await sansRenfort(async () => assert.equal((await admin.post(url, { nom: 'copie' })).status, 403));
+  const n0 = pve.appels.length;
+  for (const corpsFaux of [{ nom: 'avec espace' }, { nom: '' }, { nom: 'copie', instantane: '../x' }, { nom: 'copie', stockage: 'local/../x' }, { nom: 'copie', complet: 0 }]) {
+    assert.equal((await admin.post(url, corpsFaux)).status, 400, JSON.stringify(corpsFaux));
+  }
+  assert.equal(pve.appels.length, n0, 'rien n’a atteint Proxmox');
+  // Instantané inconnu : refusé avant toute copie.
+  assert.equal((await admin.post(url, { nom: 'copie', instantane: 'nexiste-pas' })).status, 404);
+  assert.ok(!pve.appels.some(a => /\/clone$/.test(a.chemin)));
+  const avant = pve.etat.machines.length;
+  const r = await admin.post(url, { nom: 'passerelle-copie' });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.deepEqual([r.json.noeud, r.json.type, r.json.fini], ['pve-a', 'qemu', true]);
+  const c = pve.etat.machines.find(x => x.vmid === r.json.vmid);
+  assert.deepEqual([c.name, c.status, c.clone.full, c.clone.snapname, c.clone.source], ['passerelle-copie', 'stopped', '1', undefined, 101]);
+  assert.equal(pve.etat.machines.length, avant + 1);
+  const i = await admin.post(url, { nom: 'depuis-instantane', instantane: 'avant-maj', stockage: 'local-lvm' });
+  assert.equal(i.status, 200, JSON.stringify(i.json));
+  const ci = pve.etat.machines.find(x => x.vmid === i.json.vmid);
+  assert.deepEqual([ci.clone.snapname, ci.clone.storage, ci.clone.full], ['avant-maj', 'local-lvm', '1']);
+  // Un conteneur : son nom va dans hostname.
+  const ct = pve.etat.machines.find(x => x.type === 'lxc');
+  const rc = await admin.post(`/api/machines/${ct.node}/lxc/${ct.vmid}/duplication`, { nom: 'ct-copie' });
+  assert.equal(rc.status, 200, JSON.stringify(rc.json));
+  assert.equal(pve.etat.machines.find(x => x.vmid === rc.json.vmid).clone.hostname, 'ct-copie');
+  // Une copie qui échoue dans sa tâche : dite, sans chemin de l'hyperviseur.
+  const e = await admin.post(url, { nom: 'tache-en-echec' });
+  assert.equal(e.status, 502);
+  assert.match(e.json.error, /n’a pas dupliqué la machine : .*insufficient free space/);
+  assert.doesNotMatch(e.json.error, /\/dev\/pve/);
+  assert.ok(s.db.prepare("SELECT 1 FROM socle_journal WHERE action = 'machine.duplication' AND objet = 'qemu/101'").get());
+  for (const v of [r.json.vmid, i.json.vmid, rc.json.vmid]) pve.etat.machines.splice(pve.etat.machines.findIndex(x => x.vmid === v), 1);
+});
+
 test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont rescellés, Proxmox reste joignable', async () => {
   await s.arreter();
   const neuve = crypto.randomBytes(32).toString('base64');
