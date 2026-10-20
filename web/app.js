@@ -90,7 +90,7 @@ const GENRES = {
   'vm.destroyed': 'Destruction', 'vm.restored': 'Restauration', 'vm.start_failed': 'Démarrage échoué', 'vm.migrated': 'Migration',
   'vm.configured': 'Configuration', 'snapshot.created': 'Instantané', 'snapshot.rolled_back': 'Retour d\'instantané',
   'snapshot.deleted': 'Instantané supprimé', 'backup.started': 'Sauvegarde', 'backup.deleted': 'Sauvegarde supprimée', 'panel.configured': 'Liaison',
-  'vm.delete_requested': 'Suppression demandée', 'iso.added': 'Image ISO ajoutée', 'iso.deleted': 'Image ISO supprimée',
+  'vm.delete_requested': 'Suppression demandée', 'vm.create_requested': 'Création', 'iso.added': 'Image ISO ajoutée', 'iso.deleted': 'Image ISO supprimée',
 };
 const tagNiveau = n => h('span', { class: 'tag ' + (n === 'critique' ? 'held' : n === 'avertissement' ? 'warn' : 'idle') }, h('i', { class: 'd' }), n === 'critique' ? 'Critique' : n === 'avertissement' ? 'Avertissement' : 'Info');
 function tagMachine(m) {
@@ -406,7 +406,8 @@ async function pageMachines() {
   enregistrer(peindre);
   peindre();
   return h('div', { class: 'page' },
-    h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Machines' }), h('p', { class: 'lede', text: 'Machines virtuelles et conteneurs de la grappe, sur tous les nœuds.' }))),
+    h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Machines' }), h('p', { class: 'lede', text: 'Machines virtuelles et conteneurs de la grappe, sur tous les nœuds.' })),
+      admin && E.etat.relie ? h('div', { class: 'actions' }, h('button', { class: 'btn solid', type: 'button', onclick: sur(() => creerMachine()) }, icone('plus', 14), h('span', { class: 'cache-s', text: 'Nouvelle VM' }))) : null),
     h('div', { class: 'card' }, h('div', { class: 'barre' }, choix, q, compte),
       h('div', { class: 'tw' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', { text: 'Machine' }), h('th', { class: 'cache-m', text: 'Nœud' }), h('th', { class: 'cache-l', text: 'Processeur' }), h('th', { class: 'cache-l', text: 'Mémoire' }), h('th', { class: 'cache-s', text: 'En marche depuis' }), h('th', { text: 'État' }))), corps))));
 }
@@ -560,6 +561,68 @@ function instantanes(f, base, relire) {
             await api.del(`${base}/instantanes/${encodeURIComponent(s.name)}`); toast('Suppression demandée.'); setTimeout(() => relire().catch(() => {}), 1500);
           }) }, icone('corbeille', 14)))) : null))
         : h('tr', {}, h('td', { colspan: admin ? 4 : 3, class: 'vide', text: 'Aucun instantané.' }))))));
+}
+
+// Créer une VM : nom, système, image, ressources, disque et réseau, avec ce
+// que le nœud choisi propose vraiment. Le serveur revérifie chaque choix.
+const MEMOIRES = [1024, 2048, 4096, 8192, 16384, 32768, 65536];
+async function creerMachine({ iso = '', noeud = '' } = {}) {
+  const enLigne = E.etat.noeuds.filter(n => n.status === 'online');
+  if (!enLigne.length) { toast('Aucun nœud en ligne.', true); return; }
+  const champ = (lbl, el) => h('label', { class: 'lbl-champ' }, h('span', { text: lbl }), el);
+  const nom = h('input', { class: 'field', maxlength: 63, placeholder: 'ma-vm', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Nom' });
+  const nd = h('select', { class: 'field', 'aria-label': 'Nœud' }, enLigne.map(n => h('option', { value: n.node, text: n.node, selected: n.node === noeud })));
+  let systeme = 'linux';
+  const systemes = h('div', { class: 'views plein' }, [['linux', 'Linux'], ['windows', 'Windows 11'], ['autre', 'Autre']].map(([v, t]) => h('button', { class: 'view' + (v === systeme ? ' on' : ''), type: 'button', text: t, onclick: e => {
+    systeme = v; [...systemes.children].forEach(b => b.classList.toggle('on', b === e.currentTarget));
+    if (v === 'windows' && Number(mem.value) < 4096) mem.value = '4096';
+    if (v === 'windows' && Number(disque.value) < 64) disque.value = '64';
+  } })));
+  const image = h('select', { class: 'field', 'aria-label': 'Image ISO' });
+  const coeurs = h('input', { class: 'field', type: 'number', min: 1, max: 128, value: 2, 'aria-label': 'Cœurs' });
+  const mem = h('select', { class: 'field', 'aria-label': 'Mémoire' }, MEMOIRES.map(m => h('option', { value: String(m), text: `${m / 1024} Gio`, selected: m === 2048 })));
+  const disque = h('input', { class: 'field', type: 'number', min: 1, max: 65536, value: 32, 'aria-label': 'Disque en Gio' });
+  const stockage = h('select', { class: 'field', 'aria-label': 'Stockage du disque' });
+  const pont = h('select', { class: 'field', 'aria-label': 'Réseau' });
+  const demarrer = h('input', { type: 'checkbox', checked: true });
+  const resume = h('p', { class: 'hint' });
+  const err = h('p', { class: 'erreur', role: 'alert' });
+  let o = null;
+  const charger = async () => {
+    err.textContent = '';
+    o = await api.get(`/api/machines/options?noeud=${encodeURIComponent(nd.value)}`);
+    image.replaceChildren(h('option', { value: '', text: 'Aucune (lecteur vide)' }), ...o.isos.map(i => h('option', { value: i.volid, text: i.nom, selected: i.volid === iso })));
+    stockage.replaceChildren(...o.stockages.map(x => h('option', { value: x.storage, text: `${x.storage} — ${octets(x.avail)} libres` })));
+    pont.replaceChildren(...o.ponts.map(b => h('option', { value: b, text: b })));
+    coeurs.max = o.noeud.maxcpu;
+    for (const opt of mem.options) opt.disabled = Number(opt.value) * 1048576 > o.noeud.maxmem;
+    resume.textContent = `Numéro proposé : ${o.vmid}. ${nd.value} : ${o.noeud.maxcpu} cœurs, ${octets(o.noeud.maxmem)} de mémoire.`;
+    if (!o.stockages.length) err.textContent = `Aucun stockage de ${nd.value} ne prend de disque de VM.`;
+  };
+  nd.addEventListener('change', () => charger().catch(x => { err.textContent = x.message; }));
+  await charger();
+  const cree = await dialogue({ titre: 'Nouvelle machine virtuelle', large: true,
+    contenu: [
+      h('div', { class: 'row2' }, champ('Nom', nom), champ('Nœud', nd)),
+      h('div', { class: 'lbl-champ mt9' }, h('span', { text: 'Système' }), systemes),
+      h('div', { class: 'mt9' }, champ('Image d’installation', image)),
+      h('div', { class: 'row2 mt9' }, champ('Cœurs', coeurs), champ('Mémoire', mem)),
+      h('div', { class: 'row2 mt9' }, champ('Disque (Gio)', disque), champ('Stockage du disque', stockage)),
+      h('div', { class: 'mt9' }, champ('Réseau', pont)),
+      h('label', { class: 'chk mt10' }, demarrer, 'Démarrer une fois créée'),
+      resume, err,
+    ],
+    boutons: [{ texte: 'Annuler', classe: 'flat', valeur: null }, { texte: 'Créer', classe: 'solid', agir: async () => {
+      if (!/^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,61}[A-Za-z0-9])?$/.test(nom.value.trim())) { err.textContent = 'Nom : lettres, chiffres, points et tirets, sans espace.'; return false; }
+      err.textContent = 'Création…';
+      try {
+        return await api.post('/api/machines', { noeud: nd.value, nom: nom.value.trim(), systeme, coeurs: Number(coeurs.value), memoire: Number(mem.value), disque: Number(disque.value), stockage: stockage.value, iso: image.value, pont: pont.value, demarrer: demarrer.checked });
+      } catch (x) { err.textContent = x.message; return false; }
+    } }] });
+  if (!cree?.vmid) return;
+  toast(`VM ${cree.vmid} créée${cree.demarree ? ' et démarrée' : ''}.`);
+  await rafraichir();
+  aller('fiche', [cree.noeud, 'qemu', String(cree.vmid)]);
 }
 
 // Supprimer une machine arrêtée : son nom recopié, puis la confirmation
@@ -1345,8 +1408,11 @@ async function pageIsos() {
           h('td', { class: 'cache-s' }, i.utilisePar.length ? i.utilisePar.map(u => h('span', { class: 'tag idle' }, `${u.vmid} ${u.name || ''}`.trim(),
             admin ? h('button', { class: 'ghost', type: 'button', 'aria-label': `Éjecter de ${u.vmid}`, title: 'Éjecter', onclick: ejecter(u) }, icone('ejecter', 12)) : null)) : h('span', { class: 'dim', text: '—' })),
           admin ? h('td', { class: 'fin' }, h('div', { class: 'actions' },
-            h('button', { class: 'btn sm', type: 'button', onclick: inserer(i) }, 'Insérer'),
-            h('button', { class: 'btn sm flat danger', type: 'button', 'aria-label': `Supprimer ${i.nom}`, title: i.utilisePar.length ? 'Éjecte-la d\'abord' : 'Supprimer', disabled: i.utilisePar.length > 0, onclick: supprimer(i) }, icone('corbeille', 14)))) : null))
+            h('button', { class: 'btn sm', type: 'button', onclick: sur(() => creerMachine({ iso: i.volid, noeud: i.node })) }, icone('plus', 13), h('span', { class: 'cache-s', text: 'Créer une VM' })),
+            h('button', { class: 'btn sm flat', type: 'button', 'aria-label': `Actions pour ${i.nom}`, onclick: () => feuille(i.nom, [
+              { texte: 'Insérer dans une VM', agir: inserer(i) },
+              { texte: i.utilisePar.length ? 'Supprimer (éjecte-la d’abord)' : 'Supprimer', danger: true, agir: i.utilisePar.length ? () => toast(`Dans le lecteur de ${i.utilisePar.map(u => u.vmid).join(', ')} : éjecte-la d’abord.`, true) : supprimer(i) },
+            ]) }, icone('actions', 15)))) : null))
           : h('tr', {}, h('td', { colspan: colonnes, class: 'vide', text: d.stockages.length ? 'Aucune image : télécharge-en une, ou envoie-la depuis ton ordinateur.' : 'Aucun stockage n\'accepte d\'images ISO.' })))))));
   };
   enregistrer(() => recharger().catch(() => {}));
