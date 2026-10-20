@@ -189,9 +189,12 @@ QEMU, port série (la console) et VirtIO-GPU (l'écran s'ajuste à la fenêtre).
 Windows 11 : UEFI, TPM, disque SATA et carte e1000, que l'installeur reconnaît
 sans pilote. Administrateur, sous renfort, au journal.
 
-**Renommer une image.** Proxmox ne sait pas renommer une image : ProxLab garde
-un nom affiché pour chacune (menu ⋯ → Renommer), le fichier garde le sien,
-montré dessous. Vide, le nom du fichier revient.
+**Étiquettes.** Une image, une interface réseau (page Réseau), un stockage ou un
+nœud reçoit un nom lisible (bouton étiquette, ou menu ⋯ → Étiquette pour une
+image) : « Ghost » au lieu de `vmbr1`. C'est ProxLab qui le garde ; dans Proxmox
+rien n'est renommé, le vrai nom reste écrit dessous et c'est lui qu'une VM
+reçoit. Les choix de « Nouvelle VM » montrent les étiquettes. Vide, le nom de
+Proxmox revient. Administrateur, sous renfort, au journal.
 
 **Supprimer une machine.** Fiche d'une machine arrêtée → « Supprimer », recopier
 son nom, « Supprimer avec ma clé ». La clé d'accès (à défaut le code TOTP) est
