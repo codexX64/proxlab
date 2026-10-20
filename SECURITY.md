@@ -71,6 +71,8 @@ Suivi du 2026-10-20 (2.6.0) : **écran qui fige après une absence**. Un écran 
 
 Suivi du 2026-10-20 (2.7.0) : **majuscules dans l'écran d'une VM**. macOS ne donne qu'un keydown à l'allumage de Verr. Maj et qu'un keyup à l'extinction : l'invité ne basculait qu'une fois sur deux et restait en majuscules. L'écran demande à QEMU l'état des voyants (pseudo-encodage -261) et aligne Verr. Maj de l'invité sur celui d'ici à chaque touche (`web/ecran.js:461`) ; un texte tapé par ProxLab l'éteint d'abord. Rien de neuf ne passe le relais : un message SetEncodings, déjà permis. Aucun contrôle ne change de statut. Essais : 31 du service ; parcours du navigateur : VM restée en majuscules, réalignée à la première touche, sans rattrapage ensuite.
 
+Suivi du 2026-10-20 (2.8.0) : **écran rogné en plein écran**. Une console texte Linux garde la taille de son démarrage ; rapetissée à la taille d'une fenêtre plus petite, elle n'affichait plus que son coin haut gauche. La VM grandit avec la fenêtre mais ne rapetisse plus d'elle-même ; l'image est réduite pour tenir (`web/app.js:869`). Rapetisser se fait à la demande, et « Revenir à … (écran entier) » rend la plus grande taille vue pour cette VM. Verr. Maj de la VM affiché dans l'état de l'écran, avec une action pour le basculer. Changements d'interface seulement : aucun contrôle ne change de statut. Essais : 31 du service ; parcours du navigateur : 9 vérifications (agrandir, ne pas rapetisser, image réduite, rapetisser à la demande, revenir, voyant Verr. Maj).
+
 ## Control status
 | ID | Severity | Status | Evidence | Notes |
 |---|---|---|---|---|

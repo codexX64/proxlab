@@ -198,3 +198,7 @@ Battement des connexions écran et console, reprise de l'écran au retour. Les 3
 ## Suivi du 2026-10-20 (2.7.0)
 
 Verr. Maj de l'invité aligné sur les voyants annoncés par QEMU. Les 31 essais restent verts sans retouche.
+
+## Suivi du 2026-10-20 (2.8.0)
+
+Taille de l'écran : agrandir seulement, rapetisser à la demande, revenir à la plus grande taille vue ; voyant Verr. Maj. Les 31 essais restent verts sans retouche.
