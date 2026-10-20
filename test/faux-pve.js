@@ -378,11 +378,16 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
         if (!n || tampon.length < n) return;
         const m = tampon.subarray(0, n); tampon = tampon.subarray(n);
         e.messages.push([...m]);
+        // Comme QEMU : l'état des voyants (-261) envoyé à qui le demande, puis
+        // à chaque changement ; la touche Verr. Maj de l'invité le bascule.
+        const voyants = () => { const t = Buffer.alloc(17); t.writeUInt16BE(1, 2); t.writeInt32BE(-261, 12); t[16] = e.caps ? 4 : 0; ws.envoyerBinaire(t); };
+        if (m[0] === 255 && m.readUInt32BE(8) === 0x3a && m.readUInt16BE(2) === 1) { e.caps = !e.caps; if (e.voyants) voyants(); }
         if (m[0] === 2) {
           const encs = Array.from({ length: m.readUInt16BE(2) }, (_, i) => m.readInt32BE(4 + 4 * i));
           // QEMU accuse la touche étendue par un rectangle -258 vide.
           if (encs.includes(-258)) { const t = Buffer.alloc(16); t.writeUInt16BE(1, 2); t.writeInt32BE(-258, 12); ws.envoyerBinaire(t); }
           if (encs.includes(-308)) etendu(0, 0);
+          if (encs.includes(-261)) { e.voyants = true; e.caps = !!etat.verrMaj?.[vt.cle]; voyants(); }
           if (encs.includes(0xC0A1E5CE | 0)) { e.ext = true; const max = Buffer.alloc(4); max.writeUInt32BE(64 * 1024); couper(ext.CAPS | ext.REQUEST | ext.NOTIFY | ext.PROVIDE | ext.TEXTE, max); }
         }
         if (m[0] === 6) {

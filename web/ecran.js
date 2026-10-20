@@ -43,8 +43,9 @@ export function keysym(e) {
 export const codeQemu = xt => ((xt >> 8) === 0xe0 && (xt & 0xff) < 0x7f ? (xt & 0xff) | 0x80 : xt);
 
 const PRESSE_EXT = 0xC0A1E5CE | 0;       // pseudo-encodage du presse-papiers étendu
-// CopyRect, Raw, DesktopSize, ExtendedDesktopSize, touche étendue QEMU, presse-papiers
-const ENCODAGES = [1, 0, -223, -308, -258, PRESSE_EXT];
+// CopyRect, Raw, DesktopSize, ExtendedDesktopSize, touche étendue QEMU,
+// voyants du clavier de QEMU (Verr. Maj), presse-papiers
+const ENCODAGES = [1, 0, -223, -308, -258, -261, PRESSE_EXT];
 const PP = { TEXTE: 1, CAPS: 1 << 24, REQUEST: 1 << 25, PEEK: 1 << 26, NOTIFY: 1 << 27, PROVIDE: 1 << 28 };
 const PRESSE_MAX = 64 * 1024 - 64;      // ProxLab refuse au-delà de 64 Kio
 export const FRAPPE_MAX = 4000;
@@ -231,6 +232,11 @@ export class Ecran {
         if (premier) this.surEtat('ajustable');
       }
       else if (r.enc === -258) this.qemu = true;
+      else if (r.enc === -261) {
+        // Voyants de l'invité : bit 0 Arrêt défil., bit 1 Verr. num., bit 2 Verr. Maj.
+        const s = this.prendre(1); if (!s) return false;
+        this.verrous = { caps: !!(s[0] & 4) };
+      }
       else throw new Error(`encodage ${r.enc} non demandé`);
       this.rect = null;
       if (--this.rects <= 0) this.finImage();
@@ -356,6 +362,8 @@ export class Ecran {
   async taper(texte, disposition = 'fr', { surAvance = () => {} } = {}) {
     const carte = DISPOSITIONS[disposition]?.carte || DISPOSITIONS.fr.carte;
     const caracteres = [...String(texte).replace(/\r\n?/g, '\n')].slice(0, FRAPPE_MAX);
+    // Verr. Maj allumé dans l'invité inverserait la casse du texte tapé.
+    if (this.verrous?.caps) this.basculerCaps();
     let sautes = 0;
     for (let i = 0; i < caracteres.length; i++) {
       if (!this.actif || this.ws.readyState !== 1) break;
@@ -441,6 +449,19 @@ export class Ecran {
     for (const [code, key] of seq) this.touche({ code, key }, true);
     for (const [code, key] of seq.reverse()) this.touche({ code, key }, false);
   }
+  // Verr. Maj : celui de l'invité suit celui d'ici. macOS ne donne qu'un
+  // keydown à l'allumage et qu'un keyup à l'extinction : l'invité ne
+  // basculait qu'une fois sur deux et restait en majuscules. Chaque touche
+  // compare donc l'état d'ici aux voyants que QEMU annonce, et rattrape un
+  // écart d'un appui sur Verr. Maj.
+  basculerCaps() {
+    this.touche({ code: 'CapsLock', key: 'CapsLock' }, true); this.touche({ code: 'CapsLock', key: 'CapsLock' }, false);
+    if (this.verrous) this.verrous.caps = !this.verrous.caps;   // la VM le confirmera
+  }
+  synchroniserCaps(e) {
+    if (!this.verrous || e.code === 'CapsLock' || typeof e.getModifierState !== 'function') return;
+    if (e.getModifierState('CapsLock') !== this.verrous.caps) this.basculerCaps();
+  }
   relacher() { for (const [code, key] of this.enfoncees) this.touche({ code, key }, false); this.enfoncees.clear(); this.metaSeul = null; }
 
   brancher() {
@@ -462,6 +483,14 @@ export class Ecran {
         return;
       }
       e.preventDefault();
+      if (e.code === 'CapsLock') {
+        // Voyants connus : rien n'est envoyé, l'invité est aligné à la touche
+        // suivante. Sans eux : sur Mac chaque événement est un appui complet,
+        // ailleurs la touche part telle quelle.
+        if (this.verrous) return;
+        if (this.mac) { this.basculerCaps(); return; }
+      }
+      this.synchroniserCaps(e);
       if (this.mac && /^Meta/.test(e.code)) { this.metaSeul = e.code; return; }
       if (mod(e) && /^[cxazy]$/.test(lettre) && /^Key/.test(e.code)) {
         if (e.repeat) return;
@@ -478,6 +507,7 @@ export class Ecran {
     });
     t.addEventListener('keyup', e => {
       e.preventDefault();
+      if (e.code === 'CapsLock' && this.mac && !this.verrous) { this.basculerCaps(); return; }
       if (this.mac && /^Meta/.test(e.code) && this.metaSeul === e.code) { this.metaSeul = null; this.touche({ code: e.code, key: 'Meta' }, true); this.touche({ code: e.code, key: 'Meta' }, false); return; }
       if (!this.enfoncees.has(e.code)) return;
       const key = this.enfoncees.get(e.code) ?? e.key;
