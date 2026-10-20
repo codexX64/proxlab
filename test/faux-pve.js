@@ -135,7 +135,6 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
         const node = s[1];
         if (s[2] === 'network') return repondre(200, [{ iface: 'vmbr0', type: 'bridge', cidr: node === 'pve-a' ? '192.0.2.10/24' : '192.0.2.11/24', gateway: '192.0.2.1', bridge_ports: 'eno1', active: 1 }, { iface: 'eno1', type: 'eth', active: 1 }]);
         if (s[2] === 'rrddata') return repondre(200, rrd(1));
-        if (s[2] === 'query-url-metadata') return repondre(200, { filename: new URL(params.url).pathname.split('/').pop(), size: 2147483648, mimetype: 'application/x-iso9660-image' });
         if (s[2] === 'vzdump' && req.method === 'POST') {
           const m = etat.machines.find(x => String(x.vmid) === params.vmid);
           etat.sauvegardes.unshift({ storage: params.storage, volid: `${params.storage}:backup/vzdump-${m.type}-${m.vmid}-essai-${compteur}.vma.zst`, ctime: Math.floor(Date.now() / 1000), size: 1e9, vmid: m.vmid, format: 'vma.zst', content: 'backup' });
@@ -165,10 +164,6 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
             if (params.content !== 'iso' || !params.filename) return repondre(400, null, 'parameter verification failed');
             etat.isos.push({ node, storage: st, volid: `${st}:iso/${params.filename.nom}`, size: params.filename.taille, ctime: Math.floor(Date.now() / 1000), format: 'iso', content: 'iso', octets: params.filename.octets });
             return repondre(200, tache(node, 'imgcopy', ''));
-          }
-          if (s[4] === 'download-url' && req.method === 'POST') {
-            etat.isos.push({ node, storage: st, volid: `${st}:iso/${params.filename}`, size: 1048576, ctime: Math.floor(Date.now() / 1000), format: 'iso', content: 'iso', depuis: params.url });
-            return repondre(200, tache(node, 'download', ''));
           }
           if (s[4] === 'content' && req.method === 'DELETE') {
             const volid = decodeURIComponent(s[5]);

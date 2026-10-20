@@ -766,6 +766,9 @@ test('console série muette : la connexion activée dans la VM par l\'agent QEMU
   vm.conf.agent = '1';
 });
 
+// Une image ISO 9660 minimale : « CD001 » au secteur 16, le reste au hasard.
+function isoFactice(n) { const b = crypto.randomBytes(n); b.write('\x01CD001', 32768, 'latin1'); return b; }
+
 // La clé d'accès de l'administrateur, comme le navigateur la présente.
 async function renforcerParCle(c = admin) {
   const o = await c.post('/api/compte/renfort/options');
@@ -814,21 +817,67 @@ test('images ISO : inventaire avec les lecteurs qui les tiennent, téléchargeme
   assert.deepEqual(debian.utilisePar.map(u => [u.vmid, u.lecteur]), [[101, 'ide2']]);
   assert.equal((await membre.post('/api/isos/pve-a/local/telechargement', { url: 'https://exemple.test/a.iso', nom: 'a.iso' })).status, 403);
 
-  // Téléchargement : http(s) seulement, sans identifiants, nom d'image valide.
-  for (const url of ['file:///etc/passwd', 'ftp://exemple.test/a.iso', 'https://moi:secret@exemple.test/a.iso', 'pas une adresse']) {
-    assert.equal((await admin.post('/api/isos/pve-a/local/telechargement', { url, nom: 'a.iso' })).status, 400, url);
-  }
-  assert.equal((await admin.post('/api/isos/pve-a/local/telechargement', { url: 'https://exemple.test/a.iso', nom: '../a.iso' })).status, 400);
-  assert.equal((await admin.post('/api/isos/pve-a/local/telechargement', { url: 'https://exemple.test/a.iso', nom: 'a.exe' })).status, 400);
-  const meta = await admin.get(`/api/isos/metadonnees?noeud=pve-a&url=${encodeURIComponent('https://exemple.test/images/fedora-43.iso')}`);
-  assert.deepEqual([meta.json.nom, meta.json.taille], ['fedora-43.iso', 2147483648]);
-  const tl = await admin.post('/api/isos/pve-a/local/telechargement', { url: 'https://exemple.test/images/fedora-43.iso', nom: 'fedora-43.iso', somme: 'AB'.repeat(32) });
-  assert.equal(tl.status, 200, JSON.stringify(tl.json));
-  const p = pve.appels.at(-1).params;
-  assert.deepEqual([p.filename, p.content, p.checksum, p['checksum-algorithm'], p['verify-certificates']], ['fedora-43.iso', 'iso', 'ab'.repeat(32), 'sha256', '1']);
+  // Importer depuis une adresse : https public seulement, résolu puis épinglé ;
+  // ProxLab lit l'image, en contrôle la signature et la somme, et la remet à Proxmox.
+  const { configurer } = await import('../src/sortie.js');
+  const { Readable } = await import('node:stream');
+  const fedora = isoFactice(400000), html = Buffer.from('<html><script>alert(1)</script></html>'.padEnd(40000, ' '));
+  const noms = { 'miroir.exemple': '203.0.114.10', 'interne.exemple': '10.0.0.5', 'meta.exemple': '169.254.169.254', 'v6.exemple': '::ffff:127.0.0.1' };
+  const pages = {
+    'https://miroir.exemple/images/fedora-43.iso': { statut: 200, entetes: { 'content-length': String(fedora.length) }, corps: fedora },
+    'https://miroir.exemple/page.iso': { statut: 200, entetes: { 'content-length': String(html.length) }, corps: html },
+    'https://miroir.exemple/sans-taille.iso': { statut: 200, entetes: {}, corps: fedora },
+    'https://miroir.exemple/vers-interne.iso': { statut: 302, entetes: { location: 'https://interne.exemple/a.iso' }, corps: Buffer.alloc(0) },
+    'https://miroir.exemple/vers-http.iso': { statut: 301, entetes: { location: 'http://miroir.exemple/images/fedora-43.iso' }, corps: Buffer.alloc(0) },
+  };
+  const connexions = [];
+  configurer({
+    resolveur: (nom, cb) => (noms[nom] ? cb(null, [{ address: noms[nom], family: noms[nom].includes(':') ? 6 : 4 }]) : cb(Object.assign(new Error('introuvable'), { code: 'ENOTFOUND' }))),
+    transport: async (url, adresse) => { connexions.push([url.href, adresse.address]); const p = pages[url.href]; if (!p) return { statut: 404, entetes: {}, flux: Readable.from([]) }; return { statut: p.statut, entetes: p.entetes, flux: Readable.from([p.corps]) }; },
+  });
+  try {
+    const importer = (url, nom = 'a.iso', extra = {}) => admin.post('/api/isos/pve-a/local/telechargement', { url, nom, ...extra });
+    for (const url of ['file:///etc/passwd', 'http://miroir.exemple/a.iso', 'https://moi:secret@miroir.exemple/a.iso', 'pas une adresse']) assert.equal((await importer(url)).status, 400, url);
+    assert.equal((await importer('https://miroir.exemple/a.iso', '../a.iso')).status, 400);
+    assert.equal((await importer('https://miroir.exemple/a.iso', 'a.exe')).status, 400);
+    assert.equal((await importer('https://miroir.exemple/a.iso', 'a.iso', { somme: 'ab' })).status, 400);
+    assert.equal((await importer('https://miroir.exemple/a.iso', 'a.iso', { somme: 'ab'.repeat(20) })).status, 400, 'longueur de la somme selon l’algorithme');
+    assert.equal((await membre.post('/api/isos/pve-a/local/telechargement', { url: 'https://miroir.exemple/a.iso', nom: 'a.iso' })).status, 403);
+    const apercu = await admin.get(`/api/isos/apercu?url=${encodeURIComponent('https://miroir.exemple/images/fedora-43.iso')}`);
+    assert.deepEqual([apercu.json.nom, apercu.json.taille], ['fedora-43.iso', fedora.length]);
+    const fin = async id => { for (let i = 0; i < 200; i++) { const l = (await admin.get('/api/isos/importations')).json; const t = l.find(x => x.id === id); if (t.etat !== 'en cours') return t; await new Promise(r => setTimeout(r, 25)); } throw new Error('importation sans fin'); };
+    // Adresses internes, métadonnées, IPv4 glissée dans une IPv6, redirection vers l'interne : refusées, rien n'est demandé au serveur interne.
+    for (const [url, motif] of [['https://interne.exemple/a.iso', /privée ou réservée/], ['https://meta.exemple/a.iso', /privée ou réservée/], ['https://169.254.169.254/latest/a.iso', /privée ou réservée/], ['https://v6.exemple/a.iso', /privée ou réservée/], ['https://miroir.exemple/vers-interne.iso', /interne\.exemple mène à une adresse privée/], ['https://miroir.exemple/vers-http.iso', /https seulement/]]) {
+      const r = await importer(url);
+      assert.equal(r.status, 200, url);
+      const t = await fin(r.json.importation);
+      assert.deepEqual([t.etat, motif.test(t.erreur)], ['échec', true], `${url} : ${t.erreur}`);
+    }
+    assert.ok(!connexions.some(([, ip]) => ip.startsWith('10.') || ip.startsWith('169.254') || ip.includes('127.')), 'aucune connexion vers une adresse interne');
+    // Pas une image de disque, ou sans taille annoncée : refusée avant d'envoyer un octet à Proxmox.
+    const n0 = pve.etat.isos.length;
+    assert.match((await fin((await importer('https://miroir.exemple/page.iso', 'page.iso')).json.importation)).erreur, /pas une image de disque/);
+    assert.match((await fin((await importer('https://miroir.exemple/sans-taille.iso', 'x.iso')).json.importation)).erreur, /Taille de l’image inconnue/);
+    assert.equal(pve.etat.isos.length, n0);
+    // Somme différente : l'image est retirée du stockage.
+    const fausse = await fin((await importer('https://miroir.exemple/images/fedora-43.iso', 'fedora-43.iso', { somme: '0'.repeat(64) })).json.importation);
+    assert.deepEqual([fausse.etat, /Somme de contrôle différente/.test(fausse.erreur)], ['échec', true]);
+    assert.ok(!pve.etat.isos.some(i => i.volid === 'local:iso/fedora-43.iso'), 'retirée après coup');
+    // La bonne : remise entière, somme vérifiée.
+    const bonne = await fin((await importer('https://miroir.exemple/images/fedora-43.iso', 'fedora-43.iso', { somme: crypto.createHash('sha256').update(fedora).digest('hex') })).json.importation);
+    assert.deepEqual([bonne.etat, bonne.octets, bonne.taille], ['terminée', fedora.length, fedora.length], bonne.erreur);
+    assert.ok(pve.etat.isos.find(i => i.volid === 'local:iso/fedora-43.iso').octets.equals(fedora));
+    assert.equal((await lecteur.get('/api/isos/importations')).status, 403);
+    // Les classes d'adresses, et le nom d'une image revérifié au relais même.
+    const { publique } = await import('../src/sortie.js');
+    assert.deepEqual(['203.0.114.10', '::ffff:203.0.114.10', '2a00:1450::1', '::ffff:7f00:1', '::1', '2001:db8::1', 'fd00::1', '100.64.0.1', '0.0.0.0', 'pas-une-ip'].map(publique), [true, true, true, false, false, false, false, false, false, false]);
+    await assert.rejects(s.api.images.relayer({ noeud: 'pve-a', stockage: 'local', nom: '../evil.iso', flux: Readable.from([fedora]), taille: fedora.length }), /Nom d’image/);
+  } finally { configurer({ resolveur: null, transport: null }); }
 
   // Envoi depuis le navigateur : relayé tel quel en multipart, octet pour octet.
-  const fichier = crypto.randomBytes(300000);
+  const fichier = isoFactice(300000);
+  const pasIso = await admin.req('PUT', '/api/isos/pve-b/local/envoi?nom=faux.iso', undefined, { brut: crypto.randomBytes(50000), entetes: { 'content-type': 'application/octet-stream' } });
+  assert.equal(pasIso.status, 415, 'un fichier qui n’est pas une image de disque est refusé');
   const envoi = n => admin.req('PUT', `/api/isos/pve-b/local/envoi?nom=${encodeURIComponent(n)}`, undefined, { brut: fichier, entetes: { 'content-type': 'application/octet-stream' } });
   assert.equal((await envoi('x/../a.iso')).status, 400);
   const e = await envoi('outils-v2.iso');
@@ -836,7 +885,6 @@ test('images ISO : inventaire avec les lecteurs qui les tiennent, téléchargeme
   const recue = pve.etat.isos.find(i => i.volid === 'local:iso/outils-v2.iso');
   assert.ok(recue.octets.equals(fichier), 'le fichier arrive entier');
   // Un flux plus long ou plus court que la taille annoncée n'arrive jamais entier chez Proxmox.
-  const { Readable } = await import('node:stream');
   const n0 = pve.etat.isos.length;
   const flux = octets => Readable.from([octets]);
   await assert.rejects(s.proxmox.envoyerFichier('/nodes/pve-b/storage/local/upload', { champs: { content: 'iso' }, champFichier: 'filename', nom: 'trop.iso', flux: flux(Buffer.alloc(20)), taille: 10 }), /plus long/);

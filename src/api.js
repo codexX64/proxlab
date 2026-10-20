@@ -18,6 +18,8 @@ import { ErreurProxmox, Proxmox, chemin } from './pve.js';
 import { observer, empreinte, empreinteValide } from './tls.js';
 import { ENTETE } from './alerte.js';
 import { classer } from './reseau.js';
+import { Images, ImageRefusee, FICHIER_ISO } from './images.js';
+import { DestinationRefusee, lireUrl } from './sortie.js';
 
 const NOEUD = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,62}[A-Za-z0-9])?$/;
 const STOCKAGE = /^[A-Za-z][A-Za-z0-9._-]{0,99}$/;
@@ -26,9 +28,7 @@ const VMID = /^[1-9]\d{1,8}$/;
 const UPID = /^UPID:[A-Za-z0-9.!@_:-]{10,250}$/;
 const VOLID = /^[A-Za-z][A-Za-z0-9._-]{0,99}:[A-Za-z0-9._\/-]{1,250}$/;
 const TYPES = ['qemu', 'lxc'];
-const FICHIER_ISO = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,200}\.(iso|img)$/i;
 const VOLID_ISO = /^[A-Za-z][A-Za-z0-9._-]{0,99}:iso\/[A-Za-z0-9][A-Za-z0-9._+-]{0,200}\.(iso|img)$/i;
-const ISO_MAX = 64 * 1024 ** 3;
 const LECTEUR = /^(ide|sata|scsi)\d{1,2}$/;
 // La confirmation d'identité d'une suppression : faite dans les deux minutes,
 // et pour cette suppression seulement.
@@ -81,22 +81,19 @@ const S = {
   telechargement: {
     url: { type: 'chaine', requis: true, max: 2000 }, nom: { type: 'chaine', requis: true, max: 205, motif: FICHIER_ISO },
     somme: { type: 'chaine', max: 128, motif: /^([A-Fa-f0-9]{32,128})?$/, defaut: '' },
-    algorithme: { type: 'chaine', parmi: ['md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512'], defaut: 'sha256' },
-    verifierCertificat: { type: 'booleen', defaut: true },
+    algorithme: { type: 'chaine', parmi: ['sha256', 'sha512', 'sha1', 'md5'], defaut: 'sha256' },
   },
   envoi: { nom: { type: 'chaine', requis: true, max: 205, motif: FICHIER_ISO } },
-  metadonnees: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, url: { type: 'chaine', requis: true, max: 2000 } },
+  apercu: { url: { type: 'chaine', requis: true, max: 2000 } },
   iso: { volid: { type: 'chaine', requis: true, max: 320, motif: VOLID_ISO } },
 };
 
-// L'adresse d'une image à télécharger : http ou https, sans identifiants.
-function urlTelechargement(u) {
-  let x;
-  try { x = new URL(u); } catch { throw new ErreurHttp(400, 'Adresse invalide.'); }
-  if (!['http:', 'https:'].includes(x.protocol)) throw new ErreurHttp(400, 'Adresse en http ou https seulement.');
-  if (x.username || x.password) throw new ErreurHttp(400, 'Pas d’identifiants dans l’adresse.');
-  return x.href;
+// Le refus d'une image ou d'une adresse, dit tel quel à l'opérateur.
+function versClientImage(e) {
+  if (e instanceof ImageRefusee || e instanceof DestinationRefusee) throw new ErreurHttp(e.status, e.message);
+  throw e;
 }
+const LONGUEUR_SOMME = { md5: 32, sha1: 40, sha256: 64, sha512: 128 };
 
 const ACTIONS = {
   start: ['guest.started', 'démarrée'], shutdown: ['guest.stopped', 'arrêtée proprement'], reboot: ['guest.rebooted', 'redémarrée'],
@@ -127,6 +124,8 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
   const r = new Routeur();
   const { portail, journal, limiteur, comptes } = socle;
   const pve = (fn) => fn().catch(e => versClient(e, log));
+  const images = new Images({ proxmox, journal, evenements, log });
+  const image = fn => pve(() => fn().catch(versClientImage));
 
   // Le jeton du Hub : vérifié en temps constant, un faux compte comme un échec
   // pour l'adresse (limiteur persistant du socle), jamais un repli sur la session.
@@ -550,30 +549,30 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     return { relie: true, ...(await inventaireIso()) };
   }, { role: 'lecture' });
 
-  // Le nom et la taille d'une image avant de la télécharger, lus par le nœud.
-  r.get('/api/isos/metadonnees', async ctx => {
+  // Le nom et la taille qu'annonce une adresse, avant de rien télécharger.
+  r.get('/api/isos/apercu', async ctx => {
     session(ctx, { role: 'admin' });
-    const { noeud: n, url } = ctx.q;
-    const d = await pve(() => proxmox.get(chemin('nodes', n, 'query-url-metadata'), { url: urlTelechargement(url), 'verify-certificates': 1 }));
-    const nom = String(d?.filename || '').split('/').pop().replace(/[^A-Za-z0-9._+-]/g, '-').replace(/^[^A-Za-z0-9]+/, '').slice(0, 200);
-    return { nom: FICHIER_ISO.test(nom) ? nom : '', taille: nombre(d?.size), type: String(d?.mimetype || '').slice(0, 100) };
-  }, { role: 'admin', requete: S.metadonnees });
+    return image(() => images.apercu(ctx.q.url));
+  }, { role: 'admin', requete: S.apercu });
 
-  // Télécharger une image depuis une adresse : c'est le nœud qui la tire, en
-  // tâche Proxmox, somme de contrôle vérifiée si elle est donnée.
+  // Importer une image depuis une adresse publique en https : ProxLab la
+  // télécharge, en vérifie la signature et, si elle est donnée, la somme de
+  // contrôle, et la remet à Proxmox à mesure — en tâche de fond.
   r.post('/api/isos/:noeud/:stockage/telechargement', async ctx => {
     session(ctx, { role: 'admin', renfort: true });
     const { n, stockage } = stockageDe(ctx.params);
     const b = await corps(ctx, S.telechargement);
-    const url = urlTelechargement(b.url);
-    const upid = await pve(() => proxmox.post(chemin('nodes', n, 'storage', stockage, 'download-url'), {
-      url, filename: b.nom, content: 'iso', 'verify-certificates': b.verifierCertificat ? 1 : 0,
-      ...(b.somme ? { checksum: b.somme.toLowerCase(), 'checksum-algorithm': b.algorithme } : {}),
-    }));
-    const qui = acteur(ctx);
-    journal.ecrire({ acteur: qui.acteurCompte, action: 'iso.telechargement', objet: `${stockage}:iso/${b.nom}`, ip: ctx.ip, details: { noeud: n, hote: new URL(url).host, somme: !!b.somme } });
-    evenements.noter({ genre: 'iso.added', niveau: 'info', titre: `${b.nom} : téléchargement lancé vers ${stockage}`, corps: `Depuis ${new URL(url).host}, par ${qui.acteur}.`, noeud: n, ...qui });
-    return { upid: String(upid || '') };
+    if (b.somme && b.somme.length !== LONGUEUR_SOMME[b.algorithme]) throw new ErreurHttp(400, `Une somme ${b.algorithme} fait ${LONGUEUR_SOMME[b.algorithme]} caractères hexadécimaux.`);
+    try { lireUrl(b.url); } catch (e) { versClientImage(e); }
+    const id = images.importer({ url: b.url, nom: b.nom, noeud: n, stockage, somme: b.somme ? { algorithme: b.algorithme, valeur: b.somme } : null, acteur: acteur(ctx) });
+    return { importation: id };
+  }, { role: 'admin' });
+  r.get('/api/isos/importations', ctx => { session(ctx, { role: 'admin' }); return images.liste(); }, { role: 'admin' });
+  r.del('/api/isos/importations/:id', ctx => {
+    session(ctx, { role: 'admin' });
+    if (!/^[A-Za-z0-9_-]{12}$/.test(ctx.params.id)) throw new ErreurHttp(404, 'Importation introuvable.');
+    try { images.annuler(ctx.params.id); } catch (e) { versClientImage(e); }
+    return { ok: true };
   }, { role: 'admin' });
 
   // Envoyer une image depuis le navigateur : le corps est le fichier, relayé
@@ -583,9 +582,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     const { n, stockage } = stockageDe(ctx.params);
     const { nom } = ctx.q;
     const taille = Number(ctx.req.headers['content-length']);
-    if (!Number.isSafeInteger(taille) || taille <= 0) throw new ErreurHttp(411, 'Taille du fichier attendue.');
-    if (taille > ISO_MAX) throw new ErreurHttp(413, 'Image de plus de 64 Gio : télécharge-la depuis une adresse.');
-    const upid = await pve(() => proxmox.envoyerFichier(chemin('nodes', n, 'storage', stockage, 'upload'), { champs: { content: 'iso' }, champFichier: 'filename', nom, flux: ctx.req, taille }));
+    const upid = await image(() => images.relayer({ noeud: n, stockage, nom, flux: ctx.req, taille }));
     const qui = acteur(ctx);
     journal.ecrire({ acteur: qui.acteurCompte, action: 'iso.envoi', objet: `${stockage}:iso/${nom}`, ip: ctx.ip, details: { noeud: n, taille } });
     evenements.noter({ genre: 'iso.added', niveau: 'info', titre: `${nom} envoyée vers ${stockage}`, corps: `Par ${qui.acteur}.`, noeud: n, ...qui });
@@ -827,6 +824,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
   return {
     routeur: r,
     prendrePasse,
+    images,
     async traiter(ctx) {
       const p = ctx.url.pathname;
       if (!p.startsWith('/api/')) return false;
