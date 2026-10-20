@@ -1116,19 +1116,44 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     etat.textContent = 'connexion…';
     ws.addEventListener('message', ev => {
       if (ws !== wsCourant) return;
+      dernier = Date.now();
       if (typeof ev.data !== 'string') return ecran?.recevoir(ev.data);
       let m; try { m = JSON.parse(ev.data); } catch { return; }
-      if (m.pret) { ecran.demarrer(); ouvertA = Date.now(); activer(true); ecran.toile.focus(); if (!DISPOSITIONS[lireLocal(cleDispo, '')] && !detection?.disposition) detecter(); }
+      if (m.pret) { essaisAuto = 0; ecran.demarrer(); ouvertA = Date.now(); activer(true); ecran.toile.focus(); if (!DISPOSITIONS[lireLocal(cleDispo, '')] && !detection?.disposition) detecter(); }
       if (m.fin) {
         etat.textContent = 'fermé';
+        if (/session fermée|refusé/.test(m.fin)) sansRetour = true;
         // Proxmox qui coupe dans les premières secondes : une reprise, automatique.
         if (/fermé par Proxmox/.test(m.fin) && !reprise && Date.now() - ouvertA < 8000) { reprise = true; etat.textContent = 'reprise…'; setTimeout(ouvrir, 600); return; }
         hote.append(h('p', { class: 'vide', text: m.fin }));
       }
     });
-    ws.addEventListener('close', () => { activer(false); if (ws === wsCourant && etat.textContent !== 'reprise…') etat.textContent = 'fermé'; });
+    ws.addEventListener('close', () => { activer(false); if (ws === wsCourant && etat.textContent !== 'reprise…') etat.textContent = 'fermé'; setTimeout(revenir, 1500); });
+    dernier = Date.now();
     bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
   }
+  // Un écran laissé de côté (autre onglet, ordinateur en veille, tunnel qui a
+  // coupé) : dès qu'on le regarde de nouveau, il se rouvre de lui-même s'il est
+  // tombé ou sans nouvelles depuis 70 s (ProxLab bat toutes les 25 s), sinon
+  // l'image entière est redemandée. Trois essais d'affilée au plus ; jamais
+  // après une session fermée, ni quand l'écran est dans une fenêtre à part.
+  let dernier = 0, essaisAuto = 0, sansRetour = false, monte = false;
+  const morte = () => !!wsCourant && (wsCourant.readyState > 1 || Date.now() - dernier > 70e3);
+  function revenir() {
+    if (!hote.isConnected || document.visibilityState !== 'visible' || ouverture || sansRetour) return;
+    if (!morte()) { if (ecran?.actif) ecran.demander(false); return; }
+    if (essaisAuto >= 3) return;
+    essaisAuto++; reprise = true; etat.textContent = 'reconnexion…';
+    try { wsCourant.close(); } catch { /* déjà fermé */ }
+    ouvrir();
+  }
+  const surRetour = () => { if (document.visibilityState === 'visible') revenir(); };
+  const veille = setInterval(() => {
+    if (hote.isConnected) { monte = true; if (morte()) revenir(); return; }
+    if (monte) { clearInterval(veille); document.removeEventListener('visibilitychange', surRetour); window.removeEventListener('focus', surRetour); }
+  }, 20e3);
+  document.addEventListener('visibilitychange', surRetour);
+  window.addEventListener('focus', surRetour);
   const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: () => { reprise = false; ouvrir(); } }, icone('ecran', 14), 'Ouvrir');
   // Ouvert dès le premier affichage de l'onglet ; ensuite il reste ouvert.
   if (auto && enMarche) setTimeout(() => { reprise = false; ouvrir(); }, 0);
