@@ -9,7 +9,7 @@
 // machine), admin sous renfort récent (arrêt forcé, migration, configuration,
 // retour et suppression d'instantané, suppression de sauvegarde, arrêt d'une
 // tâche, shell d'un nœud, liaison à Proxmox, alertes, images ISO et lecteur
-// CD, création d'une VM). Supprimer une machine demande en plus son nom
+// CD, création d'une VM, étiquettes). Supprimer une machine demande en plus son nom
 // recopié et une confirmation d'identité faite pour elle seule.
 import { detecterClavier, activerConsoleSerie, agentActif } from './clavier.js';
 import crypto from 'node:crypto';
@@ -31,8 +31,14 @@ const TYPES = ['qemu', 'lxc'];
 const VOLID_ISO = /^[A-Za-z][A-Za-z0-9._-]{0,99}:iso\/[A-Za-z0-9][A-Za-z0-9._+-]{0,200}\.(iso|img)$/i;
 const LECTEUR = /^(ide|sata|scsi)\d{1,2}$/;
 const PONT = /^[A-Za-z][A-Za-z0-9._-]{0,15}$/;
+const IFACE = /^[A-Za-z][A-Za-z0-9._-]{0,19}$/;
 const NOM_AFFICHE = /^[\p{L}\p{N}][\p{L}\p{N} ._()+'’-]{0,79}$/u;
 const NOMS_ISO_MAX = 1000;
+// Étiquettes : un nom lisible posé par ProxLab sur une image, une interface
+// réseau, un stockage ou un nœud. Proxmox n'en sait rien : rien n'y est renommé.
+const GENRES_ETIQUETTE = ['iso', 'reseau', 'stockage', 'noeud'];
+const FORMAT_OBJET = { iso: VOLID_ISO, reseau: IFACE, stockage: STOCKAGE, noeud: NOEUD };
+const ETIQUETTES_MAX = 1000;
 // La confirmation d'identité d'une suppression : faite dans les deux minutes,
 // et pour cette suppression seulement.
 const RENFORT_SUPPRESSION_MS = 2 * 60e3;
@@ -90,6 +96,10 @@ const S = {
   apercu: { url: { type: 'chaine', requis: true, max: 2000 } },
   iso: { volid: { type: 'chaine', requis: true, max: 320, motif: VOLID_ISO } },
   nomIso: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, volid: { type: 'chaine', requis: true, max: 320, motif: VOLID_ISO }, nom: { type: 'chaine', max: 80, defaut: '' } },
+  etiquette: {
+    genre: { type: 'chaine', requis: true, parmi: GENRES_ETIQUETTE }, noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD },
+    objet: { type: 'chaine', requis: true, max: 320 }, etiquette: { type: 'chaine', max: 80, defaut: '' },
+  },
   options: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD } },
   creation: {
     noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, nom: { type: 'chaine', requis: true, max: 63, motif: NOEUD },
@@ -186,20 +196,69 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     return { noeuds, machines, stockages };
   }
 
+  // Étiquettes des images : sous « noms_iso » (leur clé d'avant), les autres sous « etiquettes ».
+  // Clé : l'objet, précédé du nœud quand il n'existe que sur lui.
+  const cleStockage = (n, st, partage) => (partage ? st : `${n}/${st}`);
+  const etiquettes = genre => (genre === 'iso' ? reglages.lire('noms_iso') : reglages.lire('etiquettes')?.[genre]) || {};
+  const etiquetteDe = (genre, cle) => etiquettes(genre)[cle] || '';
+  async function etiqueter(ctx, genre, n, objet, texte) {
+    const propre = texte.trim().replace(/\s+/g, ' ');
+    if (propre && !NOM_AFFICHE.test(propre)) throw new ErreurHttp(400, 'Étiquette : lettres, chiffres, espaces, points, tirets, parenthèses (80 au plus).');
+    if (!FORMAT_OBJET[genre].test(objet)) throw new ErreurHttp(400, 'Objet hors format.');
+    let cle;
+    if (genre === 'iso') {
+      const i = (await inventaireIso()).isos.find(x => x.volid === objet && (x.shared || x.node === n));
+      if (!i) throw new ErreurHttp(404, 'Image introuvable.');
+      cle = i.shared ? i.volid : `${i.node}/${i.volid}`;
+    } else if (genre === 'reseau') {
+      const ifaces = await pve(() => proxmox.get(chemin('nodes', n, 'network')));
+      if (!(ifaces || []).some(i => i.iface === objet)) throw new ErreurHttp(404, `Pas d’interface ${objet} sur ${n}.`);
+      cle = `${n}/${objet}`;
+    } else if (genre === 'stockage') {
+      const st = ((await pve(() => proxmox.get(chemin('nodes', n, 'storage')))) || []).find(x => x.storage === objet);
+      if (!st) throw new ErreurHttp(404, `Pas de stockage ${objet} sur ${n}.`);
+      cle = cleStockage(n, objet, !!st.shared);
+    } else {
+      if (objet !== n || !(await pve(etatGrappe)).noeuds.some(x => x.node === n)) throw new ErreurHttp(404, 'Nœud introuvable.');
+      cle = n;
+    }
+    const liste = { ...etiquettes(genre) };
+    if (propre) liste[cle] = propre; else delete liste[cle];
+    if (Object.keys(liste).length > (genre === 'iso' ? NOMS_ISO_MAX : ETIQUETTES_MAX)) throw new ErreurHttp(409, 'Trop d’étiquettes gardées : retire celles des objets disparus.');
+    if (genre === 'iso') reglages.ecrire('noms_iso', liste);
+    else reglages.ecrire('etiquettes', { ...(reglages.lire('etiquettes') || {}), [genre]: liste });
+    journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: genre === 'iso' ? 'iso.nom' : `etiquette.${genre}`, objet: genre === 'iso' ? objet : cle, ip: ctx.ip, details: { nom: propre || null } });
+    return propre;
+  }
+
+  r.put('/api/etiquettes', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const { genre, noeud: n, objet, etiquette } = await corps(ctx, S.etiquette);
+    return { genre, objet, etiquette: await etiqueter(ctx, genre, n, objet, etiquette) };
+  }, { role: 'admin' });
+
   r.get('/api/health', () => ({ ok: true }), { public: true });
 
   r.get('/api/etat', async ctx => {
     session(ctx);
     const relie = !!reglages.lire('liaison');
     if (!relie) return { relie, intervalle: cfg.intervalle, noeuds: [], machines: [], stockages: [], at: Date.now() };
-    return { relie, intervalle: cfg.intervalle, ...(await pve(etatGrappe)), at: Date.now() };
+    const { noeuds, machines, stockages } = await pve(etatGrappe);
+    return {
+      relie, intervalle: cfg.intervalle, machines, at: Date.now(),
+      noeuds: noeuds.map(n => ({ ...n, alias: etiquetteDe('noeud', n.node) })),
+      stockages: stockages.map(x => ({ ...x, alias: etiquetteDe('stockage', cleStockage(x.node, x.storage, x.shared)) })),
+    };
   }, { role: 'lecture' });
 
   r.get('/api/noeuds/:noeud/reseau', async ctx => {
     session(ctx);
     const n = noeud(ctx.params.noeud);
     const ifaces = await pve(() => proxmox.get(chemin('nodes', n, 'network')));
-    return (ifaces || []).map(i => ({ iface: i.iface, type: i.type, cidr: i.cidr || i.address || '', gateway: i.gateway || '', ports: i.bridge_ports || i.slaves || '', active: !!i.active }))
+    return (ifaces || []).filter(i => IFACE.test(i.iface || '')).map(i => ({
+      iface: i.iface, type: i.type, cidr: i.cidr || i.address || '', gateway: i.gateway || '', ports: i.bridge_ports || i.slaves || '', active: !!i.active,
+      alias: etiquetteDe('reseau', `${n}/${i.iface}`), commentaire: String(i.comments || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+    }))
       .sort((a, b) => String(a.iface).localeCompare(String(b.iface)));
   }, { role: 'lecture' });
 
@@ -554,8 +613,10 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     ]));
     return {
       noeud: { node: nd.node, maxcpu: nd.maxcpu, maxmem: nd.maxmem },
-      stockages: (stockages || []).filter(x => STOCKAGE.test(x.storage || '') && x.active !== 0 && String(x.content || '').includes('images')).map(x => ({ storage: x.storage, avail: nombre(x.avail), total: nombre(x.total) })),
+      stockages: (stockages || []).filter(x => STOCKAGE.test(x.storage || '') && x.active !== 0 && String(x.content || '').includes('images')).map(x => ({ storage: x.storage, avail: nombre(x.avail), total: nombre(x.total), alias: etiquetteDe('stockage', cleStockage(n, x.storage, !!x.shared)) })),
       ponts: (reseau || []).filter(x => /bridge/.test(x.type || '') && PONT.test(x.iface || '')).map(x => x.iface).sort(),
+      // Le nom que l'opérateur reconnaît : son étiquette, sinon le commentaire posé dans Proxmox.
+      pontsDetail: (reseau || []).filter(x => /bridge/.test(x.type || '') && PONT.test(x.iface || '')).map(x => ({ iface: x.iface, alias: etiquetteDe('reseau', `${n}/${x.iface}`), commentaire: String(x.comments || '').replace(/\s+/g, ' ').trim().slice(0, 200) })).sort((a, b) => a.iface.localeCompare(b.iface)),
       isos: inv.isos.filter(i => i.shared || i.node === n).map(i => ({ volid: i.volid, nom: i.nom, alias: i.alias, size: i.size })),
       vmid: nombre(suivant),
     };
@@ -605,21 +666,11 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
   // dans Proxmox (qui ne sait pas renommer une image). Vide : le nom du fichier revient.
   // Clé d'un nom : le volume, précédé du nœud quand le stockage n'est pas
   // partagé (« local:iso/x.iso » existe sur chaque nœud, chacun le sien).
-  const cleNom = i => (i.shared ? i.volid : `${i.node}/${i.volid}`);
-  const nomsIso = () => reglages.lire('noms_iso') || {};
+  // Gardée pour les clients d'avant : c'est l'étiquette d'une image.
   r.put('/api/isos/nom', async ctx => {
     session(ctx, { role: 'admin', renfort: true });
     const { noeud: n, volid, nom } = await corps(ctx, S.nomIso);
-    const propre = nom.trim().replace(/\s+/g, ' ');
-    if (propre && !NOM_AFFICHE.test(propre)) throw new ErreurHttp(400, 'Nom : lettres, chiffres, espaces, points, tirets, parenthèses (80 au plus).');
-    const i = (await inventaireIso()).isos.find(x => x.volid === volid && (x.shared || x.node === n));
-    if (!i) throw new ErreurHttp(404, 'Image introuvable.');
-    const noms = nomsIso();
-    if (propre) noms[cleNom(i)] = propre; else delete noms[cleNom(i)];
-    if (Object.keys(noms).length > NOMS_ISO_MAX) throw new ErreurHttp(409, 'Trop de noms gardés : retire ceux des images supprimées.');
-    reglages.ecrire('noms_iso', noms);
-    journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'iso.nom', objet: volid, ip: ctx.ip, details: { nom: propre || null } });
-    return { volid, alias: propre };
+    return { volid, alias: await etiqueter(ctx, 'iso', n, volid, nom) };
   }, { role: 'admin' });
 
   // Images ISO : chaque stockage qui en accepte (un stockage partagé, une
@@ -633,7 +684,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
         const cle = st.shared ? st.storage : `${n.node}/${st.storage}`;
         if (vus.has(cle)) continue;
         vus.add(cle);
-        stockages.push({ node: n.node, storage: st.storage, shared: !!st.shared, avail: nombre(st.avail), total: nombre(st.total) });
+        stockages.push({ node: n.node, storage: st.storage, shared: !!st.shared, avail: nombre(st.avail), total: nombre(st.total), alias: etiquetteDe('stockage', cleStockage(n.node, st.storage, !!st.shared)) });
         const contenu = await proxmox.get(chemin('nodes', n.node, 'storage', st.storage, 'content'), { content: 'iso' }).catch(() => []);
         for (const c of contenu || []) if (VOLID_ISO.test(c.volid || '')) isos.push({ node: n.node, storage: st.storage, shared: !!st.shared, volid: c.volid, nom: c.volid.split('/').pop(), size: nombre(c.size), ctime: nombre(c.ctime), utilisePar: [] });
       }
@@ -647,8 +698,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
         for (const i of isos) if (i.volid === volid && (i.shared || i.node === x.node)) i.utilisePar.push({ vmid: x.vmid, name: x.name, node: x.node, lecteur: k });
       }
     }
-    const noms = reglages.lire('noms_iso') || {};
-    for (const i of isos) i.alias = noms[i.shared ? i.volid : `${i.node}/${i.volid}`] || '';
+    for (const i of isos) i.alias = etiquetteDe('iso', i.shared ? i.volid : `${i.node}/${i.volid}`);
     isos.sort((a, b) => (a.alias || a.nom).localeCompare(b.alias || b.nom) || a.node.localeCompare(b.node));
     return { stockages, isos };
   }

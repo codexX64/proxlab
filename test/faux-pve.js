@@ -61,6 +61,8 @@ function grappeInitiale() {
     ],
     sauvegardes: [{ storage: 'sauvegardes', volid: 'sauvegardes:backup/vzdump-qemu-101-2026_10_10-02_00_00.vma.zst', ctime: 1791600000, size: 1610612736, vmid: 101, format: 'vma.zst', content: 'backup' }],
     taches: historiqueSauvegardes(),
+    // Interfaces réseau ajoutées par un essai, en plus de vmbr0 et eno1.
+    reseau: { 'pve-a': [], 'pve-b': [] },
   };
 }
 
@@ -134,7 +136,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
         if (p === '/cluster/nextid') { let n = 100; while (etat.machines.some(m => m.vmid === n)) n++; return repondre(200, String(n)); }
         if (s[0] !== 'nodes' || !etat.noeuds.some(n => n.node === s[1])) return repondre(404, null, 'no such node');
         const node = s[1];
-        if (s[2] === 'network') return repondre(200, [{ iface: 'vmbr0', type: 'bridge', cidr: node === 'pve-a' ? '192.0.2.10/24' : '192.0.2.11/24', gateway: '192.0.2.1', bridge_ports: 'eno1', active: 1 }, { iface: 'eno1', type: 'eth', active: 1 }]);
+        if (s[2] === 'network') return repondre(200, [{ iface: 'vmbr0', type: 'bridge', cidr: node === 'pve-a' ? '192.0.2.10/24' : '192.0.2.11/24', gateway: '192.0.2.1', bridge_ports: 'eno1', active: 1 }, { iface: 'eno1', type: 'eth', active: 1 }, ...etat.reseau[node]]);
         if (s[2] === 'rrddata') return repondre(200, rrd(1));
         if (s[2] === 'vzdump' && req.method === 'POST') {
           const m = etat.machines.find(x => String(x.vmid) === params.vmid);

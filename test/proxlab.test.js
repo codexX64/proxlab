@@ -230,7 +230,7 @@ test('état de la grappe et fiche d\'une machine : champs choisis, rien de sensi
   assert.equal(e.relie, true);
   assert.equal(e.noeuds.length, 2);
   assert.ok(e.machines.some(m => m.vmid === 9000 && m.template));
-  assert.deepEqual(Object.keys(e.noeuds[0]).sort(), ['cpu', 'disk', 'maxcpu', 'maxdisk', 'maxmem', 'mem', 'node', 'status', 'uptime']);
+  assert.deepEqual(Object.keys(e.noeuds[0]).sort(), ['alias', 'cpu', 'disk', 'maxcpu', 'maxdisk', 'maxmem', 'mem', 'node', 'status', 'uptime']);
   const f = (await lecteur.get(machine())).json;
   assert.equal(f.name, 'passerelle');
   for (const k of ['cipassword', 'sshkeys', 'ciuser', 'digest']) assert.equal(f.config[k], undefined, k);
@@ -964,6 +964,56 @@ test('nom affiché d\'une image : gardé par ProxLab, par nœud pour un stockage
   assert.equal((await admin.get('/api/machines/options?noeud=pve-a')).json.isos.find(i => i.volid === v).alias, 'Debian 13 (installeur réseau)');
   assert.equal((await admin.put('/api/isos/nom', { noeud: 'pve-a', volid: v, nom: '' })).status, 200);
   assert.equal((await lecteur.get('/api/isos')).json.isos.find(i => i.volid === v).alias, '');
+});
+
+test('étiquettes : posées par ProxLab sur une image, une interface, un stockage ou un nœud, sans rien renommer dans Proxmox', async () => {
+  pve.etat.reseau['pve-a'].push({ iface: 'vmbr1', type: 'bridge', bridge_ports: 'eno2', comments: 'ghost\n', active: 1 });
+  try {
+    const n0 = pve.appels.length;
+    const poser = (c, genre, objet, etiquette, noeud = 'pve-a') => c.put('/api/etiquettes', { genre, noeud, objet, etiquette });
+    // Rôle, renfort, format : refusés avant Proxmox.
+    assert.equal((await membre.put('/api/etiquettes', { genre: 'reseau', noeud: 'pve-a', objet: 'vmbr1', etiquette: 'Ghost' })).status, 403);
+    await sansRenfort(async () => assert.equal((await poser(admin, 'reseau', 'vmbr1', 'Ghost')).status, 403));
+    for (const [genre, objet, etiquette] of [['reseau', '../vmbr1', 'x'], ['stockage', 'local/../x', 'x'], ['noeud', 'pve a', 'x'], ['iso', 'local:iso/../x.iso', 'x'], ['disque', 'vmbr1', 'x'], ['reseau', 'vmbr1', '<b>Ghost</b>'], ['reseau', 'vmbr1', 'x'.repeat(81)]]) {
+      assert.equal((await poser(admin, genre, objet, etiquette)).status, 400, `${genre} ${objet} ${etiquette.slice(0, 12)}`);
+    }
+    assert.equal(pve.appels.length, n0, 'rien n’a atteint Proxmox');
+    // Un objet qui n'existe pas sur ce nœud : refusé.
+    assert.equal((await poser(admin, 'reseau', 'vmbr1', 'Ghost', 'pve-b')).status, 404);
+    assert.equal((await poser(admin, 'stockage', 'local-lvm', 'Disques', 'pve-b')).status, 404);
+    assert.equal((await poser(admin, 'noeud', 'pve-b', 'Rack', 'pve-a')).status, 404);
+    // Posées : rendues partout où l'objet apparaît.
+    const ecrits = pve.appels.filter(a => a.methode !== 'GET').length;
+    assert.equal((await poser(admin, 'reseau', 'vmbr1', '  Ghost   (Tor) ')).json.etiquette, 'Ghost (Tor)');
+    assert.equal((await poser(admin, 'stockage', 'local-lvm', 'Disques rapides')).status, 200);
+    assert.equal((await poser(admin, 'stockage', 'sauvegardes', 'NAS', 'pve-b')).status, 200);
+    assert.equal((await poser(admin, 'noeud', 'pve-a', 'R730')).status, 200);
+    assert.equal((await poser(admin, 'iso', 'local:iso/debian-13.1.0-amd64-netinst.iso', 'Debian')).status, 200);
+    assert.equal(pve.appels.filter(a => a.methode !== 'GET').length, ecrits, 'Proxmox n’a rien reçu à écrire');
+    const r = (await lecteur.get('/api/noeuds/pve-a/reseau')).json;
+    assert.deepEqual(r.find(i => i.iface === 'vmbr1'), { iface: 'vmbr1', type: 'bridge', cidr: '', gateway: '', ports: 'eno2', active: true, alias: 'Ghost (Tor)', commentaire: 'ghost' });
+    assert.equal(r.find(i => i.iface === 'vmbr0').alias, '');
+    assert.equal((await lecteur.get('/api/noeuds/pve-b/reseau')).json.find(i => i.iface === 'vmbr1'), undefined);
+    const e = (await lecteur.get('/api/etat')).json;
+    assert.deepEqual(e.noeuds.map(n => [n.node, n.alias]), [['pve-a', 'R730'], ['pve-b', '']]);
+    assert.deepEqual(e.stockages.map(x => [x.node, x.storage, x.alias]), [['pve-a', 'local', ''], ['pve-a', 'local-lvm', 'Disques rapides'], ['pve-b', 'local', ''], ['pve-b', 'sauvegardes', 'NAS']]);
+    const o = (await admin.get('/api/machines/options?noeud=pve-a')).json;
+    assert.deepEqual(o.ponts, ['vmbr0', 'vmbr1'], 'la liste d’avant reste la même');
+    assert.deepEqual(o.pontsDetail, [{ iface: 'vmbr0', alias: '', commentaire: '' }, { iface: 'vmbr1', alias: 'Ghost (Tor)', commentaire: 'ghost' }]);
+    assert.equal(o.stockages.find(x => x.storage === 'local-lvm').alias, 'Disques rapides');
+    assert.equal((await lecteur.get('/api/isos')).json.isos.find(i => i.volid === 'local:iso/debian-13.1.0-amd64-netinst.iso').alias, 'Debian');
+    // Une VM créée sur un pont étiqueté garde le vrai nom du pont.
+    const vm = await admin.post('/api/machines', { noeud: 'pve-a', nom: 'labo-ghost', stockage: 'local-lvm', pont: 'vmbr1', demarrer: false, disque: 8 });
+    assert.equal(vm.status, 200, JSON.stringify(vm.json));
+    assert.equal(pve.etat.machines.find(m => m.vmid === vm.json.vmid).creation.net0, 'virtio,bridge=vmbr1');
+    assert.ok(s.db.prepare("SELECT 1 FROM socle_journal WHERE action = 'etiquette.reseau' AND objet = 'pve-a/vmbr1'").get());
+    // Vide : l'étiquette disparaît ; le nom de Proxmox revient.
+    for (const [genre, objet, noeud] of [['reseau', 'vmbr1', 'pve-a'], ['stockage', 'local-lvm', 'pve-a'], ['stockage', 'sauvegardes', 'pve-b'], ['noeud', 'pve-a', 'pve-a'], ['iso', 'local:iso/debian-13.1.0-amd64-netinst.iso', 'pve-a']]) {
+      assert.equal((await poser(admin, genre, objet, '', noeud)).json.etiquette, '');
+    }
+    assert.equal((await lecteur.get('/api/noeuds/pve-a/reseau')).json.find(i => i.iface === 'vmbr1').alias, '');
+    assert.ok((await lecteur.get('/api/etat')).json.noeuds.every(n => n.alias === '' ) && (await lecteur.get('/api/etat')).json.stockages.every(x => x.alias === ''));
+  } finally { pve.etat.reseau['pve-a'] = []; }
 });
 
 test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont rescellés, Proxmox reste joignable', async () => {
