@@ -484,6 +484,7 @@ async function pageFiche(noeud, type, vmid) {
       ...(membre && (f.status === 'paused' || f.status === 'suspended') ? [{ texte: 'Reprendre', agir: action('resume', 'Reprendre') }] : []),
       ...(admin && marche ? [{ texte: 'Arrêt forcé', danger: true, agir: action('stop', 'Arrêt forcé', { danger: true, question: 'Couper la machine sans l\'arrêter proprement ?' }) }] : []),
       ...(admin && marche && f.type === 'qemu' ? [{ texte: 'Réinitialiser', danger: true, agir: action('reset', 'Réinitialiser', { danger: true, question: 'Réinitialiser la machine comme un bouton reset ?' }) }] : []),
+      ...(admin ? [{ texte: 'Dupliquer', agir: sur(() => dupliquer(f, base)) }] : []),
       ...(admin && (E.etat.noeuds.length > 1) ? [{ texte: 'Migrer vers un autre nœud', agir: () => migrer(f, base) }] : []),
     ];
     tete.replaceChildren(
@@ -574,6 +575,7 @@ function instantanes(f, base, relire) {
         h('td', { class: 'cache-s mono', text: s.snaptime ? dateHeure(s.snaptime) : '—' }),
         h('td', { class: 'cache-m dim', text: s.description || '—' }),
         admin ? h('td', { class: 'fin' }, h('div', { class: 'actions' },
+          h('button', { class: 'btn sm flat', type: 'button', 'aria-label': `Dupliquer depuis ${s.name}`, title: 'Une nouvelle machine, telle qu’à cet instantané', onclick: sur(() => dupliquer(f, base, s.name)) }, 'Dupliquer'),
           h('button', { class: 'btn sm', type: 'button', onclick: sur(async () => {
             if (!await confirmer(`Revenir à « ${s.name} » ?`, 'Tout ce qui a changé depuis cet instantané est perdu.', { danger: true, oui: 'Revenir' })) return;
             await api.post(`${base}/instantanes/${encodeURIComponent(s.name)}/retour`, {}); toast('Retour demandé.'); setTimeout(() => relire().catch(() => {}), 1500);
@@ -583,6 +585,36 @@ function instantanes(f, base, relire) {
             await api.del(`${base}/instantanes/${encodeURIComponent(s.name)}`); toast('Suppression demandée.'); setTimeout(() => relire().catch(() => {}), 1500);
           }) }, icone('corbeille', 14)))) : null))
         : h('tr', {}, h('td', { colspan: admin ? 4 : 3, class: 'vide', text: 'Aucun instantané.' }))))));
+}
+
+// Dupliquer une machine : une copie complète, arrêtée, sous un numéro libre,
+// de son état actuel ou d'un instantané. L'original n'est pas touché.
+async function dupliquer(f, base, depuis = '') {
+  const champ = (lbl, el) => h('label', { class: 'lbl-champ' }, h('span', { text: lbl }), el);
+  const propose = `${String(f.name || `vm-${f.vmid}`).replace(/[^A-Za-z0-9.-]/g, '-').slice(0, 56)}-copie`;
+  const nom = h('input', { class: 'field', maxlength: 63, value: propose, autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Nom de la copie' });
+  const instant = h('select', { class: 'field', 'aria-label': 'Depuis' },
+    h('option', { value: '', text: f.status === 'running' ? 'Son état actuel (copiée en marche)' : 'Son état actuel' }),
+    ...f.instantanes.slice().sort((a, b) => b.snaptime - a.snaptime).map(x => h('option', { value: x.name, text: `Instantané « ${x.name} »${x.snaptime ? ` · ${dateHeure(x.snaptime)}` : ''}`, selected: x.name === depuis })));
+  const stockage = h('select', { class: 'field', 'aria-label': 'Stockage de la copie' }, h('option', { value: '', text: 'Le même que l’original' }));
+  if (f.type === 'qemu') {
+    const o = await api.get(`/api/machines/options?noeud=${encodeURIComponent(f.node)}`).catch(() => null);
+    for (const x of o?.stockages || []) stockage.append(h('option', { value: x.storage, text: `${x.alias ? `${x.alias} (${x.storage})` : x.storage} — ${octets(x.avail)} libres` }));
+  }
+  const err = h('p', { class: 'erreur', role: 'alert' });
+  const r = await dialogue({ titre: `Dupliquer ${f.name || `${genreMachine(f)} ${f.vmid}`}`, large: true,
+    texte: 'Une machine neuve, copie complète de celle-ci (disques compris), créée arrêtée sous un numéro libre. Ses cartes réseau reçoivent une adresse MAC neuve. L’original ne bouge pas.',
+    contenu: [champ('Nom de la copie', nom), h('div', { class: 'row2 mt9' }, champ('Depuis', instant), f.type === 'qemu' ? champ('Stockage', stockage) : h('div')), err],
+    boutons: [{ texte: 'Annuler', classe: 'flat', valeur: null }, { texte: 'Dupliquer', classe: 'solid', agir: async () => {
+      if (!/^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,61}[A-Za-z0-9])?$/.test(nom.value.trim())) { err.textContent = 'Nom : lettres, chiffres, points et tirets, sans espace.'; return false; }
+      err.textContent = 'Copie en cours…';
+      try { return await api.post(base + '/duplication', { nom: nom.value.trim(), instantane: instant.value, stockage: stockage.value }); } catch (x) { err.textContent = x.message; return false; }
+    } }] });
+  if (!r?.vmid) return;
+  await rafraichir();
+  if (!r.fini) { toast(`Copie ${r.vmid} lancée : une grosse machine prend du temps, suis-la dans Tâches.`); return; }
+  toast(`${genreMachine(f)} ${r.vmid} « ${nom.value.trim()} » créée.`);
+  aller('fiche', [r.noeud, r.type, String(r.vmid)]);
 }
 
 // Créer une VM : nom, système, image, ressources, disque et réseau, avec ce
