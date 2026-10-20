@@ -159,9 +159,12 @@ Lire le clavier d'une VM par son agent QEMU exige `VM.GuestAgent.Unrestricted`
 (Proxmox VE 9) ou `VM.Monitor` (Proxmox VE 8), compris dans `PVEVMAdmin` ;
 sans ce droit, ProxLab le dit et le choix reste à la main.
 
-Supprimer une machine exige `VM.Allocate` (compris dans `PVEVMAdmin`). Les
-images ISO exigent `Datastore.AllocateTemplate` sur leurs stockages (rôle
-`PVEDatastoreAdmin` par exemple).
+Créer et supprimer une machine exigent `VM.Allocate` (compris dans
+`PVEVMAdmin`) ; créer demande aussi `Datastore.AllocateSpace` sur le stockage
+du disque (`PVEDatastoreUser`) et, depuis Proxmox VE 8, `SDN.Use` sur le pont
+(`PVESDNUser` sur `/sdn/zones/localnetwork`). Les images ISO exigent
+`Datastore.AllocateTemplate` sur leurs stockages (`PVEDatastoreAdmin` par
+exemple).
 
 **Images ISO.** La page « Images ISO » liste les images de chaque stockage qui
 en accepte, avec les VM qui en ont une dans leur lecteur CD. Un administrateur
@@ -176,6 +179,19 @@ plage réservée) est refusée, redirections comprises : une image du réseau lo
 s'envoie depuis l'ordinateur. Par le tunnel Cloudflare, un envoi de plus de
 100 Mo est refusé par Cloudflare : passer par l'adresse locale, ou importer
 depuis une adresse. L'importation demande que ProxLab sorte en https.
+
+**Créer une machine.** « Nouvelle VM » sur la page Machines, ou « Créer une
+VM » sur une image : nom, système, image d'installation, cœurs, mémoire,
+disque, stockage et pont, parmi ce que le nœud choisi propose ; ProxLab
+revérifie chaque choix, prend le numéro libre que donne Proxmox, attend la fin
+de la création puis démarre la machine si on le demande. Linux : VirtIO, agent
+QEMU, port série (la console) et VirtIO-GPU (l'écran s'ajuste à la fenêtre).
+Windows 11 : UEFI, TPM, disque SATA et carte e1000, que l'installeur reconnaît
+sans pilote. Administrateur, sous renfort, au journal.
+
+**Renommer une image.** Proxmox ne sait pas renommer une image : ProxLab garde
+un nom affiché pour chacune (menu ⋯ → Renommer), le fichier garde le sien,
+montré dessous. Vide, le nom du fichier revient.
 
 **Supprimer une machine.** Fiche d'une machine arrêtée → « Supprimer », recopier
 son nom, « Supprimer avec ma clé ». La clé d'accès (à défaut le code TOTP) est
