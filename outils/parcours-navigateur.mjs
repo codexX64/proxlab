@@ -144,6 +144,14 @@ await page.getByRole('dialog').waitFor();
 await controle('iso-envoyer');
 await page.getByRole('dialog').getByRole('button', { name: 'Annuler' }).click();
 
+// Créer une VM : le dialogue, sans aller jusqu'au bout.
+await rail('Machines');
+await page.getByRole('button', { name: 'Nouvelle VM' }).click();
+await page.getByRole('dialog').waitFor();
+await page.waitForTimeout(400);
+await controle('machine-creer');
+await page.getByRole('dialog').getByRole('button', { name: 'Annuler' }).click();
+
 // Supprimer une machine arrêtée : le dialogue, sans aller jusqu'au bout.
 await rail('Machines');
 await page.locator('tbody tr', { hasText: 'bureau-essai' }).first().click();
