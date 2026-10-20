@@ -100,23 +100,28 @@ await page.getByRole('button', { name: 'Prendre' }).click();
 await page.getByRole('dialog').waitFor();
 await controle('instantane-dialogue');
 await page.getByRole('dialog').getByRole('button', { name: 'Annuler' }).click();
+// L'écran d'une VM en marche s'ouvre lui aussi avec l'onglet.
 await page.getByRole('tab', { name: 'Écran' }).click();
-await page.getByRole('button', { name: 'Ouvrir', exact: true }).click();
 await page.getByText('ouvert · 1024 × 640').waitFor();
 await page.locator('canvas.ecran').click({ position: { x: 40, y: 40 } });
 await page.keyboard.type('ana');
 await controle('ecran');
+// La console d'une VM en marche s'ouvre d'elle-même avec l'onglet.
 await page.getByRole('tab', { name: 'Console' }).click();
-await page.getByRole('button', { name: 'Ouvrir', exact: true }).click();
 await page.locator('.terminal', { hasText: 'invite-101:~#' }).waitFor();
 await page.keyboard.type('hostname');
 await page.keyboard.press('Enter');
 await page.locator('.terminal .t-f2', { hasText: 'invite-101' }).waitFor();
 await controle('console');
 
+await rail('Réseau');
+await titre('Réseau');
+await page.locator('.card', { hasText: 'vmbr0' }).first().waitFor();
+await controle('reseau');
+
 await rail('Nœuds');
 await titre('Nœuds');
-await page.locator('.card', { hasText: 'vmbr0' }).first().waitFor();
+await page.locator('.card', { hasText: 'Mémoire installée' }).first().waitFor();
 await controle('noeuds');
 await page.getByRole('button', { name: 'Shell' }).first().click();
 await page.getByRole('button', { name: 'Ouvrir', exact: true }).click();

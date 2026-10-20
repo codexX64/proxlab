@@ -53,6 +53,7 @@ ajouterPictos({
   iso: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.3"/><path d="M12 5.8a6.2 6.2 0 0 1 5.4 3.2"/>',
   envoi: '<path d="M12 15.5V4.5M7.5 9 12 4.5 16.5 9"/><path d="M4.5 15v3.5c0 .8.7 1.5 1.5 1.5h12c.8 0 1.5-.7 1.5-1.5V15"/>',
   ejecter: '<path d="M5.5 14 12 6.5l6.5 7.5z"/><path d="M5.5 18h13"/>',
+  etiquette: '<path d="M3.5 12V4.8c0-.7.6-1.3 1.3-1.3H12l8.5 8.5-8.5 8.5z"/><circle cx="8" cy="8" r="1.4"/>',
 });
 
 const nf = (v, d = 0) => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: d }).format(v);
@@ -114,12 +115,33 @@ function ouvrable(tr, ouvrir) {
 const erreur = e => h('div', { class: 'page' }, h('div', { class: 'card' }, h('p', { class: 'vide', text: e.message || String(e) })));
 const sur = fn => async e => { e?.stopPropagation?.(); try { await fn(); } catch (x) { toast(x.message, true); } };
 
+// Étiquettes : un nom lisible que ProxLab montre à la place de celui de
+// Proxmox, qui garde le sien. Le nom de Proxmox reste écrit dessous.
+function nomEtiquete(reel, alias, ...details) {
+  const sous = [alias ? reel : '', ...details].filter(Boolean).join(' · ');
+  return h('div', { class: 'nom-iso' }, h('b', { text: alias || reel }), sous ? h('small', { class: 'mono', text: sous }) : null);
+}
+const noeudAffiche = n => E.etat?.noeuds.find(x => x.node === n)?.alias || n;
+const QUOI = { iso: 'le fichier', reseau: 'l’interface', stockage: 'le stockage', noeud: 'le nœud' };
+async function etiqueter({ genre, noeud, objet, reel = objet, actuel = '' }) {
+  const champ = h('input', { class: 'field', maxlength: 80, value: actuel, placeholder: reel, 'aria-label': 'Étiquette' });
+  const err = h('p', { class: 'erreur', role: 'alert' });
+  return dialogue({ titre: `Étiquette de ${reel}`,
+    texte: `Le nom que ProxLab affiche. Dans Proxmox, ${QUOI[genre]} garde son nom (${reel}) : rien n’y est renommé, les VM et la configuration ne voient aucun changement. Vide : plus d’étiquette.`,
+    contenu: [champ, err],
+    boutons: [{ texte: 'Annuler', classe: 'flat', valeur: false }, { texte: 'Enregistrer', classe: 'solid', agir: async () => {
+      try { await api.put('/api/etiquettes', { genre, noeud, objet, etiquette: champ.value }); return true; } catch (e) { err.textContent = e.message; return false; }
+    } }] });
+}
+const boutonEtiquette = (quoi, ouvrir) => h('button', { class: 'btn sm flat', type: 'button', 'aria-label': `Étiquette de ${quoi}`, title: 'Étiquette', onclick: ouvrir }, icone('etiquette', 14));
+
 const stage = h('div', { class: 'stage' });
 const navs = {};
 const PAGES = {
   over: { titre: 'Vue d\'ensemble', ic: 'vue', rendre: pageVue },
   machines: { titre: 'Machines', ic: 'vm', rendre: pageMachines },
   noeuds: { titre: 'Nœuds', ic: 'noeud', rendre: pageNoeuds },
+  reseau: { titre: 'Réseau', ic: 'reseau', rendre: pageReseau },
   stockage: { titre: 'Stockage', ic: 'disque', rendre: pageStockage },
   isos: { titre: 'Images ISO', ic: 'iso', rendre: pageIsos },
   taches: { titre: 'Tâches', ic: 'taches', rendre: pageTaches },
@@ -141,7 +163,7 @@ const railBarre = h('i');
 const app = h('div', { class: 'app' },
   h('nav', { class: 'rail', 'aria-label': 'Navigation' },
     h('div', { class: 'mark' }, h('div', { class: 'g' }, icone('grappe', 15)), h('b', { text: SERVICE }), h('i', { class: 'pulse' })),
-    groupe('Grappe', ['over', 'machines', 'noeuds', 'stockage', 'isos']),
+    groupe('Grappe', ['over', 'machines', 'noeuds', 'reseau', 'stockage', 'isos']),
     groupe('Activité', ['taches', 'evenements']),
     groupe('Système', ['reglages', 'securite', 'comptes']),
     h('div', { class: 'railcard' },
@@ -267,7 +289,7 @@ function contenuVue() {
       h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Disponibilité' }), h('span', { class: 'note', text: '7 jours, heure par heure' })),
         h('div', { class: 'pad' }, calendrierDispo(sy.disponibilite), legendeEtats('Sans incident', 'Dégradé', 'Incident')))),
     h('div', { class: 'card mt16' }, h('header', {}, h('h2', { text: 'Stockage' }), h('span', { class: 'note', text: `${octets(utilise)} sur ${octets(total)}` })),
-      h('div', { class: 'pad' }, tuiles({ libelle: 'Occupation des stockages', format: octets, parts: st.map(s => ({ nom: `${s.storage}${s.shared ? '' : ' · ' + s.node}`, valeur: s.disk, detail: `${pct(s.disk, s.maxdisk)} % de ${octets(s.maxdisk)}` })) })))];
+      h('div', { class: 'pad' }, tuiles({ libelle: 'Occupation des stockages', format: octets, parts: st.map(s => ({ nom: `${s.alias || s.storage}${s.shared ? '' : ' · ' + (noeudAffiche(s.node))}`, valeur: s.disk, detail: `${pct(s.disk, s.maxdisk)} % de ${octets(s.maxdisk)}` })) })))];
 }
 
 // Un stockage partagé apparaît sous chaque nœud : compté une fois.
@@ -355,7 +377,7 @@ function carteNoeuds(et, sy) {
     const ok = ici.filter(m => m.status === 'running').length, incident = ici.filter(m => enPanne.has(cibleDe(m))).length;
     const hors = n.status !== 'online';
     const b = h('div', { class: 'noeud-ligne' },
-      h('button', { class: 'noeud-nom', type: 'button', onclick: () => aller('noeuds') }, h('i', { class: 'd ' + (hors ? 'held' : '') }), h('b', { text: n.node }), h('small', { text: `${ici.length} invité${ici.length > 1 ? 's' : ''}` })),
+      h('button', { class: 'noeud-nom', type: 'button', onclick: () => aller('noeuds') }, h('i', { class: 'd ' + (hors ? 'held' : '') }), h('b', { text: n.alias || n.node }), h('small', { text: `${ici.length} invité${ici.length > 1 ? 's' : ''}` })),
       capacite({ ok: hors ? 0 : ok, incident: hors ? ici.length : incident, repos: hors ? 0 : ici.length - ok - incident, libelle: n.node }),
       h('div', { class: 'noeud-ratio' }, h('b', { text: hors ? 'hors ligne' : `${nf(n.cpu * 100)} %` }), h('small', { text: hors ? '' : `CPU · RAM ${pct(n.mem, n.maxmem)} %` })));
     return b;
@@ -397,7 +419,7 @@ async function pageMachines() {
     else if (E.filtre === 'arretees') l = l.filter(m => m.status !== 'running' && !m.template);
     else if (E.filtre === 'modeles') l = l.filter(m => m.template);
     const t = E.q.toLowerCase().trim();
-    if (t) l = l.filter(m => `${m.name} ${m.vmid} ${m.node} ${m.tags}`.toLowerCase().includes(t));
+    if (t) l = l.filter(m => `${m.name} ${m.vmid} ${m.node} ${noeudAffiche(m.node)} ${m.tags}`.toLowerCase().includes(t));
     corps.replaceChildren(...(l.length ? l.map(ligneMachine) : [h('tr', {}, h('td', { colspan: 6, class: 'vide', text: 'Aucune machine.' }))]));
     compte.textContent = `${l.length} machine${l.length > 1 ? 's' : ''}`;
   };
@@ -415,7 +437,7 @@ function ligneMachine(m) {
   const marche = m.status === 'running';
   const tr = h('tr', { class: 'cliquable' },
     h('td', { class: 'principal' }, h('div', { class: 'who-cell' }, h('span', { class: 'itile' }, icone(m.type === 'qemu' ? 'vm' : 'ct')), h('div', {}, h('b', { text: m.name || `${genreMachine(m)} ${m.vmid}` }), h('small', { class: 'mono', text: `${m.vmid} · ${genreMachine(m)}${m.tags ? ' · ' + m.tags.split(/[;,]/).join(', ') : ''}` })))),
-    h('td', { class: 'cache-m dim', text: m.node }),
+    h('td', { class: 'cache-m dim', text: noeudAffiche(m.node) }),
     h('td', { class: 'cache-l' }, marche ? barre(m.cpu * 100) : h('span', { class: 'dim', text: '—' })),
     h('td', { class: 'cache-l' }, marche ? barre(pct(m.mem, m.maxmem)) : h('span', { class: 'dim', text: octets(m.maxmem) })),
     h('td', { class: 'cache-s mono', text: marche ? duree(m.uptime) : '—' }),
@@ -467,7 +489,7 @@ async function pageFiche(noeud, type, vmid) {
     tete.replaceChildren(
       h('button', { class: 'btn sm flat', type: 'button', 'aria-label': 'Retour aux machines', onclick: () => aller('machines') }, icone('retour', 15)),
       h('div', { class: 'big' }, icone(f.type === 'qemu' ? 'vm' : 'ct', 22)),
-      h('div', { class: 'grow1' }, h('h1', { text: f.name || `${genreMachine(f)} ${f.vmid}` }), h('div', { class: 'sub dim' }, `${genreMachine(f)} ${f.vmid} · ${f.node} · `, tagMachine(f))),
+      h('div', { class: 'grow1' }, h('h1', { text: f.name || `${genreMachine(f)} ${f.vmid}` }), h('div', { class: 'sub dim' }, `${genreMachine(f)} ${f.vmid} · ${noeudAffiche(f.node)} · `, tagMachine(f))),
       h('div', { class: 'actions' },
         membre && !f.template && !marche ? h('button', { class: 'btn solid', type: 'button', onclick: action('start', 'Démarrer') }, icone('marche', 14), h('span', { class: 'cache-s', text: 'Démarrer' })) : null,
         membre && marche ? h('button', { class: 'btn', type: 'button', onclick: action('shutdown', 'Arrêter', { question: 'Arrêter proprement la machine ?' }) }, icone('arret', 14), h('span', { class: 'cache-s', text: 'Arrêter' })) : null,
@@ -571,7 +593,7 @@ async function creerMachine({ iso = '', noeud = '' } = {}) {
   if (!enLigne.length) { toast('Aucun nœud en ligne.', true); return; }
   const champ = (lbl, el) => h('label', { class: 'lbl-champ' }, h('span', { text: lbl }), el);
   const nom = h('input', { class: 'field', maxlength: 63, placeholder: 'ma-vm', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Nom' });
-  const nd = h('select', { class: 'field', 'aria-label': 'Nœud' }, enLigne.map(n => h('option', { value: n.node, text: n.node, selected: n.node === noeud })));
+  const nd = h('select', { class: 'field', 'aria-label': 'Nœud' }, enLigne.map(n => h('option', { value: n.node, text: n.alias ? `${n.alias} (${n.node})` : n.node, selected: n.node === noeud })));
   let systeme = 'linux';
   const systemes = h('div', { class: 'views plein' }, [['linux', 'Linux'], ['windows', 'Windows 11'], ['autre', 'Autre']].map(([v, t]) => h('button', { class: 'view' + (v === systeme ? ' on' : ''), type: 'button', text: t, onclick: e => {
     systeme = v; [...systemes.children].forEach(b => b.classList.toggle('on', b === e.currentTarget));
@@ -592,11 +614,12 @@ async function creerMachine({ iso = '', noeud = '' } = {}) {
     err.textContent = '';
     o = await api.get(`/api/machines/options?noeud=${encodeURIComponent(nd.value)}`);
     image.replaceChildren(h('option', { value: '', text: 'Aucune (lecteur vide)' }), ...o.isos.map(i => h('option', { value: i.volid, text: i.alias || i.nom, selected: i.volid === iso })));
-    stockage.replaceChildren(...o.stockages.map(x => h('option', { value: x.storage, text: `${x.storage} — ${octets(x.avail)} libres` })));
-    pont.replaceChildren(...o.ponts.map(b => h('option', { value: b, text: b })));
+    stockage.replaceChildren(...o.stockages.map(x => h('option', { value: x.storage, text: `${x.alias ? `${x.alias} (${x.storage})` : x.storage} — ${octets(x.avail)} libres` })));
+    // Le pont par son étiquette, ou le commentaire posé dans Proxmox ; son vrai nom entre parenthèses.
+    pont.replaceChildren(...(o.pontsDetail || o.ponts.map(iface => ({ iface }))).map(b => h('option', { value: b.iface, text: b.alias || b.commentaire ? `${b.alias || b.commentaire} (${b.iface})` : b.iface })));
     coeurs.max = o.noeud.maxcpu;
     for (const opt of mem.options) opt.disabled = Number(opt.value) * 1048576 > o.noeud.maxmem;
-    resume.textContent = `Numéro proposé : ${o.vmid}. ${nd.value} : ${o.noeud.maxcpu} cœurs, ${octets(o.noeud.maxmem)} de mémoire.`;
+    resume.textContent = `Numéro proposé : ${o.vmid}. ${noeudAffiche(nd.value)} : ${o.noeud.maxcpu} cœurs, ${octets(o.noeud.maxmem)} de mémoire.`;
     if (!o.stockages.length) err.textContent = `Aucun stockage de ${nd.value} ne prend de disque de VM.`;
   };
   nd.addEventListener('change', () => charger().catch(x => { err.textContent = x.message; }));
@@ -1022,7 +1045,14 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     seul ? null : h('button', { class: 'btn sm', type: 'button', disabled: true, 'aria-label': 'Plein écran', title: 'Plein écran', onclick: plein }, icone('agrandir', 14)));
   const activer = on => { for (const b of outils.querySelectorAll(':scope > button')) b.disabled = !on; copierIci.disabled = !on || !ecran?.dernierPresse; };
 
+  // Une ouverture à la fois, comme pour la console texte.
+  let ouverture = false;
   const ouvrir = sur(async () => {
+    if (ouverture) return;
+    ouverture = true; bouton.disabled = true;
+    try { await ouvrirMaintenant(); } finally { ouverture = false; bouton.disabled = false; }
+  });
+  async function ouvrirMaintenant() {
     const { passe } = await api.post('/api/console', { ...cible, mode: 'ecran' });
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/ws/console?passe=${encodeURIComponent(passe)}`);
@@ -1066,7 +1096,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     });
     ws.addEventListener('close', () => { activer(false); if (ws === wsCourant && etat.textContent !== 'reprise…') etat.textContent = 'fermé'; });
     bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
-  });
+  }
   const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: () => { reprise = false; ouvrir(); } }, icone('ecran', 14), 'Ouvrir');
   // Ouvert dès le premier affichage de l'onglet ; ensuite il reste ouvert.
   if (auto && enMarche) setTimeout(() => { reprise = false; ouvrir(); }, 0);
@@ -1140,7 +1170,16 @@ function consoleMachine(cible, garder, { f = null, relire = null, auto = false }
   ]);
   let ws = null;
   const carte = h('div', { class: 'card' });
+  // Une ouverture à la fois : un second clic pendant la connexion (celle
+  // lancée d'office à l'ouverture de l'onglet) remplacerait le terminal tout
+  // juste ouvert, et les touches déjà tapées partiraient dans l'ancien.
+  let ouverture = false;
   const ouvrir = sur(async () => {
+    if (ouverture) return;
+    ouverture = true; bouton.disabled = true;
+    try { await ouvrirMaintenant(); } finally { ouverture = false; bouton.disabled = false; }
+  });
+  async function ouvrirMaintenant() {
     let passe;
     try { ({ passe } = await api.post('/api/console', cible)); } catch (e) {
       if (e.details?.sansSerie && f) { hote.replaceChildren(sansPortSerie(f, relire)); return; }
@@ -1173,7 +1212,7 @@ function consoleMachine(cible, garder, { f = null, relire = null, auto = false }
     ws.addEventListener('message', ev => { if (typeof ev.data === 'string') { clearTimeout(silence); silence = null; term.ecrire(ev.data); } });
     ws.addEventListener('close', () => { etat.textContent = 'fermée'; });
     bouton.replaceChildren(icone('relance', 14), 'Rouvrir');
-  });
+  }
   const bouton = h('button', { class: 'btn sm solid', type: 'button', onclick: ouvrir }, icone('terminal', 14), 'Ouvrir');
   const aide = cible.type === 'qemu' && f ? consoleMuette(f, () => { aide.remove(); term?.focus(); ws?.readyState === 1 && ws.send(JSON.stringify({ i: '\r' })); }) : h('div');
   const serie = cible.type !== 'qemu' || !f || Object.keys(f.config || {}).some(k => /^serial\d$/.test(k));
@@ -1191,26 +1230,61 @@ async function pageNoeuds() {
   const fermer = () => { try { shell.ws?.close(); } catch { /* fermé */ } shell.term?.detruire(); shell = { term: null, ws: null }; };
   const peindre = async () => {
     const et = E.etat;
-    const tete = h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Nœuds' }), h('p', { class: 'lede', text: 'Ressources, interfaces réseau et shell de chaque nœud.' })));
+    const tete = h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Nœuds' }), h('p', { class: 'lede', text: 'Ressources et shell de chaque nœud ; ses interfaces sont dans Réseau.' })));
     if (!et.relie) { page.replaceChildren(tete, nonRelie()); return; }
-    const cartes = await Promise.all(et.noeuds.map(async n => {
+    const cartes = et.noeuds.map(n => {
       const hors = n.status !== 'online';
-      const ifaces = hors ? [] : await api.get(`/api/noeuds/${encodeURIComponent(n.node)}/reseau`).catch(() => []);
       const kv = (k, v) => h('div', { class: 'kv' }, h('span', { text: k }), v instanceof Node ? v : h('b', { text: v }));
       return h('div', { class: 'card' },
-        h('header', {}, h('span', { class: 'itile' }, icone('noeud', 15)), h('h2', { text: n.node }), h('span', { class: 'tag ' + (hors ? 'held' : '') }, h('i', { class: 'd' }), hors ? 'hors ligne' : 'en ligne'),
+        h('header', {}, h('span', { class: 'itile' }, icone('noeud', 15)), h('h2', { text: n.alias || n.node }), n.alias ? h('span', { class: 'note mono', text: n.node }) : null,
+          h('span', { class: 'tag ' + (hors ? 'held' : '') }, h('i', { class: 'd' }), hors ? 'hors ligne' : 'en ligne'),
+          admin ? boutonEtiquette(n.node, sur(async () => { if (await etiqueter({ genre: 'noeud', noeud: n.node, objet: n.node, actuel: n.alias })) { await rafraichir(); toast('Étiquette enregistrée.'); } })) : null,
           admin && !hors ? h('button', { class: 'btn sm', type: 'button', onclick: () => { fermer(); zoneShell.replaceChildren(consoleMachine({ noeud: n.node, type: 'node' }, (t, w) => { shell = { term: t, ws: w }; })); zoneShell.scrollIntoView({ behavior: 'smooth' }); } }, icone('terminal', 14), 'Shell') : null),
         h('div', { class: 'cardbody' },
           kv('Processeur', hors ? '—' : barre(n.cpu * 100)), kv('Mémoire', hors ? '—' : barre(pct(n.mem, n.maxmem))), kv('Disque système', hors ? '—' : barre(pct(n.disk, n.maxdisk))),
           kv('Cœurs', String(n.maxcpu)), kv('Mémoire installée', octets(n.maxmem)), kv('En ligne depuis', hors ? '—' : duree(n.uptime)),
-          kv('Invités', String(et.machines.filter(m => m.node === n.node && !m.template).length))),
-        ifaces.length ? h('div', { class: 'tw' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', { text: 'Interface' }), h('th', { text: 'Adresse' }), h('th', { class: 'cache-s', text: 'Ports' }))),
-          h('tbody', {}, ifaces.map(i => h('tr', {}, h('td', {}, h('b', { class: 'mono fw5', text: i.iface }), h('small', { class: 'dim bloc', text: i.type })), h('td', { class: 'mono', text: i.cidr || '—' }), h('td', { class: 'cache-s mono dim', text: i.ports || '—' })))))) : null);
-    }));
+          kv('Invités', String(et.machines.filter(m => m.node === n.node && !m.template).length))));
+    });
     page.replaceChildren(tete, h('div', { class: 'grille' }, cartes), zoneShell);
   };
   const zoneShell = h('div', { class: 'mt16' });
   enregistrer(() => { if (!shell.ws) peindre(); }, fermer);
+  await peindre();
+  return page;
+}
+
+// Réseau : les interfaces de chaque nœud (ponts, agrégats, cartes, VLAN),
+// ce qu'elles relient, et une étiquette pour les reconnaître.
+const GENRE_IFACE = { bridge: 'Pont', OVSBridge: 'Pont OVS', bond: 'Agrégat', OVSBond: 'Agrégat OVS', eth: 'Carte', vlan: 'VLAN', OVSIntPort: 'Port OVS', alias: 'Alias' };
+async function pageReseau() {
+  const page = h('div', { class: 'page' });
+  const peindre = async () => {
+    const et = E.etat;
+    const tete = h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Réseau' }),
+      h('p', { class: 'lede', text: 'Les interfaces de chaque nœud. Une VM se branche sur un pont ; une étiquette le rend reconnaissable, sans rien renommer dans Proxmox.' })));
+    if (!et.relie) { page.replaceChildren(tete, nonRelie()); return; }
+    const cartes = await Promise.all(et.noeuds.filter(n => n.status === 'online').map(async n => {
+      let ifaces, erreurIf = '';
+      try { ifaces = await api.get(`/api/noeuds/${encodeURIComponent(n.node)}/reseau`); } catch (e) { ifaces = []; erreurIf = e.message; }
+      const ordre = i => ({ bridge: 0, OVSBridge: 0, bond: 1, OVSBond: 1, vlan: 2 })[i.type] ?? 3;
+      ifaces.sort((a, b) => ordre(a) - ordre(b) || a.iface.localeCompare(b.iface, 'fr', { numeric: true }));
+      const marquer = i => sur(async () => { if (await etiqueter({ genre: 'reseau', noeud: n.node, objet: i.iface, actuel: i.alias })) { toast('Étiquette enregistrée.'); peindre(); } });
+      return h('div', { class: 'card mb16' },
+        h('header', {}, h('span', { class: 'itile' }, icone('noeud', 15)), h('h2', { text: n.alias || n.node }), h('span', { class: 'note', text: `${ifaces.length} interface${ifaces.length > 1 ? 's' : ''}` })),
+        erreurIf ? h('p', { class: 'vide', text: erreurIf }) : h('div', { class: 'tw' }, h('table', {},
+          h('thead', {}, h('tr', {}, h('th', { text: 'Interface' }), h('th', { class: 'cache-s', text: 'Relie' }), h('th', { class: 'cache-m', text: 'Adresse' }), h('th', { text: 'État' }), admin ? h('th', { class: 'fin' }) : null)),
+          h('tbody', {}, ifaces.map(i => h('tr', {},
+            h('td', { class: 'principal' }, h('div', { class: 'who-cell' }, h('span', { class: 'itile' }, icone(/bridge/i.test(i.type) ? 'reseau' : 'noeud')),
+              nomEtiquete(i.iface, i.alias, GENRE_IFACE[i.type] || i.type, i.commentaire && i.commentaire !== i.alias ? `« ${i.commentaire} »` : ''))),
+            h('td', { class: 'cache-s mono dim', text: i.ports || '—' }),
+            h('td', { class: 'cache-m mono', text: i.cidr || '—' }),
+            h('td', {}, h('span', { class: 'tag ' + (i.active ? '' : 'idle') }, h('i', { class: 'd' }), i.active ? 'active' : 'inactive')),
+            admin ? h('td', { class: 'fin' }, boutonEtiquette(i.iface, marquer(i))) : null))))));
+    }));
+    const hors = et.noeuds.filter(n => n.status !== 'online').map(n => n.alias || n.node);
+    page.replaceChildren(tete, ...cartes, hors.length ? h('p', { class: 'hint', text: `Hors ligne, interfaces illisibles : ${hors.join(', ')}.` }) : '');
+  };
+  enregistrer(() => {});
   await peindre();
   return page;
 }
@@ -1223,14 +1297,15 @@ async function pageStockage() {
     if (!et.relie) { page.replaceChildren(tete, nonRelie()); return; }
     const liste = et.stockages.slice().sort((a, b) => a.node.localeCompare(b.node) || a.storage.localeCompare(b.storage));
     page.replaceChildren(tete, h('div', { class: 'card' }, h('div', { class: 'tw' }, h('table', {},
-      h('thead', {}, h('tr', {}, h('th', { text: 'Stockage' }), h('th', { class: 'cache-m', text: 'Nœud' }), h('th', { class: 'cache-l', text: 'Contenu' }), h('th', { text: 'Occupation' }), h('th', { class: 'cache-s fin', text: 'Libre' }))),
+      h('thead', {}, h('tr', {}, h('th', { text: 'Stockage' }), h('th', { class: 'cache-m', text: 'Nœud' }), h('th', { class: 'cache-l', text: 'Contenu' }), h('th', { text: 'Occupation' }), h('th', { class: 'cache-s fin', text: 'Libre' }), admin ? h('th', { class: 'fin' }) : null)),
       h('tbody', {}, liste.map(s => {
         const tr = h('tr', { class: 'cliquable' },
-          h('td', { class: 'principal' }, h('div', { class: 'who-cell' }, h('span', { class: 'itile' }, icone('disque')), h('div', {}, h('b', { text: s.storage }), h('small', { class: 'mono', text: `${s.plugintype}${s.shared ? ' · partagé' : ''}` })))),
-          h('td', { class: 'cache-m dim', text: s.node }),
+          h('td', { class: 'principal' }, h('div', { class: 'who-cell' }, h('span', { class: 'itile' }, icone('disque')), nomEtiquete(s.storage, s.alias, `${s.plugintype}${s.shared ? ' · partagé' : ''}`))),
+          h('td', { class: 'cache-m dim', text: noeudAffiche(s.node) }),
           h('td', { class: 'cache-l dim', text: s.content.split(',').join(', ') }),
           h('td', {}, barre(pct(s.disk, s.maxdisk), { alerte: 90, attention: 80 })),
-          h('td', { class: 'cache-s fin mono', text: octets(s.maxdisk - s.disk) }));
+          h('td', { class: 'cache-s fin mono', text: octets(s.maxdisk - s.disk) }),
+          admin ? h('td', { class: 'fin' }, boutonEtiquette(s.storage, sur(async () => { if (await etiqueter({ genre: 'stockage', noeud: s.node, objet: s.storage, actuel: s.alias })) { await rafraichir(); toast('Étiquette enregistrée.'); } }))) : null);
         return ouvrable(tr, () => contenuStockage(s));
       }))))));
   };
@@ -1253,7 +1328,7 @@ async function contenuStockage(s) {
   };
   choix.addEventListener('change', charger);
   charger();
-  await dialogue({ titre: `${s.storage} sur ${s.node}`, large: true, contenu: [choix, liste], boutons: [{ texte: 'Fermer', valeur: null }] });
+  await dialogue({ titre: `${s.alias || s.storage} sur ${noeudAffiche(s.node)}`, large: true, contenu: [choix, liste], boutons: [{ texte: 'Fermer', valeur: null }] });
 }
 
 // Images ISO : celles de chaque stockage qui en accepte, les VM qui en ont
@@ -1371,14 +1446,8 @@ async function pageIsos() {
       } }] });
     if (ok) apres(`${i.nom} insérée.`);
   });
-  const renommer = i => sur(async () => {
-    const champ = h('input', { class: 'field', maxlength: 80, value: i.alias, placeholder: i.nom, 'aria-label': 'Nom affiché' });
-    const err = h('p', { class: 'erreur', role: 'alert' });
-    const ok = await dialogue({ titre: 'Renommer l’image', texte: `Le nom que ProxLab affiche. Le fichier garde le sien dans Proxmox (${i.nom}) : Proxmox ne sait pas renommer une image. Vide, le nom du fichier revient.`, contenu: [champ, err],
-      boutons: [{ texte: 'Annuler', classe: 'flat', valeur: false }, { texte: 'Renommer', classe: 'solid', agir: async () => {
-        try { await api.put('/api/isos/nom', { noeud: i.node, volid: i.volid, nom: champ.value }); return true; } catch (e) { err.textContent = e.message; return false; }
-      } }] });
-    if (ok) apres('Nom changé.');
+  const marquer = i => sur(async () => {
+    if (await etiqueter({ genre: 'iso', noeud: i.node, objet: i.volid, reel: i.nom, actuel: i.alias })) apres('Étiquette enregistrée.');
   });
   const ejecter = u => sur(async () => {
     if (!await confirmer(`Éjecter le disque de ${u.vmid} ?`, `${u.name || 'VM'} sur ${u.node}, lecteur ${u.lecteur}.`, { oui: 'Éjecter' })) return;
@@ -1412,7 +1481,7 @@ async function pageIsos() {
         h('tbody', {}, d.isos.length ? d.isos.map(i => h('tr', {},
           h('td', { class: 'principal' }, h('div', { class: 'who-cell' }, h('span', { class: 'itile' }, icone('iso')), h('div', { class: 'nom-iso' }, h('b', { text: i.alias || i.nom }),
             h('small', { class: 'mono', text: [i.alias ? i.nom : '', i.ctime ? dateHeure(i.ctime) : '', i.utilisePar.length ? `dans ${i.utilisePar.map(u => u.vmid).join(', ')}` : ''].filter(Boolean).join(' · ') })))),
-          h('td', { class: 'cache-m dim', text: `${i.storage} · ${i.shared ? 'partagé' : i.node}` }),
+          h('td', { class: 'cache-m dim', text: `${d.stockages.find(x => x.storage === i.storage && (x.shared || x.node === i.node))?.alias || i.storage} · ${i.shared ? 'partagé' : noeudAffiche(i.node)}` }),
           h('td', { class: 'cache-s mono', text: octets(i.size) }),
           h('td', { class: 'cache-s' }, i.utilisePar.length ? i.utilisePar.map(u => h('span', { class: 'tag idle' }, `${u.vmid} ${u.name || ''}`.trim(),
             admin ? h('button', { class: 'ghost', type: 'button', 'aria-label': `Éjecter de ${u.vmid}`, title: 'Éjecter', onclick: ejecter(u) }, icone('ejecter', 12)) : null)) : h('span', { class: 'dim', text: '—' })),
@@ -1420,7 +1489,7 @@ async function pageIsos() {
             h('button', { class: 'btn sm', type: 'button', onclick: sur(() => creerMachine({ iso: i.volid, noeud: i.node })) }, icone('plus', 13), h('span', { class: 'cache-s', text: 'Créer une VM' })),
             h('button', { class: 'btn sm flat', type: 'button', 'aria-label': `Actions pour ${i.alias || i.nom}`, onclick: () => feuille(i.alias || i.nom, [
               { texte: 'Insérer dans une VM', agir: inserer(i) },
-              { texte: 'Renommer', agir: renommer(i) },
+              { texte: 'Étiquette', agir: marquer(i) },
               { texte: i.utilisePar.length ? 'Supprimer (éjecte-la d’abord)' : 'Supprimer', danger: true, agir: i.utilisePar.length ? () => toast(`Dans le lecteur de ${i.utilisePar.map(u => u.vmid).join(', ')} : éjecte-la d’abord.`, true) : supprimer(i) },
             ]) }, icone('actions', 15)))) : null))
           : h('tr', {}, h('td', { colspan: colonnes, class: 'vide', text: d.stockages.length ? 'Aucune image : télécharge-en une, ou envoie-la depuis ton ordinateur.' : 'Aucun stockage n\'accepte d\'images ISO.' })))))));
