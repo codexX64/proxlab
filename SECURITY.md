@@ -65,6 +65,8 @@ Suivi du 2026-10-20 (2.3.0) : deux fonctions. **Créer une VM** (`src/api.js:581
 
 Suivi du 2026-10-20 (2.4.0) : **étiquettes** (`src/api.js:234`). Un nom lisible posé par ProxLab sur une image, une interface réseau, un stockage ou un nœud ; Proxmox n'est jamais appelé en écriture, rien n'y est renommé. Administrateur sous renfort ; genre parmi quatre, objet au format de son genre, refusé avant tout appel à Proxmox ; objet revérifié sur le nœud ; étiquette au motif strict (80 caractères), mille au plus par genre ; au journal ; rendue en texte seulement. Les réponses gagnent un champ `alias` (et `pontsDetail` pour la création d'une VM), aucun champ retiré. Console et écran : une seule ouverture à la fois. Aucun contrôle ne change de statut. Essais : 29 du service (`test/proxlab.test.js:969`) ; parcours du navigateur des étiquettes : 18 vérifications.
 
+Suivi du 2026-10-20 (2.5.0) : **dupliquer une machine** (`src/api.js:678`). Copie complète faite par Proxmox (`clone`, `full=1`), de l'état actuel ou d'un instantané, arrêtée, sous un numéro tiré par Proxmox ; administrateur sous renfort ; nom, instantané et stockage au format, refusés avant tout appel ; instantané revérifié avant la copie ; échec de la tâche dit sans chemin de l'hyperviseur ; au journal (`machine.duplication`) et aux événements. La 2.4.0 avait laissé `hub.json` et `src/config.js` à 2.3.0 (le Hub n'aurait pas proposé la mise à jour) : les trois versions sont alignées en 2.5.0, l'essai qui le vérifie est vert. Aucun contrôle ne change de statut. Essais : 30 du service (`test/proxlab.test.js:1019`) ; parcours du navigateur de la duplication : 7 vérifications.
+
 ## Control status
 | ID | Severity | Status | Evidence | Notes |
 |---|---|---|---|---|

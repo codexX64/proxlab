@@ -189,6 +189,13 @@ QEMU, port série (la console) et VirtIO-GPU (l'écran s'ajuste à la fenêtre).
 Windows 11 : UEFI, TPM, disque SATA et carte e1000, que l'installeur reconnaît
 sans pilote. Administrateur, sous renfort, au journal.
 
+**Dupliquer une machine.** Fiche → menu ⋯ → Dupliquer, ou onglet Instantanés →
+Dupliquer sur une ligne : une copie complète (disques compris), arrêtée, sous un
+numéro libre, de l'état actuel ou de cet instantané, sur le même stockage ou un
+autre. Proxmox donne une adresse MAC neuve aux cartes réseau de la copie.
+Administrateur, sous renfort, au journal. Droit Proxmox : VM.Clone (compris dans
+PVEVMAdmin).
+
 **Étiquettes.** Une image, une interface réseau (page Réseau), un stockage ou un
 nœud reçoit un nom lisible (bouton étiquette, ou menu ⋯ → Étiquette pour une
 image) : « Ghost » au lieu de `vmbr1`. C'est ProxLab qui le garde ; dans Proxmox

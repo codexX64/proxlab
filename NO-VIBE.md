@@ -186,3 +186,7 @@ Créer une VM et nommer une image, en commits d'un sujet (serveur puis interface
 ## Suivi du 2026-10-20 (2.4.0)
 
 Étiquettes : une seule fonction `etiqueter` sert les quatre genres et l'ancienne route `/api/isos/nom`, gardée pour les clients d'avant. Les interfaces quittent la page Nœuds pour une page Réseau. Comportement d'avant inchangé : 28 essais d'avant verts, un seul ajusté (le champ `alias` ajouté à l'état de la grappe).
+
+## Suivi du 2026-10-20 (2.5.0)
+
+Duplication : une route, un dialogue partagé par la fiche (menu ⋯) et l'onglet Instantanés. 29 essais d'avant verts sans retouche.
