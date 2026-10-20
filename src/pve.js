@@ -7,6 +7,7 @@
 // Un chemin n'est jamais assemblé ici à partir d'une requête : les routes
 // valident chaque segment (nœud, VMID, nom) puis appellent chemin(), qui
 // refuse tout ce qui sortirait de l'API.
+import crypto from 'node:crypto';
 import https from 'node:https';
 import { agentProxmox } from './tls.js';
 
@@ -68,6 +69,44 @@ export class Proxmox {
       const detail = json?.message || (json?.errors && JSON.stringify(json.errors)) || r.message || `HTTP ${r.status}`;
       throw new ErreurProxmox(String(detail).trim().slice(0, 500), r.status === 401 || r.status === 403 ? 502 : r.status >= 500 ? 502 : r.status);
     }
+    return json ? json.data : null;
+  }
+
+  /**
+   * Un fichier envoyé tel qu'il arrive (une image ISO de plusieurs Gio) :
+   * enveloppé en multipart/form-data autour du flux, sans jamais le garder en
+   * mémoire. `taille` est annoncée par le navigateur et sert de longueur à
+   * Proxmox ; un flux qui s'arrête avant coupe l'envoi.
+   */
+  async envoyerFichier(p, { champs = {}, champFichier, nom, flux, taille }) {
+    const l = this.liaison();
+    const borne = '----proxlab' + crypto.randomBytes(12).toString('hex');
+    const entree = Buffer.from(Object.entries(champs).map(([k, v]) => `--${borne}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`).join('')
+      + `--${borne}\r\nContent-Disposition: form-data; name="${champFichier}"; filename="${nom}"\r\nContent-Type: application/octet-stream\r\n\r\n`);
+    const sortie = Buffer.from(`\r\n--${borne}--\r\n`);
+    const entetes = {
+      Accept: 'application/json', ...(await this.authentification(l, 'POST')),
+      'Content-Type': `multipart/form-data; boundary=${borne}`, 'Content-Length': entree.length + taille + sortie.length,
+    };
+    const r = await new Promise((resolve, reject) => {
+      const req = https.request({ host: l.hote, port: l.port, method: 'POST', path: '/api2/json' + p, agent: this.agent, headers: entetes, timeout: 120000 }, res => {
+        const morceaux = [];
+        res.on('data', c => { if (morceaux.reduce((n, x) => n + x.length, 0) < 65536) morceaux.push(c); });
+        res.on('end', () => resolve({ status: res.statusCode, message: res.statusMessage, texte: Buffer.concat(morceaux).toString('utf8') }));
+        res.on('error', reject);
+      });
+      req.on('timeout', () => req.destroy(new ErreurProxmox('Proxmox ne reçoit plus l\'envoi (délai dépassé).')));
+      req.on('error', e => reject(e instanceof ErreurProxmox ? e : new ErreurProxmox(`Proxmox injoignable (${e.code || e.message}).`)));
+      let recu = 0;
+      req.write(entree);
+      flux.on('data', c => { recu += c.length; if (recu > taille) { req.destroy(new ErreurProxmox('Fichier plus long qu\'annoncé.', 400)); flux.destroy(); return; } if (!req.write(c)) { flux.pause(); req.once('drain', () => flux.resume()); } });
+      flux.on('end', () => { if (recu !== taille) { req.destroy(new ErreurProxmox('Envoi interrompu avant la fin du fichier.', 400)); return; } req.end(sortie); });
+      flux.on('error', () => req.destroy(new ErreurProxmox('Envoi interrompu par le navigateur.', 400)));
+      flux.on('close', () => { if (recu !== taille) req.destroy(new ErreurProxmox('Envoi interrompu par le navigateur.', 400)); });
+    });
+    let json = null;
+    try { json = JSON.parse(r.texte); } catch { /* page d'erreur HTML */ }
+    if (r.status >= 400) throw new ErreurProxmox(String(json?.message || (json?.errors && JSON.stringify(json.errors)) || r.message || `HTTP ${r.status}`).trim().slice(0, 500), r.status >= 500 || r.status === 401 || r.status === 403 ? 502 : r.status);
     return json ? json.data : null;
   }
 
