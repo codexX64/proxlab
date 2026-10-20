@@ -190,3 +190,7 @@ Créer une VM et nommer une image, en commits d'un sujet (serveur puis interface
 ## Suivi du 2026-10-20 (2.5.0)
 
 Duplication : une route, un dialogue partagé par la fiche (menu ⋯) et l'onglet Instantanés. 29 essais d'avant verts sans retouche.
+
+## Suivi du 2026-10-20 (2.6.0)
+
+Battement des connexions écran et console, reprise de l'écran au retour. Les 30 essais d'avant restent verts sans retouche.

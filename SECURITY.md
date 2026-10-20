@@ -67,6 +67,8 @@ Suivi du 2026-10-20 (2.4.0) : **étiquettes** (`src/api.js:234`). Un nom lisible
 
 Suivi du 2026-10-20 (2.5.0) : **dupliquer une machine** (`src/api.js:678`). Copie complète faite par Proxmox (`clone`, `full=1`), de l'état actuel ou d'un instantané, arrêtée, sous un numéro tiré par Proxmox ; administrateur sous renfort ; nom, instantané et stockage au format, refusés avant tout appel ; instantané revérifié avant la copie ; échec de la tâche dit sans chemin de l'hyperviseur ; au journal (`machine.duplication`) et aux événements. La 2.4.0 avait laissé `hub.json` et `src/config.js` à 2.3.0 (le Hub n'aurait pas proposé la mise à jour) : les trois versions sont alignées en 2.5.0, l'essai qui le vérifie est vert. Aucun contrôle ne change de statut. Essais : 30 du service (`test/proxlab.test.js:1019`) ; parcours du navigateur de la duplication : 7 vérifications.
 
+Suivi du 2026-10-20 (2.6.0) : **écran qui fige après une absence**. Un écran immobile ne faisait passer aucun octet : le tunnel coupait la connexion muette. Battement toutes les 25 s (`src/ecran.js:122`) : texte `{"b":1}` et ping vers le navigateur, ping vers Proxmox ; la console envoie aussi un ping au navigateur. Côté navigateur (`web/app.js:1142`), un écran tombé ou sans nouvelles depuis 70 s se rouvre de lui-même quand il est de nouveau regardé, par une passe neuve (mêmes contrôles qu'une ouverture : session, rôle, passe à usage unique, journal) ; trois essais au plus, jamais après une session fermée. Aucun contrôle ne change de statut. Essais : 31 du service (`test/proxlab.test.js:1057`) ; parcours du navigateur : coupure regardée, coupure en arrière-plan puis retour, souris après le retour.
+
 ## Control status
 | ID | Severity | Status | Evidence | Notes |
 |---|---|---|---|---|
