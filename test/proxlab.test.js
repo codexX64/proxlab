@@ -953,6 +953,19 @@ test('créer une VM : choix revérifiés contre le nœud, configuration par syst
 
 });
 
+test('nom affiché d\'une image : gardé par ProxLab, par nœud pour un stockage local ; vide, le nom du fichier revient', async () => {
+  const v = 'local:iso/debian-13.1.0-amd64-netinst.iso';
+  assert.equal((await membre.put('/api/isos/nom', { noeud: 'pve-a', volid: v, nom: 'Debian 13' })).status, 403);
+  assert.equal((await admin.put('/api/isos/nom', { noeud: 'pve-a', volid: v, nom: '<script>' })).status, 400);
+  assert.equal((await admin.put('/api/isos/nom', { noeud: 'pve-b', volid: v, nom: 'Debian 13' })).status, 404, 'cette image n’est pas sur pve-b');
+  assert.equal((await admin.put('/api/isos/nom', { noeud: 'pve-a', volid: v, nom: '  Debian 13   (installeur réseau) ' })).status, 200);
+  const inv = (await lecteur.get('/api/isos')).json.isos.find(i => i.volid === v);
+  assert.deepEqual([inv.alias, inv.nom], ['Debian 13 (installeur réseau)', 'debian-13.1.0-amd64-netinst.iso']);
+  assert.equal((await admin.get('/api/machines/options?noeud=pve-a')).json.isos.find(i => i.volid === v).alias, 'Debian 13 (installeur réseau)');
+  assert.equal((await admin.put('/api/isos/nom', { noeud: 'pve-a', volid: v, nom: '' })).status, 200);
+  assert.equal((await lecteur.get('/api/isos')).json.isos.find(i => i.volid === v).alias, '');
+});
+
 test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont rescellés, Proxmox reste joignable', async () => {
   await s.arreter();
   const neuve = crypto.randomBytes(32).toString('base64');

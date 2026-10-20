@@ -31,6 +31,8 @@ const TYPES = ['qemu', 'lxc'];
 const VOLID_ISO = /^[A-Za-z][A-Za-z0-9._-]{0,99}:iso\/[A-Za-z0-9][A-Za-z0-9._+-]{0,200}\.(iso|img)$/i;
 const LECTEUR = /^(ide|sata|scsi)\d{1,2}$/;
 const PONT = /^[A-Za-z][A-Za-z0-9._-]{0,15}$/;
+const NOM_AFFICHE = /^[\p{L}\p{N}][\p{L}\p{N} ._()+'’-]{0,79}$/u;
+const NOMS_ISO_MAX = 1000;
 // La confirmation d'identité d'une suppression : faite dans les deux minutes,
 // et pour cette suppression seulement.
 const RENFORT_SUPPRESSION_MS = 2 * 60e3;
@@ -87,6 +89,7 @@ const S = {
   envoi: { nom: { type: 'chaine', requis: true, max: 205, motif: FICHIER_ISO } },
   apercu: { url: { type: 'chaine', requis: true, max: 2000 } },
   iso: { volid: { type: 'chaine', requis: true, max: 320, motif: VOLID_ISO } },
+  nomIso: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, volid: { type: 'chaine', requis: true, max: 320, motif: VOLID_ISO }, nom: { type: 'chaine', max: 80, defaut: '' } },
   options: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD } },
   creation: {
     noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, nom: { type: 'chaine', requis: true, max: 63, motif: NOEUD },
@@ -553,7 +556,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
       noeud: { node: nd.node, maxcpu: nd.maxcpu, maxmem: nd.maxmem },
       stockages: (stockages || []).filter(x => STOCKAGE.test(x.storage || '') && x.active !== 0 && String(x.content || '').includes('images')).map(x => ({ storage: x.storage, avail: nombre(x.avail), total: nombre(x.total) })),
       ponts: (reseau || []).filter(x => /bridge/.test(x.type || '') && PONT.test(x.iface || '')).map(x => x.iface).sort(),
-      isos: inv.isos.filter(i => i.shared || i.node === n).map(i => ({ volid: i.volid, nom: i.nom, size: i.size })),
+      isos: inv.isos.filter(i => i.shared || i.node === n).map(i => ({ volid: i.volid, nom: i.nom, alias: i.alias, size: i.size })),
       vmid: nombre(suivant),
     };
   }
@@ -598,6 +601,27 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     return { vmid: o.vmid, noeud: b.noeud, demarree };
   }, { role: 'admin' });
 
+  // Le nom affiché d'une image : gardé par ProxLab, le fichier garde le sien
+  // dans Proxmox (qui ne sait pas renommer une image). Vide : le nom du fichier revient.
+  // Clé d'un nom : le volume, précédé du nœud quand le stockage n'est pas
+  // partagé (« local:iso/x.iso » existe sur chaque nœud, chacun le sien).
+  const cleNom = i => (i.shared ? i.volid : `${i.node}/${i.volid}`);
+  const nomsIso = () => reglages.lire('noms_iso') || {};
+  r.put('/api/isos/nom', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const { noeud: n, volid, nom } = await corps(ctx, S.nomIso);
+    const propre = nom.trim().replace(/\s+/g, ' ');
+    if (propre && !NOM_AFFICHE.test(propre)) throw new ErreurHttp(400, 'Nom : lettres, chiffres, espaces, points, tirets, parenthèses (80 au plus).');
+    const i = (await inventaireIso()).isos.find(x => x.volid === volid && (x.shared || x.node === n));
+    if (!i) throw new ErreurHttp(404, 'Image introuvable.');
+    const noms = nomsIso();
+    if (propre) noms[cleNom(i)] = propre; else delete noms[cleNom(i)];
+    if (Object.keys(noms).length > NOMS_ISO_MAX) throw new ErreurHttp(409, 'Trop de noms gardés : retire ceux des images supprimées.');
+    reglages.ecrire('noms_iso', noms);
+    journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'iso.nom', objet: volid, ip: ctx.ip, details: { nom: propre || null } });
+    return { volid, alias: propre };
+  }, { role: 'admin' });
+
   // Images ISO : chaque stockage qui en accepte (un stockage partagé, une
   // fois), ses images, et les VM qui en ont une dans leur lecteur CD.
   async function inventaireIso() {
@@ -623,7 +647,9 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
         for (const i of isos) if (i.volid === volid && (i.shared || i.node === x.node)) i.utilisePar.push({ vmid: x.vmid, name: x.name, node: x.node, lecteur: k });
       }
     }
-    isos.sort((a, b) => a.nom.localeCompare(b.nom) || a.node.localeCompare(b.node));
+    const noms = reglages.lire('noms_iso') || {};
+    for (const i of isos) i.alias = noms[i.shared ? i.volid : `${i.node}/${i.volid}`] || '';
+    isos.sort((a, b) => (a.alias || a.nom).localeCompare(b.alias || b.nom) || a.node.localeCompare(b.node));
     return { stockages, isos };
   }
   r.get('/api/isos', async ctx => {
@@ -684,6 +710,9 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     if (i.utilisePar.length) throw new ErreurHttp(409, `Image dans le lecteur de ${i.utilisePar.map(x => `${x.vmid}${x.name ? ` (${x.name})` : ''}`).join(', ')} : éjecte-la d’abord.`);
     const upid = await pve(() => proxmox.del(chemin('nodes', n, 'storage', stockage, 'content', encodeURIComponent(volid))));
     const qui = acteur(ctx);
+    const noms = reglages.lire('noms_iso') || {};
+    const cle = i.shared ? volid : `${n}/${volid}`;
+    if (noms[cle]) { delete noms[cle]; reglages.ecrire('noms_iso', noms); }
     journal.ecrire({ acteur: qui.acteurCompte, action: 'iso.suppression', objet: volid, ip: ctx.ip, details: { noeud: n } });
     evenements.noter({ genre: 'iso.deleted', niveau: 'info', titre: `${i.nom} supprimée de ${stockage}`, corps: `Par ${qui.acteur}.`, noeud: n, ...qui });
     return { upid: String(upid || '') };
