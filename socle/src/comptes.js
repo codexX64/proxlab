@@ -28,6 +28,9 @@ export const ROLES = ['admin', 'membre', 'lecture'];
 export const POLITIQUE_DEFAUT = Object.freeze({ motdepasse: 'facultatif', totp: 'facultatif', cle: 'requis_admin' });
 
 const RENFORT_MS = 5 * 60e3;
+// Dévoiler un secret (une clé d'API en clair) : une vérification faite exprès,
+// juste avant, et qui ne vaut que deux minutes — la session ouverte ne suffit pas.
+const DEVOILE_MS = 2 * 60e3;
 const PARTIELLE_MS = 10 * 60e3;
 const DEFI_MS = 5 * 60e3;
 const INVITATION_MS = 72 * 3600e3;
@@ -105,6 +108,8 @@ export class Comptes {
     // Domaine auquel la clé est liée (rpId) : le navigateur ne la présente
     // qu'à lui. Vide pour une clé d'avant, appris à sa première utilisation.
     if (!colonne.get('socle_cles', 'rp')) this.db.exec('ALTER TABLE socle_cles ADD COLUMN rp TEXT');
+    // Instant du dernier dévoilement vérifié de la session (voir devoiler).
+    if (!colonne.get('socle_sessions', 'devoile')) this.db.exec('ALTER TABLE socle_sessions ADD COLUMN devoile INTEGER NOT NULL DEFAULT 0');
   }
 
   // Rotation de la clé maîtresse, au démarrage. L'empreinte de contrôle dit
@@ -347,6 +352,74 @@ export class Comptes {
     if (!r.changes) throw erreur(404, 'Session inconnue.');
   }
   fermerAutres(compteId, sauf) { this.db.prepare('DELETE FROM socle_sessions WHERE compte = ? AND id != ?').run(compteId, sauf || ''); }
+  // Dévoiler un secret en clair : la clé d'accès si ce domaine en ouvre une,
+  // sinon le mot de passe ET le code TOTP ensemble ; le mot de passe seul si le
+  // compte n'a rien d'autre. Plus exigeant que le renfort : on montre quelque
+  // chose qui ne se reprend pas une fois vu.
+  methodesDevoilement(c, rp) {
+    const f = this.facteursDe(c);
+    if (f.cle && !this.modeHttp && this.clesUtilisables(c.id, rp).length) return ['cle'];
+    if (f.motdepasse && f.totp) return ['motdepasse+totp'];
+    if (f.totp) return ['totp'];
+    return ['motdepasse'];
+  }
+
+  optionsDevoilementCle(session, ctx) {
+    this.exigerContexteCle(ctx);
+    const autorises = this.clesUtilisables(session.compte, ctx.rpId).map(l => l.cred);
+    if (!autorises.length) throw erreur(400, 'Aucune clé d’accès de ce compte n’est liée à cette adresse.');
+    const defi = this.poserDefi(session.id, 'devoiler', session.compte);
+    return wa.optionsAuthentification({ rpId: ctx.rpId, defi, autorises });
+  }
+
+  async devoiler(session, { methode, code, motDePasse, reponse, ctx, ip }) {
+    if (session.delegue) throw erreur(403, 'Dévoiler un secret est réservé à une personne connectée.');
+    const c = session.compteLigne;
+    const permises = this.methodesDevoilement(c, session.rp);
+    if (!permises.includes(methode)) throw erreur(400, 'Utilise ta vérification la plus forte.', { methodes: permises });
+    const cles = [`ip:${ip}`, `compte:${c.identifiant}`];
+    this.limiteur.controler(cles);
+    let ok = false;
+    const mdpOk = async () => (await verifierMdp(String(motDePasse ?? ''), c.mdp)).ok;
+    const totpOk = () => {
+      const pas = totp.verifier(this.coffre.ouvre('totp', c.totp, c.id), code, { dernierPas: c.totp_pas, t: this.maintenant() });
+      if (pas === null) return false;
+      this.db.prepare('UPDATE socle_comptes SET totp_pas = ? WHERE id = ?').run(pas, c.id);
+      return true;
+    };
+    if (methode === 'motdepasse') ok = await mdpOk();
+    else if (methode === 'totp') ok = totpOk();
+    else if (methode === 'motdepasse+totp') ok = (await mdpOk()) && totpOk();
+    else if (methode === 'cle') {
+      this.exigerContexteCle(ctx);
+      const { defi } = this.prendreDefi(session.id, 'devoiler');
+      const cle = this.cleEnregistree(reponse?.id);
+      if (cle && cle.compte === c.id) {
+        try {
+          const r = wa.verifierAuthentification({ reponse, defi, origines: [ctx.origine], rpId: ctx.rpId, cle: { ...cle, handle: c.handle } });
+          this.db.prepare('UPDATE socle_cles SET compteur = ?, utilisee = ?, rp = ? WHERE id = ?').run(r.compteur, this.maintenant(), ctx.rpId, cle.id);
+          ok = true;
+        } catch { ok = false; }
+      }
+    }
+    if (!ok) {
+      this.limiteur.echec(cles);
+      this.trace({ acteur: c.id, action: 'devoilement', ip, resultat: 'refus', details: { methode } });
+      throw erreur(401, 'Vérification refusée.');
+    }
+    this.limiteur.reussite([cles[1]]);
+    this.trace({ acteur: c.id, action: 'devoilement', ip, details: { methode } });
+    const t = this.maintenant();
+    this.db.prepare('UPDATE socle_sessions SET devoile = ? WHERE id = ?').run(t, session.id);
+    return { devoileJusqua: t + DEVOILE_MS };
+  }
+  estDevoilee(session) { return !!session.devoile && this.maintenant() - session.devoile < DEVOILE_MS; }
+  // Jamais pour le Hub délégué ni pour un jeton : seule une personne, dans son
+  // navigateur, voit un secret en clair. L'assistant n'a aucune route vers ici.
+  exigerDevoilement(session) {
+    if (!session || session.delegue) throw erreur(403, 'Dévoiler un secret est réservé à une personne connectée.');
+    if (!this.estDevoilee(session)) throw erreur(403, 'Confirme ton identité pour dévoiler ce secret.', { devoiler: true, methodes: this.methodesDevoilement(session.compteLigne, session.rp) });
+  }
   fermerToutes(compteId) { this.db.prepare('DELETE FROM socle_sessions WHERE compte = ?').run(compteId); }
   fermerTout() { this.db.prepare('DELETE FROM socle_sessions').run(); }
 

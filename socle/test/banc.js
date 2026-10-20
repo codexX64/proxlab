@@ -28,6 +28,7 @@ export async function monterBanc({ env = {}, log = { info() {}, warn() {}, error
       if (url.pathname === '/api/lecture') { socle.portail.exiger(ctx); return repondreJson(res, 200, { ok: true }); }
       if (url.pathname === '/api/admin') { socle.portail.exiger(ctx, { role: 'admin' }); return repondreJson(res, 200, { ok: true }); }
       if (url.pathname === '/api/dangereux') { socle.portail.exiger(ctx, { role: 'admin', renfort: true }); return repondreJson(res, 200, { ok: true }); }
+      if (url.pathname === '/api/secret') { socle.portail.exiger(ctx, { role: 'admin', devoiler: true }); return repondreJson(res, 200, { valeur: 'sk_secret_en_clair' }); }
       if (url.pathname === '/api/panne') { socle.portail.exiger(ctx); throw new Error('panne simulée'); }
       repondreJson(res, 404, { error: 'inconnu' });
     } catch (e) { repondreErreur(res, e, { journal: { error() {} } }); }

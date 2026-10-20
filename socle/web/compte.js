@@ -145,7 +145,7 @@ export const feuille = (titre, actions) =>
 export class Api {
   constructor({ surDeconnexion } = {}) { this.csrf = null; this.surDeconnexion = surDeconnexion; }
 
-  async req(methode, chemin, corps, { renfortFait = false } = {}) {
+  async req(methode, chemin, corps, { renfortFait = false, devoileFait = false } = {}) {
     const ecriture = !['GET', 'HEAD'].includes(methode);
     const r = await fetch(chemin, {
       method: methode, credentials: 'same-origin', cache: 'no-store',
@@ -158,6 +158,9 @@ export class Api {
     if (json?.session?.csrf) this.csrf = json.session.csrf;
     if (r.status === 403 && json?.details?.renfort && !renfortFait) {
       if (await renforcer(this, json.details.methodes)) return this.req(methode, chemin, corps, { renfortFait: true });
+    }
+    if (r.status === 403 && json?.details?.devoiler && !devoileFait) {
+      if (await devoiler(this, json.details.methodes)) return this.req(methode, chemin, corps, { renfortFait, devoileFait: true });
     }
     if (r.status === 401 && !chemin.startsWith('/api/compte/connexion')) this.surDeconnexion?.();
     if (!r.ok) {
@@ -208,7 +211,7 @@ async function utiliserCle(o) {
   };
 }
 
-function raisonCle(e) {
+export function raisonCle(e) {
   if (e?.name === 'NotAllowedError') return 'Opération annulée ou délai dépassé.';
   if (e?.name === 'InvalidStateError') return 'Cette clé est déjà enregistrée sur ce compte.';
   if (e?.name === 'SecurityError') return 'Le navigateur refuse : la page doit être servie en HTTPS.';
@@ -442,7 +445,7 @@ export function porte({ api, service, marque = null, sousTitre = '' }) {
           occupe(go, err, async () => { const r = await api.post('/api/compte/connexion/secours', { code: code.input.value }); toast(`Code accepté. Il t’en reste ${r.restants}.`); suite(); });
         } }, code.noeud, h('div', { class: 'wfoot' }, go))];
       }
-      const annuler = h('button', { class: 'retour', type: 'button', onclick: async () => { await api.post('/api/compte/deconnexion').catch(() => {}); suite(); } }, icone('retour'), 'Changer de compte');
+      const annuler = h('button', { class: 'retour', type: 'button', onclick: async () => { await api.post('/api/compte/deconnexion').catch(() => { /* session déjà close : on quitte quand même */ }); suite(); } }, icone('retour'), 'Changer de compte');
       ecran({ etapes: 2, courante: 1, titre: 'Deuxième étape', sous: e.session.compte.identifiant, corps: [corps, err, autres.length ? h('div', { class: 'grpf' }, autres) : null], pied: [annuler] });
     }
 
@@ -493,7 +496,7 @@ export function porte({ api, service, marque = null, sousTitre = '' }) {
       return choisirSecond(e);
     }
 
-    const piedDeconnexion = () => h('button', { class: 'retour', type: 'button', onclick: async () => { await api.post('/api/compte/deconnexion').catch(() => {}); suite(); } }, icone('sortie'), 'Se déconnecter');
+    const piedDeconnexion = () => h('button', { class: 'retour', type: 'button', onclick: async () => { await api.post('/api/compte/deconnexion').catch(() => { /* session déjà close : on quitte quand même */ }); suite(); } }, icone('sortie'), 'Se déconnecter');
 
     function choisirSecond(e) {
       const peutCle = e.cles && clesDisponibles() && e.politique.cle !== 'desactive';
@@ -589,6 +592,15 @@ function bandeauContexte(e) {
   return null;
 }
 
+// La même confirmation, sans dialogue à part : pour un service qui la place
+// dans le sien, d'un seul geste avec ce qu'il demande d'autre (le nom d'une
+// machine à recopier avant de la supprimer). `methode` vient de
+// methodesRenfort (GET /api/compte/securite).
+export async function confirmerIdentite(api, methode, { code = '', motDePasse = '' } = {}) {
+  if (methode === 'cle') return api.post('/api/compte/renfort', { methode, reponse: await utiliserCle(await api.post('/api/compte/renfort/options')) });
+  return api.post('/api/compte/renfort', methode === 'totp' ? { methode, code } : { methode, motDePasse });
+}
+
 // Confirmation d'identité avant une action sensible, avec le facteur le plus
 // fort du compte. Résout vrai si la session a été renforcée.
 export function renforcer(api, methodes = ['motdepasse']) {
@@ -614,6 +626,59 @@ export function renforcer(api, methodes = ['motdepasse']) {
   }
   return dialogue({ titre: 'Confirme ton identité', texte: 'Cette action touche à la sécurité. La confirmation vaut cinq minutes.', contenu: [...contenu, err],
     boutons: [{ texte: 'Annuler', classe: 'flat', valeur: false }, { texte: m === 'cle' ? 'Utiliser ma clé' : 'Confirmer', classe: 'solid', agir }] }).then(Boolean);
+}
+
+// Dévoiler un secret en clair : la clé d'accès, ou le mot de passe et le code
+// ensemble. Vaut deux minutes, et seulement pour une personne dans son
+// navigateur — l'assistant d'un service n'a pas de route vers ici.
+export function devoiler(api, methodes = ['motdepasse']) {
+  const m = methodes[0];
+  const err = h('p', { class: 'erreur', role: 'alert' });
+  const valider = async corps => { await api.post('/api/compte/devoiler', { methode: m, ...corps }); return true; };
+  let contenu, agir;
+  if (m === 'cle') {
+    contenu = [h('p', { class: 'hint', text: 'Ta clé d’accès confirme que c’est bien toi.' })];
+    agir = async () => {
+      try { const o = await api.post('/api/compte/devoiler/options'); return await valider({ reponse: await utiliserCle(o) }); }
+      catch (x) { err.textContent = x instanceof DOMException ? raisonCle(x) : x.message; return false; }
+    };
+  } else if (m === 'motdepasse+totp' || m === 'totp') {
+    const mdp = m === 'totp' ? null : champ('Mot de passe', { type: 'password', autocomplete: 'current-password' });
+    let code = '';
+    const c = casesCode(v => { code = v; });
+    contenu = [mdp?.noeud, h('p', { class: 'hint', text: 'Puis le code de ton application.' }), c.noeud].filter(Boolean);
+    agir = async () => { try { return await valider({ motDePasse: mdp?.input.value, code }); } catch (x) { err.textContent = x.message; c.vider(); return false; } };
+  } else {
+    const mdp = champ('Mot de passe', { type: 'password', autocomplete: 'current-password' });
+    contenu = [mdp.noeud];
+    agir = async () => { try { return await valider({ motDePasse: mdp.input.value }); } catch (x) { err.textContent = x.message; return false; } };
+  }
+  return dialogue({ titre: 'Dévoiler un secret', texte: 'Le secret s’affichera en clair. La vérification vaut deux minutes et reste dans le journal.', contenu: [...contenu, err],
+    boutons: [{ texte: 'Annuler', classe: 'flat', valeur: false }, { texte: m === 'cle' ? 'Utiliser ma clé' : 'Dévoiler', classe: 'solid', agir }] }).then(Boolean);
+}
+
+/**
+ * Un bouton « Dévoiler » : va chercher la valeur (la route répond 403
+ * devoiler → vérification → nouvel essai), l'affiche à côté pendant 60 s,
+ * puis la masque. `lire` renvoie la valeur en clair.
+ */
+export function boutonDevoiler(lire, { duree = 60 } = {}) {
+  const valeur = h('code', { class: 'secret-clair', hidden: true });
+  const b = h('button', { class: 'btn sm flat', type: 'button', text: 'Dévoiler' });
+  let minuteur = null;
+  const masquer = () => { valeur.hidden = true; valeur.textContent = ''; b.textContent = 'Dévoiler'; b.disabled = false; clearInterval(minuteur); };
+  b.onclick = async () => {
+    if (!valeur.hidden) return masquer();
+    b.disabled = true;
+    try {
+      valeur.textContent = await lire();
+      valeur.hidden = false;
+      let reste = duree;
+      b.textContent = `Masquer · ${reste} s`; b.disabled = false;
+      minuteur = setInterval(() => { reste -= 1; if (reste <= 0) return masquer(); b.textContent = `Masquer · ${reste} s`; }, 1000);
+    } catch (e) { b.disabled = false; if (e.message) toast(e.message, true); }
+  };
+  return h('span', { class: 'devoiler' }, b, valeur);
 }
 
 const LIBELLES_ALERTES = {
@@ -704,7 +769,7 @@ export function pageSecurite(api, { service, confidentialite = null }) {
       d.modeHttp ? h('div', { class: 'note warn' }, icone('alerte'), h('div', { text: 'Mode HTTP : clés d’accès indisponibles et trafic non chiffré. Sers ce service en HTTPS pour sortir de ce mode.' })) : null,
       !d.modeHttp && d.sansCle ? h('div', { class: 'note' }, icone('cadenas'), h('div', { text: `Ouvert par son adresse : les clés d’accès ne peuvent ni servir ni se créer ici. Ouvre ${service} par son nom en HTTPS pour ${c.cle === 'ailleurs' && !d.cles.length ? 'créer ta clé' : 'les utiliser'}.` })) : null,
       facteurs, courriel, h('div', { class: 'split' }, sessions, alertes), donnees].filter(Boolean));
-    if (d.alertes.some(a => !a.vue)) api.post('/api/compte/alertes/vues').catch(() => {});
+    if (d.alertes.some(a => !a.vue)) api.post('/api/compte/alertes/vues').catch(() => { /* restent « nouvelles » : rien d'autre à faire */ });
   }
   peindre();
   return page;

@@ -112,7 +112,7 @@ export class Portail {
   }
 
   // À appeler en tête de chaque route protégée du service.
-  exiger(ctx, { role = 'lecture', renfort = false } = {}) {
+  exiger(ctx, { role = 'lecture', renfort = false, devoiler = false } = {}) {
     const s = ctx.session;
     if (!s || s.niveau === 'partiel') throw new ErreurHttp(401, 'Connexion requise.');
     if (s.niveau !== 'complet') throw new ErreurHttp(403, 'Termine d’abord l’inscription de tes facteurs.', { inscription: s.compteLigne ? this.comptes.manquants(s.compteLigne, ctx.cleIci) : [] });
@@ -122,6 +122,7 @@ export class Portail {
       throw new ErreurHttp(403, 'Droits insuffisants.');
     }
     if (renfort) this.comptes.exigerRenfort(s);
+    if (devoiler) this.comptes.exigerDevoilement(s);
     return s;
   }
 
@@ -140,6 +141,7 @@ export class Portail {
         compte: s.niveau === 'partiel' ? { identifiant: s.compteLigne.identifiant } : c.publicDe(s.compteLigne, ctx.cleIci),
         ...(s.niveau === 'partiel' ? { methodes: c.methodesSecondes(s.compteLigne, ctx.cleIci) } : {}),
         renfortJusqua: c.estRenforcee(s) ? s.renfort + 5 * 60e3 : 0,
+        devoileJusqua: c.estDevoilee(s) ? s.devoile + 2 * 60e3 : 0,
       } : null,
     };
   }
@@ -292,6 +294,13 @@ export class Portail {
       const s = sessionPleine();
       const b = await this.corps(ctx, { methode: { type: 'chaine', requis: true, parmi: ['motdepasse', 'totp', 'cle'] }, code: { type: 'chaine', max: 12 }, motDePasse: { type: 'chaine', max: 1024 }, reponse: { type: 'objet' } });
       return ouvre(await c.renforcer(s, { ...b, ctx: this.ctxCle(ctx), ip }));
+    }
+
+    if (m === 'POST' && p === '/api/compte/devoiler/options') { const s = sessionPleine(); await this.corps(ctx, {}); return c.optionsDevoilementCle(s, this.ctxCle(ctx)); }
+    if (m === 'POST' && p === '/api/compte/devoiler') {
+      const s = sessionPleine();
+      const b = await this.corps(ctx, { methode: { type: 'chaine', requis: true, parmi: ['motdepasse', 'totp', 'motdepasse+totp', 'cle'] }, code: { type: 'chaine', max: 12 }, motDePasse: { type: 'chaine', max: 1024 }, reponse: { type: 'objet' } });
+      return c.devoiler(s, { ...b, ctx: this.ctxCle(ctx), ip });
     }
 
     if (m === 'POST' && p === '/api/compte/totp') { const s = sessionPleine(); await this.corps(ctx, {}); return c.debutTotp(s); }

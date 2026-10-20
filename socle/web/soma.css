@@ -730,3 +730,8 @@ html[data-gamme="exploitation"] .toast{border-radius:6px}
   html[data-gamme="exploitation"] .fig{padding:0 14px}
   html[data-gamme="exploitation"] .fig strong{font-size:24px}
 }
+
+/* Un secret dévoilé : à côté de son bouton, en chasse fixe, sélectionnable d'un
+   coup, et jamais coupé en « … » — on le dévoile pour le copier. */
+.devoiler{display:inline-flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+.secret-clair{font-family:var(--mono);font-size:12px;background:var(--well);border-radius:6px;padding:4px 8px;user-select:all;overflow-wrap:anywhere}
