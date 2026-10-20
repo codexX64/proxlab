@@ -69,6 +69,8 @@ Suivi du 2026-10-20 (2.5.0) : **dupliquer une machine** (`src/api.js:678`). Copi
 
 Suivi du 2026-10-20 (2.6.0) : **écran qui fige après une absence**. Un écran immobile ne faisait passer aucun octet : le tunnel coupait la connexion muette. Battement toutes les 25 s (`src/ecran.js:122`) : texte `{"b":1}` et ping vers le navigateur, ping vers Proxmox ; la console envoie aussi un ping au navigateur. Côté navigateur (`web/app.js:1142`), un écran tombé ou sans nouvelles depuis 70 s se rouvre de lui-même quand il est de nouveau regardé, par une passe neuve (mêmes contrôles qu'une ouverture : session, rôle, passe à usage unique, journal) ; trois essais au plus, jamais après une session fermée. Aucun contrôle ne change de statut. Essais : 31 du service (`test/proxlab.test.js:1057`) ; parcours du navigateur : coupure regardée, coupure en arrière-plan puis retour, souris après le retour.
 
+Suivi du 2026-10-20 (2.7.0) : **majuscules dans l'écran d'une VM**. macOS ne donne qu'un keydown à l'allumage de Verr. Maj et qu'un keyup à l'extinction : l'invité ne basculait qu'une fois sur deux et restait en majuscules. L'écran demande à QEMU l'état des voyants (pseudo-encodage -261) et aligne Verr. Maj de l'invité sur celui d'ici à chaque touche (`web/ecran.js:461`) ; un texte tapé par ProxLab l'éteint d'abord. Rien de neuf ne passe le relais : un message SetEncodings, déjà permis. Aucun contrôle ne change de statut. Essais : 31 du service ; parcours du navigateur : VM restée en majuscules, réalignée à la première touche, sans rattrapage ensuite.
+
 ## Control status
 | ID | Severity | Status | Evidence | Notes |
 |---|---|---|---|---|
