@@ -238,3 +238,7 @@ Repeint depuis l'image hors écran, taille sans noir. Les 32 essais restent vert
 ## Suivi du 2026-10-21 (2.17.0)
 
 Taille de la VM : suit la fenêtre dans les deux sens. Les 32 essais restent verts sans retouche.
+
+## Suivi du 2026-10-21 (2.18.0)
+
+Keyboard Lock en plein écran entier. Les 32 essais restent verts sans retouche.

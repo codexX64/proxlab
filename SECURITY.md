@@ -91,6 +91,8 @@ Suivi du 2026-10-21 (2.16.0) : **écran noir au retour d'un autre bureau**. Safa
 
 Suivi du 2026-10-21 (2.17.0) : la VM suit la fenêtre dans les deux sens (`web/app.js:897`) : déplacée sur un autre écran ou agrandie, elle garde un pixel par point au lieu d'une image réduite où tout devenait minuscule ; un écart de moins de 24 pixels ne change rien ; « Revenir à … (écran entier) » reste pour une console texte rognée. Interface seulement : aucun contrôle ne change de statut. Essais : 32 du service ; parcours du navigateur : agrandir, rapetisser, petit écart ignoré.
 
+Suivi du 2026-10-21 (2.18.0) : en plein écran entier, le clavier entier est pris pour la VM (Keyboard Lock, `web/app.js:917`) là où le navigateur le permet (Chrome, Edge), rendu en sortant du plein écran ; Safari ne le permet pas, et on le dit une fois. Rien ne quitte le navigateur de plus qu'avant : les touches vont à la même connexion d'écran, avec les mêmes contrôles. Aucun contrôle ne change de statut. Essais : 32 du service ; parcours du navigateur : clavier pris, ⌘Espace transmis à la VM, clavier rendu.
+
 ## Control status
 | ID | Severity | Status | Evidence | Notes |
 |---|---|---|---|---|
