@@ -18,6 +18,7 @@ import { Connexion } from '../src/websocket.js';
 import { corpsTicket, urgence } from '../src/alerte.js';
 import { desChiffrer, reponseVnc } from '../src/des.js';
 import { longueurMessageClient, relayerEcran } from '../src/ecran.js';
+import { Inflate } from '../web/ecran.js';
 import { relayer } from '../src/console.js';
 import { dispositionDe, lireSortie, detecterClavier } from '../src/clavier.js';
 
@@ -1071,6 +1072,24 @@ test('battement : un écran ou une console immobile garde sa connexion, de bout 
   assert.ok(navC.pings >= 2 && amontC.textes.filter(t => t === '2').length >= 2, 'console : ping au navigateur, « 2 » à termproxy');
   assert.ok(!navC.textes.some(t => t.includes('"b"')), 'rien d\'autre dans le terminal');
   navC.emit('fermeture');
+});
+
+test('écran : flux zlib de Tight décompressé ici, morceau par morceau, comme le vide QEMU', async () => {
+  const vider = (d, buf) => new Promise(ok => { const p = [], prendre = c => p.push(c); d.on('data', prendre); d.write(buf); d.flush(zlib.constants.Z_SYNC_FLUSH, () => setImmediate(() => { d.off('data', prendre); ok(Buffer.concat(p)); })); });
+  // Textes répétitifs (renvois loin en arrière, d'un morceau à l'autre), octets
+  // au hasard (blocs bruts), petits morceaux (blocs fixes), niveaux 0 à 9.
+  for (const niveau of [0, 1, 6, 9]) {
+    const d = zlib.createDeflate({ level: niveau }), f = new Inflate();
+    const morceaux = [Buffer.from('écran '.repeat(5000)), crypto.randomBytes(70000), Buffer.from('ab'), Buffer.alloc(200000, 7), Buffer.concat([crypto.randomBytes(100), Buffer.from('écran '.repeat(5000))]), Buffer.from('z')];
+    for (const m of morceaux) assert.deepEqual(Buffer.from(f.lire(await vider(d, m), m.length)), m, `niveau ${niveau}, ${m.length} octets`);
+  }
+  // Annoncé plus court ou plus long que ce qui sort : refusé, rien n'est rendu.
+  const d = zlib.createDeflate(), z = await vider(d, Buffer.alloc(1000, 1));
+  assert.throws(() => new Inflate().lire(z, 999), /plus de données/);
+  assert.throws(() => new Inflate().lire(z, 1001), /moins de données/);
+  assert.throws(() => new Inflate().lire(z.subarray(0, z.length - 3), 1000), /tronquées|moins/);
+  assert.throws(() => new Inflate().lire(Buffer.from([0x78, 0x9c, 0xff, 0xff]), 10), /./);
+  assert.throws(() => new Inflate().lire(Buffer.from([0x12, 0x34, 0]), 1), /en-tête/);
 });
 
 test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont rescellés, Proxmox reste joignable', async () => {

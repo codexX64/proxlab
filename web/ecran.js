@@ -50,29 +50,107 @@ const PRESSE_EXT = 0xC0A1E5CE | 0;       // pseudo-encodage du presse-papiers é
 // presse-papiers, qualité JPEG 6 (-32 + 6) et compression 2 (-256 + 2).
 const ENCODAGES = [7, 1, 0, -223, -308, -258, -261, PRESSE_EXT, -26, -254];
 
-// Un flux zlib de Tight : le serveur le garde d'un rectangle à l'autre et le
-// vide à chaque rectangle (Z_SYNC_FLUSH). Décompressé par le navigateur.
-class FluxZlib {
-  constructor() {
-    const d = new DecompressionStream('deflate');
-    this.ecrivain = d.writable.getWriter(); this.lecteur = d.readable.getReader(); this.reste = new Uint8Array(0);
+// Un flux zlib de Tight, décompressé ici même (RFC 1950/1951), sans dépendre
+// du DecompressionStream du navigateur, dont la sortie en flux continu n'est
+// pas la même partout (Safari pouvait la retenir : l'écran restait figé). Le
+// serveur garde le flux d'un rectangle à l'autre et le vide à chaque
+// rectangle (Z_SYNC_FLUSH) : chaque morceau finit sur une frontière de bloc ;
+// les 32 derniers Kio sortis restent pour les renvois du morceau suivant.
+const LONG_BASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+const LONG_SUP = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+const DIST_BASE = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+const DIST_SUP = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+const ORDRE_LONGUEURS = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+function huffman(longueurs) {
+  const nb = new Uint16Array(16), debut = new Uint16Array(16), sym = new Uint16Array(longueurs.length);
+  for (const l of longueurs) nb[l]++;
+  nb[0] = 0;
+  for (let i = 1, o = 0; i < 16; i++) { debut[i] = o; o += nb[i]; }
+  for (let s = 0; s < longueurs.length; s++) if (longueurs[s]) sym[debut[longueurs[s]]++] = s;
+  return { nb, sym };
+}
+const FIXE_LIT = huffman(Array.from({ length: 288 }, (_, i) => (i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8)));
+const FIXE_DIST = huffman(new Array(30).fill(5));
+const HIST = 32768;
+
+export class Inflate {
+  constructor() { this.entete = false; this.fini = false; this.hist = new Uint8Array(0); }
+  bit() {
+    if (!this.nbits) { if (this.p >= this.e.length) throw new Error('zlib : données tronquées'); this.octet = this.e[this.p++]; this.nbits = 8; }
+    const b = this.octet & 1; this.octet >>= 1; this.nbits--; return b;
   }
-  async lire(compresse, n) {
-    this.ecrivain.write(compresse).catch(() => {});
-    const sortie = new Uint8Array(n);
-    let k = 0;
-    while (k < n) {
-      if (!this.reste.length) {
-        const { value, done } = await this.lecteur.read();
-        if (done) throw new Error('flux zlib terminé');
-        this.reste = value;
-      }
-      const t = Math.min(this.reste.length, n - k);
-      sortie.set(this.reste.subarray(0, t), k); k += t; this.reste = this.reste.subarray(t);
+  bits(n) { let v = 0; for (let i = 0; i < n; i++) v |= this.bit() << i; return v; }
+  symbole(h) {
+    let code = 0, premier = 0, index = 0;
+    for (let l = 1; l < 16; l++) {
+      code |= this.bit();
+      const n = h.nb[l];
+      if (code - n < premier) return h.sym[index + (code - premier)];
+      index += n; premier = (premier + n) << 1; code <<= 1;
     }
-    return sortie;
+    throw new Error('zlib : code invalide');
   }
-  fermer() { this.ecrivain.abort().catch(() => {}); this.lecteur.cancel().catch(() => {}); }
+  // Décompresse un morceau : exactement n octets attendus, ni plus ni moins.
+  lire(entree, n) {
+    if (this.fini) throw new Error('zlib : flux déjà terminé');
+    this.e = entree; this.p = 0; this.nbits = 0;
+    if (!this.entete) {
+      if (entree.length < 2 || (entree[0] & 15) !== 8 || ((entree[0] << 8) | entree[1]) % 31 || entree[1] & 32) throw new Error('zlib : en-tête invalide');
+      this.p = 2; this.entete = true;
+    }
+    const h = this.hist, fin = h.length + n, out = new Uint8Array(fin);
+    out.set(h);
+    let o = h.length;
+    const mettre = v => { if (o >= fin) throw new Error('zlib : plus de données qu’annoncé'); out[o++] = v; };
+    while (this.p < this.e.length && !this.fini) {
+      this.fini = !!this.bit();
+      const genre = this.bits(2);
+      if (genre === 0) {
+        this.nbits = 0;
+        if (this.p + 4 > this.e.length) throw new Error('zlib : données tronquées');
+        const lg = this.e[this.p] | (this.e[this.p + 1] << 8), inv = this.e[this.p + 2] | (this.e[this.p + 3] << 8);
+        if ((lg ^ 0xffff) !== inv) throw new Error('zlib : bloc brut invalide');
+        this.p += 4;
+        if (this.p + lg > this.e.length) throw new Error('zlib : données tronquées');
+        if (o + lg > fin) throw new Error('zlib : plus de données qu’annoncé');
+        out.set(this.e.subarray(this.p, this.p + lg), o); o += lg; this.p += lg;
+        continue;
+      }
+      if (genre === 3) throw new Error('zlib : bloc invalide');
+      let lit = FIXE_LIT, dist = FIXE_DIST;
+      if (genre === 2) {
+        const nlit = this.bits(5) + 257, ndist = this.bits(5) + 1, ncode = this.bits(4) + 4;
+        if (nlit > 286 || ndist > 30) throw new Error('zlib : bloc invalide');
+        const lc = new Array(19).fill(0);
+        for (let i = 0; i < ncode; i++) lc[ORDRE_LONGUEURS[i]] = this.bits(3);
+        const hc = huffman(lc), ls = [];
+        while (ls.length < nlit + ndist) {
+          const s = this.symbole(hc);
+          if (s < 16) ls.push(s);
+          else if (s === 16) { if (!ls.length) throw new Error('zlib : répétition sans valeur'); const v = ls[ls.length - 1]; for (let k = 3 + this.bits(2); k--;) ls.push(v); }
+          else for (let k = s === 17 ? 3 + this.bits(3) : 11 + this.bits(7); k--;) ls.push(0);
+        }
+        if (ls.length > nlit + ndist) throw new Error('zlib : longueurs en trop');
+        lit = huffman(ls.slice(0, nlit)); dist = huffman(ls.slice(nlit));
+      }
+      for (;;) {
+        const s = this.symbole(lit);
+        if (s < 256) { mettre(s); continue; }
+        if (s === 256) break;
+        if (s > 285) throw new Error('zlib : longueur invalide');
+        const lg = LONG_BASE[s - 257] + this.bits(LONG_SUP[s - 257]);
+        const ds = this.symbole(dist);
+        if (ds > 29) throw new Error('zlib : distance invalide');
+        const d = DIST_BASE[ds] + this.bits(DIST_SUP[ds]);
+        if (d > o) throw new Error('zlib : distance hors de l’historique');
+        if (o + lg > fin) throw new Error('zlib : plus de données qu’annoncé');
+        for (let k = 0; k < lg; k++, o++) out[o] = out[o - d];
+      }
+    }
+    if (o !== fin) throw new Error('zlib : moins de données qu’annoncé');
+    this.hist = out.slice(Math.max(0, o - HIST), o);
+    return out.subarray(h.length, o);
+  }
 }
 const PP = { TEXTE: 1, CAPS: 1 << 24, REQUEST: 1 << 25, PEEK: 1 << 26, NOTIFY: 1 << 27, PROVIDE: 1 << 28 };
 const PRESSE_MAX = 64 * 1024 - 64;      // ProxLab refuse au-delà de 64 Kio
@@ -147,7 +225,13 @@ export class Ecran {
     this.toile.width = 640; this.toile.height = 400;
     this.toile.setAttribute('role', 'img');
     this.toile.setAttribute('aria-label', 'Écran de la machine : cliquer pour lui donner le clavier');
-    this.ctx = this.toile.getContext('2d', { alpha: false });
+    // Chaque mise à jour est dessinée hors écran, puis montrée d'un coup : on
+    // ne voit plus une image à moitié reçue ni des bandes d'âges différents.
+    this.vue = this.toile.getContext('2d', { alpha: false });
+    this.hors = document.createElement('canvas');
+    this.hors.width = 640; this.hors.height = 400;
+    this.ctx = this.hors.getContext('2d', { alpha: false });
+    this.zone = null;
     // ⌘V / Ctrl+V : le collage du navigateur est dirigé dans ce champ caché,
     // le temps d'une touche : le texte arrive sans demande d'autorisation.
     this.piege = document.createElement('textarea');
@@ -247,6 +331,7 @@ export class Ecran {
         const h = this.prendre(12); if (!h) return false;
         const v = new DataView(h.buffer);
         this.rect = { x: v.getUint16(0), y: v.getUint16(2), l: v.getUint16(4), h: v.getUint16(6), enc: v.getInt32(8) };
+        if ([0, 1, 7].includes(this.rect.enc)) this.marquer(this.rect);
       }
       const r = this.rect;
       if (r.enc === 0) {
@@ -258,7 +343,7 @@ export class Ecran {
       } else if (r.enc === 1) {
         const s = this.prendre(4); if (!s) return false;
         const v = new DataView(s.buffer);
-        if (r.l && r.h) this.ctx.drawImage(this.toile, v.getUint16(0), v.getUint16(2), r.l, r.h, r.x, r.y, r.l, r.h);
+        if (r.l && r.h) this.ctx.drawImage(this.hors, v.getUint16(0), v.getUint16(2), r.l, r.h, r.x, r.y, r.l, r.h);
       } else if (r.enc === 7) {
         const fait = this.tight(r);
         if (fait === false) return false;
@@ -297,7 +382,7 @@ export class Ecran {
   // zlib nommés ; le haut dit le genre — remplissage (8), JPEG (9), ou base
   // (flux 0 à 3, filtre copie, palette ou gradient). Les octets d'un rectangle
   // sont tous là avant d'en consommer un seul. Rend true, false (il en manque)
-  // ou une promesse (décompression, décodage JPEG).
+  // ou une promesse (décodage JPEG).
   tight(r) {
     const vu = n => (this.dispo >= n ? this.regarder(n) : null);
     let t = vu(1); if (!t) return false;
@@ -310,7 +395,7 @@ export class Ecran {
       if (b.length <= i + 2) return null;
       return [n | (b[i + 2] << 14), 3];
     };
-    const remettre = () => { for (let i = 0; i < 4; i++) if (ctl & (1 << i)) { this.flux[i]?.fermer(); this.flux[i] = null; } };
+    const remettre = () => { for (let i = 0; i < 4; i++) if (ctl & (1 << i)) this.flux[i] = null; };
     if (genre === 8) {
       const b = this.prendre(4); if (!b) return false;
       remettre();
@@ -322,7 +407,12 @@ export class Ecran {
       const total = 1 + lg[1] + lg[0];
       if (this.dispo < total) return false;
       const b = this.prendre(total); remettre();
-      return createImageBitmap(new Blob([b.subarray(1 + lg[1])], { type: 'image/jpeg' })).then(img => { this.ctx.drawImage(img, r.x, r.y); img.close?.(); });
+      // Un décodage qui ne rend jamais la main figerait l'écran : au bout de dix
+      // secondes, c'est une erreur, la connexion se ferme et se rouvre.
+      let chien;
+      const delai = new Promise((_, ko) => { chien = setTimeout(() => ko(new Error('image JPEG non décodée')), 10000); });
+      return Promise.race([createImageBitmap(new Blob([b.subarray(1 + lg[1])], { type: 'image/jpeg' })), delai])
+        .then(img => { clearTimeout(chien); this.ctx.drawImage(img, r.x, r.y); img.close?.(); }, e => { clearTimeout(chien); throw e; });
     }
     if (genre > 9) throw new Error(`Tight : genre ${genre} inconnu`);
     let i = 1, filtre = 0, couleurs = 0;
@@ -342,8 +432,9 @@ export class Ecran {
     const peindre = d => this.peindreTight(r, d, filtre, palette, couleurs);
     if (!lg) { peindre(b.subarray(i)); return true; }
     const n = (ctl >> 4) & 3;
-    this.flux[n] ||= new FluxZlib();
-    return this.flux[n].lire(b.subarray(i + lg[1]), brut).then(peindre);
+    this.flux[n] ||= new Inflate();
+    peindre(this.flux[n].lire(b.subarray(i + lg[1]), brut));
+    return true;
   }
   peindreTight(r, d, filtre, palette, couleurs) {
     if (!r.l || !r.h) return;
@@ -368,11 +459,22 @@ export class Ecran {
     }
     this.ctx.putImageData(img, r.x, r.y);
   }
-  finImage() { this.etat = 'message'; this.demander(true); }
+  finImage() {
+    const z = this.zone;
+    if (z) { const l = z[2] - z[0], h = z[3] - z[1]; if (l > 0 && h > 0) this.vue.drawImage(this.hors, z[0], z[1], l, h, z[0], z[1], l, h); this.zone = null; }
+    this.etat = 'message'; this.demander(true);
+  }
+  // La part de l'image qu'une mise à jour a touchée, à montrer à sa fin.
+  marquer(r) {
+    const x1 = Math.min(r.x + r.l, this.hors.width), y1 = Math.min(r.y + r.h, this.hors.height);
+    this.zone = this.zone ? [Math.min(this.zone[0], r.x), Math.min(this.zone[1], r.y), Math.max(this.zone[2], x1), Math.max(this.zone[3], y1)] : [r.x, r.y, x1, y1];
+  }
   taille(l, h) {
     if (l < 1 || h < 1 || l > 8192 || h > 8192) throw new Error('taille d\'écran invalide');
-    this.toile.width = l; this.toile.height = h;
+    this.toile.width = l; this.toile.height = h; this.hors.width = l; this.hors.height = h;
     this.ctx.fillStyle = '#000'; this.ctx.fillRect(0, 0, l, h);
+    this.vue.fillStyle = '#000'; this.vue.fillRect(0, 0, l, h);
+    this.zone = null;
     this.surEtat('taille', `${l} × ${h}`);
   }
 
@@ -488,25 +590,41 @@ export class Ecran {
     const caracteres = [...String(texte).replace(/\r\n?/g, '\n')].slice(0, FRAPPE_MAX);
     // Verr. Maj allumé dans l'invité inverserait la casse du texte tapé.
     if (this.verrous?.caps) this.basculerCaps();
+    // Au rythme d'une frappe rapide, pas d'une rafale : la file du clavier de
+    // la VM (PS/2 dans QEMU) débordait, des relâchements se perdaient, et la
+    // touche restait enfoncée dans l'invité (« xxxxxxxx… »). Chaque touche est
+    // tenue quelques millisecondes, puis une pause avant la suivante.
+    const attendre = ms => new Promise(r => setTimeout(r, ms));
+    const touchees = new Map();
     let sautes = 0;
-    for (let i = 0; i < caracteres.length; i++) {
-      if (!this.actif || this.ws.readyState !== 1) break;
-      const suite = carte[caracteres[i]];
-      if (!suite) { sautes++; continue; }
-      for (const [j, [code, maj, altgr]] of suite.entries()) {
-        if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, true);
-        if (altgr) this.touche({ code: 'AltRight', key: 'AltGraph' }, true);
-        // La casse du keysym doit suivre Maj : QEMU (lock_key_sync) prend une
-        // lettre minuscule avec Maj enfoncée pour un Verr. Maj à corriger, et
-        // ajoute un appui sur Verr. Maj — le texte sortait en minuscules.
-        const ch = caracteres[i];
-        const key = j === suite.length - 1 && [...ch].length === 1 && ch > ' ' ? ch
-          : code.startsWith('Key') ? (maj ? code.slice(3) : code.slice(3).toLowerCase()) : code.startsWith('Digit') ? code.slice(5) : code === 'Space' ? ' ' : code;
-        this.touche({ code, key }, true); this.touche({ code, key }, false);
-        if (altgr) this.touche({ code: 'AltRight', key: 'AltGraph' }, false);
-        if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, false);
+    try {
+      for (let i = 0; i < caracteres.length; i++) {
+        if (!this.actif || this.ws.readyState !== 1) break;
+        const suite = carte[caracteres[i]];
+        if (!suite) { sautes++; continue; }
+        for (const [j, [code, maj, altgr]] of suite.entries()) {
+          if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, true);
+          if (altgr) this.touche({ code: 'AltRight', key: 'AltGraph' }, true);
+          // La casse du keysym doit suivre Maj : QEMU (lock_key_sync) prend une
+          // lettre minuscule avec Maj enfoncée pour un Verr. Maj à corriger, et
+          // ajoute un appui sur Verr. Maj — le texte sortait en minuscules.
+          const ch = caracteres[i];
+          const key = j === suite.length - 1 && [...ch].length === 1 && ch > ' ' ? ch
+            : code.startsWith('Key') ? (maj ? code.slice(3) : code.slice(3).toLowerCase()) : code.startsWith('Digit') ? code.slice(5) : code === 'Space' ? ' ' : code;
+          touchees.set(code, key);
+          this.touche({ code, key }, true);
+          await attendre(6);
+          this.touche({ code, key }, false);
+          if (altgr) this.touche({ code: 'AltRight', key: 'AltGraph' }, false);
+          if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, false);
+          await attendre(10);
+        }
+        if (i % 8 === 7) surAvance(i + 1, caracteres.length);
       }
-      if (i % 8 === 7) { surAvance(i + 1, caracteres.length); await new Promise(r => setTimeout(r, 25)); }
+    } finally {
+      // Rien ne reste enfoncé, même si la frappe a été coupée en route.
+      for (const [code, key] of touchees) this.touche({ code, key }, false);
+      this.touche({ code: 'ShiftLeft', key: 'Shift' }, false); this.touche({ code: 'AltRight', key: 'AltGraph' }, false);
     }
     surAvance(caracteres.length, caracteres.length);
     return { tapes: caracteres.length - sautes, sautes };
