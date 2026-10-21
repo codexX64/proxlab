@@ -889,21 +889,19 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const cibleTaille = () => document.fullscreenElement === hote || hote.classList.contains('fenetre')
     ? [hote.clientWidth, hote.clientHeight]
     : [hote.clientWidth, Math.max(320, Math.min(innerHeight * 0.75, innerHeight - Math.max(0, hote.getBoundingClientRect().top) - 24))];
-  // La VM grandit avec la fenêtre, elle ne rapetisse jamais d'elle-même :
-  // une console texte Linux (installeur, ISO) garde la taille de son démarrage
-  // et, rapetissée, n'affiche plus que son coin haut gauche — le bas et la
-  // droite disparaissent. Plus grande que la fenêtre, l'image est réduite pour
-  // tenir. Rapetisser reste possible, à la demande (menu Actions).
+  // La VM suit la fenêtre, en plus grand comme en plus petit : déplacée sur un
+  // autre écran ou agrandie, elle garde un pixel par point au lieu d'une image
+  // réduite où tout devient minuscule. Quelques pixels d'écart (barre de menus
+  // du plein écran qui passe) ne valent pas un changement de taille. Une
+  // console texte qui rogne en rapetissant : « Revenir à … (écran entier) ».
   const reajuster = () => {
     clearTimeout(minuteurTaille);
     minuteurTaille = setTimeout(() => {
       if (!ajusterTaille || !ecran?.etendu || !hote.isConnected) return;
       const [l, h] = cibleTaille().map(v => Math.round(v * densite()));
-      // Quelques pixels de plus (barre de menus du plein écran qui passe, au
-      // retour d'un autre bureau) ne valent pas un changement de taille.
-      if (l - ecran.toile.width < 24 && h - ecran.toile.height < 24) return;
-      ecran.ajuster(Math.max(l, ecran.toile.width), Math.max(h, ecran.toile.height));
-    }, 400);
+      if (Math.abs(l - ecran.toile.width) < 24 && Math.abs(h - ecran.toile.height) < 24) return;
+      ecran.ajuster(l, h);
+    }, 500);
   };
   // La plus grande taille vue pour cette VM, ici : celle à laquelle revenir
   // si son écran a été rapetissé.
@@ -1130,7 +1128,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
           toast('La VM prend la taille de la fenêtre, et la suit.'); reajuster();
         } },
         { texte: 'Réveiller l\'écran', ic: 'ecran', inactif: off, agir: dansVm(() => ecran.reveiller()) },
-        { texte: 'Adapter la VM à cette fenêtre (même plus petite)', inactif: off || !ajusterTaille, agir: () => {
+        { texte: 'Adapter la VM à cette fenêtre maintenant', inactif: off || !ajusterTaille, agir: () => {
           ecran.ajuster(...cibleTaille().map(v => Math.round(v * densite())));
           toast('La VM prend la taille de la fenêtre. Une console texte Linux peut alors être rognée : « Revenir à … » la rend entière.');
         } },
@@ -1187,13 +1185,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
       remplir,
       surEtat: (q, d) => {
         if (q === 'pret') { vivante = true; essaisOuverture = 0; clearTimeout(chien); }
-        if (q === 'ajustable') {
-          // Une VM restée à la taille « nette » d'avant (deux fois la fenêtre
-          // sur chaque côté) revient à la taille de la fenêtre.
-          const [l, h] = cibleTaille().map(v => Math.round(v * densite())), t = ecran.toile;
-          if (ajusterTaille && !nette && Math.abs(t.width / l - 2) < 0.25 && Math.abs(t.height / h - 2) < 0.25) return ecran.ajuster(l, h);
-          return reajuster();
-        }
+        if (q === 'ajustable') return reajuster();
         if (q === 'ajustement-refuse') {
           // Dit une fois par VM et par affichage, pas à chaque ouverture.
           const cle = `proxlab-ajuster-refus:${f.node}/${f.vmid}`;
