@@ -1000,6 +1000,23 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const sortieFenetre = seul
     ? h('div', { class: 'sortie-fenetre barre' })
     : h('button', { class: 'btn sm sortie-fenetre', type: 'button', title: 'Revenir à la fiche', onclick: () => fenetre(false) }, icone('croix', 14), 'Réduire');
+  // En plein écran, cette barre est cachée : la souris gardée trois secondes
+  // contre le bord gauche la fait apparaître (en haut à gauche) ; elle repart
+  // quand la souris s'en éloigne, sauf si son menu est ouvert.
+  let minuteurBord = null, minuteurCache = null;
+  const barreVue = () => hote.classList.contains('barre-visible');
+  const montrerBarre = on => { clearTimeout(minuteurBord); clearTimeout(minuteurCache); minuteurBord = minuteurCache = null; hote.classList.toggle('barre-visible', on); };
+  const menuOuvert = () => sortieFenetre.matches(':focus-within') || !!document.querySelector('.menu-actions:not([hidden])');
+  const auBord = () => { if (!minuteurBord && !barreVue()) minuteurBord = setTimeout(() => { minuteurBord = null; montrerBarre(true); }, 3000); };
+  hote.addEventListener('pointermove', e => {
+    if (!hote.classList.contains('fenetre')) return;
+    if (sortieFenetre.contains(e.target)) { clearTimeout(minuteurCache); minuteurCache = null; return; }
+    if (e.clientX - hote.getBoundingClientRect().left <= 4) return auBord();
+    clearTimeout(minuteurBord); minuteurBord = null;
+    if (barreVue() && !minuteurCache) minuteurCache = setTimeout(() => { minuteurCache = null; if (!menuOuvert()) montrerBarre(false); }, 1500);
+  });
+  // Une fenêtre à part : la souris peut sortir par la gauche, c'est le bord aussi.
+  hote.addEventListener('pointerleave', e => { if (hote.classList.contains('fenetre') && e.clientX - hote.getBoundingClientRect().left <= 4) auBord(); });
   // Deux écrans de la même VM se disputeraient sa taille : celui de la fiche se
   // ferme quand la fenêtre à part s'ouvre, et se reprend d'un clic.
   let wsCourant = null;
@@ -1018,7 +1035,9 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     if (seul && !on) return;
     hote.classList.toggle('fenetre', on);
     document.documentElement.classList.toggle('ecran-fenetre', on);
+    montrerBarre(false);
     if (on) hote.append(sortieFenetre); else sortieFenetre.remove();
+    if (on && lireLocal('proxlab-astuce-bord', '') !== '1') { poserLocal('proxlab-astuce-bord', '1'); toast('Barre cachée : garde la souris contre le bord gauche 3 secondes pour la faire apparaître.'); }
     ecran?.toile.focus({ preventScroll: true });
   };
   const pleinEcran = () => (document.fullscreenElement ? document.exitFullscreen() : hote.requestFullscreen?.())?.catch(() => {});
