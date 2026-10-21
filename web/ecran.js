@@ -50,8 +50,8 @@ const PRESSE_EXT = 0xC0A1E5CE | 0;       // pseudo-encodage du presse-papiers é
 // presse-papiers, qualité JPEG 6 (-32 + 6) et compression 2 (-256 + 2).
 const ENCODAGES = [7, 1, 0, -223, -308, -258, -261, PRESSE_EXT, -254];
 // Qualité JPEG demandée à QEMU (niveaux -32 à -23) : sans elle, Tight reste sans
-// perte. Par défaut le niveau 8 ; en « Qualité nette », pas de JPEG du tout —
-// le texte posé sur une image (fond d'écran, navigateur) reste net.
+// perte. Sans perte (nette) : ce que demande ProxLab — le texte posé sur une
+// image (fond d'écran, navigateur) reste net ; sinon le niveau 8.
 export const encodages = nette => (nette ? ENCODAGES : [...ENCODAGES, -24]);
 
 // Un flux zlib de Tight, décompressé ici même (RFC 1950/1951), sans dépendre
@@ -497,11 +497,6 @@ export class Ecran {
     enc.setUint8(0, 2); enc.setUint16(2, liste.length);
     liste.forEach((e, i) => enc.setInt32(4 + 4 * i, e));
     this.envoyer(enc.buffer);
-  }
-  // Qualité changée en cours de route : QEMU prend les nouveaux encodages, puis l'image entière.
-  qualite(nette) {
-    this.nette = !!nette;
-    if (this.actif) { this.envoyerEncodages(); this.demander(false); }
   }
   // Nouvelle taille : l'image d'avant, mise à l'échelle, reste affichée
   // jusqu'à la nouvelle — un changement de taille ne passe plus par du noir.

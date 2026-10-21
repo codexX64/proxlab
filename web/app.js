@@ -872,19 +872,23 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const genreVga = String(f.config?.vga || '').split(',')[0] || 'std';
   const virtioPrevu = !/^virtio/.test(genreVga) && /^virtio/.test(f.vgaSuivant || '');
   let ajusterTaille = lireLocal('proxlab-ajuster', '1') === '1', refusSignale = false, minuteurTaille = null;
-  // Nette : la VM reçoit les pixels réels de cet écran (×2 sur un écran Retina)
-  // et l'image est affichée sans agrandissement ; sinon, un pixel de la VM par
-  // point CSS (moins de pixels à transmettre, image adoucie sur un écran dense).
-  // Par défaut, un pixel de la VM par point : sur un écran Retina, « nette »
-  // demandait à la VM deux fois plus de pixels par côté (3024 × 1898), quatre
-  // fois plus à dessiner pour une VM sans carte graphique — elle ramait, et ses
-  // touches se répétaient (« xxxx »). « Qualité nette » reste au choix.
-  let nette = lireLocal('proxlab-ajuster-nette', '0') === '1';
+  // Taille de la VM : pixels de la VM par point de la fenêtre (×1, ×1,5,
+  // ×2). ×1 est le plus léger : une VM sans carte graphique dessine tout au
+  // processeur, et à ×2 sur un écran Retina (2560 × 1536 pour une fiche) elle
+  // saturait ses cœurs, au point de perdre la frappe. L'image, elle, est
+  // toujours sans perte (Tight sans JPEG) : nette quelle que soit la taille.
+  // Ancien réglage « Qualité nette » coché : ×1,5.
+  const ECHELLES = ['1', '1.5', '2'];
+  let echelle = lireLocal('proxlab-echelle-vm', lireLocal('proxlab-ajuster-nette', '0') === '1' ? '1.5' : '1');
+  if (!ECHELLES.includes(echelle)) echelle = '1';
+  // Première ouverture avec ce réglage : la VM quitte la taille d'avant (×2
+  // sur un Retina), quitte à rapetisser une fois.
+  let echelleNeuve = lireLocal('proxlab-echelle-vm', '') === '';
   // Plein écran : l'image remplit tout l'écran, quitte à être un peu étirée,
   // plutôt que de laisser des bandes noires quand la VM n'a pas les mêmes
   // proportions que l'écran (console texte qui ne change pas de taille).
   let remplir = lireLocal('proxlab-remplir', '1') === '1';
-  const densite = () => (nette ? Math.min(3, Math.max(1, window.devicePixelRatio || 1)) : 1);
+  const densite = () => Number(echelle);
   const hote = h('div', { class: 'ecran-hote' + (remplir ? ' remplir' : '') });
   const cibleTaille = () => document.fullscreenElement === hote || hote.classList.contains('fenetre')
     ? [hote.clientWidth, hote.clientHeight]
@@ -904,6 +908,8 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
       ecran.ajuster(Math.max(l, ecran.toile.width), Math.max(h, ecran.toile.height));
     }, 500);
   };
+  // Changement de taille voulu (échelle choisie, réglage changé ailleurs) : en plus petit aussi.
+  const adapterMaintenant = () => { if (ajusterTaille && ecran?.etendu) ecran.ajuster(...cibleTaille().map(v => Math.round(v * densite()))); };
   // La plus grande taille vue pour cette VM, ici : celle à laquelle revenir
   // si son écran a été rapetissé.
   const cleTailleMax = `proxlab-taille-max:${f.node}/${f.vmid}`;
@@ -926,9 +932,6 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     } else if (clavierPris) { try { navigator.keyboard.unlock(); } catch { /* déjà rendu */ } clavierPris = false; }
   };
   hote.addEventListener('fullscreenchange', () => { ecran?.repeindre(); reajuster(); prendreClavier(); });
-  // Fenêtre passée d'un écran à un autre de densité différente.
-  const suivreDensite = () => matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`).addEventListener('change', () => { reajuster(); suivreDensite(); }, { once: true });
-  suivreDensite();
   const etat = h('span', { class: 'note', text: 'fermé' });
   let ecran = null, ouvertA = 0, reprise = false;
   // Le clavier de la VM : choisi à la main pour cette VM, sinon demandé à la VM
@@ -1090,7 +1093,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   // Réglages changés dans l'autre fenêtre : appliqués ici aussi.
   window.addEventListener('storage', e => {
     if (!hote.isConnected) return;
-    if (e.key === 'proxlab-ajuster-nette') { nette = e.newValue === '1'; ecran?.qualite(nette); reajuster(); }
+    if (e.key === 'proxlab-echelle-vm' && ECHELLES.includes(e.newValue)) { echelle = e.newValue; adapterMaintenant(); }
     else if (e.key === 'proxlab-remplir') { remplir = e.newValue === '1'; hote.classList.toggle('remplir', remplir); if (ecran) ecran.remplir = remplir; }
     else if (e.key === 'proxlab-ajuster') { ajusterTaille = e.newValue === '1'; reajuster(); }
   });
@@ -1199,12 +1202,11 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
           ecran.ajuster(1280, 800, { libre: true });
           toast('La VM revient à 1280 × 800 ; l\'ajustement à la fenêtre est coupé (menu Actions pour le remettre).');
         } },
-        { texte: 'Qualité nette (pixels de cet écran)', ic: nette ? 'verifie' : null, inactif: !ajusterTaille, agir: () => {
-          nette = !nette; poserLocal('proxlab-ajuster-nette', nette ? '1' : '0');
-          toast(nette ? 'Image sans perte, aux pixels réels de cet écran (plus lourd pour la VM et le réseau). Si le texte est trop petit : dans la VM, Paramètres → Écrans → Échelle 200 %.' : 'Un pixel de la VM par point, image compressée : bien plus léger, un peu adouci sur un écran dense.');
-          ecran?.qualite(nette);
-          if (ecran?.etendu) ecran.ajuster(...cibleTaille().map(v => Math.round(v * densite())));
-        } },
+        ...ECHELLES.map(k => ({ texte: `Taille de la VM ×${k.replace('.', ',')}${k === '1' ? ' (la plus légère)' : k === '2' ? ' (lourde sans carte graphique)' : ''}`, ic: echelle === k ? 'verifie' : null, inactif: !ajusterTaille, agir: () => {
+          echelle = k; poserLocal('proxlab-echelle-vm', k);
+          toast(`La VM prend ${k === '1' ? 'un pixel' : `${k.replace('.', ',')} pixels`} par point de la fenêtre${k === '1' ? ' : le plus léger pour elle' : ' : plus fin, plus lourd pour une VM sans carte graphique'}.`);
+          adapterMaintenant();
+        } })),
         ...(admin && !/^virtio/.test(genreVga) && !virtioPrevu ? [{ texte: 'Passer en VirtIO-GPU…', ic: 'ecran', agir: passerVirtio }] : []),
       ] },
     ];
@@ -1249,10 +1251,13 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     wsCourant = ws;
     ws.binaryType = 'arraybuffer';
     ecran = new Ecran(hote, ws, {
-      remplir, nette,
+      remplir, nette: true,
       surEtat: (q, d) => {
         if (q === 'pret') { vivante = true; essaisOuverture = 0; clearTimeout(chien); }
-        if (q === 'ajustable') return reajuster();
+        if (q === 'ajustable') {
+          if (echelleNeuve) { echelleNeuve = false; poserLocal('proxlab-echelle-vm', echelle); return adapterMaintenant(); }
+          return reajuster();
+        }
         if (q === 'ajustement-refuse') {
           // Dit une fois par VM et par affichage, pas à chaque ouverture.
           const cle = `proxlab-ajuster-refus:${f.node}/${f.vmid}`;
