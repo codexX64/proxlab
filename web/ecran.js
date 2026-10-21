@@ -48,7 +48,11 @@ const PRESSE_EXT = 0xC0A1E5CE | 0;       // pseudo-encodage du presse-papiers é
 // rendait l'écran lent, peint par morceaux. Puis CopyRect, Raw, DesktopSize,
 // ExtendedDesktopSize, touche étendue QEMU, voyants du clavier (Verr. Maj),
 // presse-papiers, qualité JPEG 6 (-32 + 6) et compression 2 (-256 + 2).
-const ENCODAGES = [7, 1, 0, -223, -308, -258, -261, PRESSE_EXT, -26, -254];
+const ENCODAGES = [7, 1, 0, -223, -308, -258, -261, PRESSE_EXT, -254];
+// Qualité JPEG demandée à QEMU (niveaux -32 à -23) : sans elle, Tight reste sans
+// perte. Par défaut le niveau 8 ; en « Qualité nette », pas de JPEG du tout —
+// le texte posé sur une image (fond d'écran, navigateur) reste net.
+export const encodages = nette => (nette ? ENCODAGES : [...ENCODAGES, -24]);
 
 // Un flux zlib de Tight, décompressé ici même (RFC 1950/1951), sans dépendre
 // du DecompressionStream du navigateur, dont la sortie en flux continu n'est
@@ -209,7 +213,8 @@ export const intapables = (texte, d) => [...new Set([...texte.replace(/\r\n?/g, 
 export const estMac = () => /mac|iphone|ipad/i.test(navigator.userAgentData?.platform || navigator.platform || '');
 
 export class Ecran {
-  constructor(hote, ws, { surEtat = () => {}, surPresse = () => {}, surColler = null, remplir = false, garderImage = false } = {}) {
+  constructor(hote, ws, { surEtat = () => {}, surPresse = () => {}, surColler = null, remplir = false, garderImage = false, nette = false } = {}) {
+    this.nette = !!nette;
     this.ws = ws; this.surEtat = surEtat; this.surPresse = surPresse; this.surColler = surColler; this.remplir = remplir;
     this.actif = false; this.capsPresse = 0; this.aFournir = null; this.dernierPresse = ''; this.copie = null;
     this.mac = estMac(); this.metaSeul = null;
@@ -308,10 +313,7 @@ export class Ecran {
       const pf = new Uint8Array(20);
       pf.set([0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16]);
       this.envoyer(pf);
-      const enc = new DataView(new ArrayBuffer(4 + 4 * ENCODAGES.length));
-      enc.setUint8(0, 2); enc.setUint16(2, ENCODAGES.length);
-      ENCODAGES.forEach((e, i) => enc.setInt32(4 + 4 * i, e));
-      this.envoyer(enc.buffer);
+      this.envoyerEncodages();
       this.demander(false);
       this.etat = 'message';
       this.actif = true;     // clavier et souris seulement maintenant : avant, ils casseraient la poignée
@@ -489,6 +491,18 @@ export class Ecran {
     const x1 = Math.min(r.x + r.l, this.hors.width), y1 = Math.min(r.y + r.h, this.hors.height);
     this.zone = this.zone ? [Math.min(this.zone[0], r.x), Math.min(this.zone[1], r.y), Math.max(this.zone[2], x1), Math.max(this.zone[3], y1)] : [r.x, r.y, x1, y1];
   }
+  envoyerEncodages() {
+    const liste = encodages(this.nette);
+    const enc = new DataView(new ArrayBuffer(4 + 4 * liste.length));
+    enc.setUint8(0, 2); enc.setUint16(2, liste.length);
+    liste.forEach((e, i) => enc.setInt32(4 + 4 * i, e));
+    this.envoyer(enc.buffer);
+  }
+  // Qualité changée en cours de route : QEMU prend les nouveaux encodages, puis l'image entière.
+  qualite(nette) {
+    this.nette = !!nette;
+    if (this.actif) { this.envoyerEncodages(); this.demander(false); }
+  }
   // Nouvelle taille : l'image d'avant, mise à l'échelle, reste affichée
   // jusqu'à la nouvelle — un changement de taille ne passe plus par du noir.
   taille(l, h) {
@@ -664,13 +678,17 @@ export class Ecran {
     this.piege.focus({ preventScroll: true });
   }
   // Une combinaison Ctrl(+Maj)+lettre envoyée à l'invité.
+  // Ctrl et Maj déjà tenus (doigt sur la touche) ne sont ni renvoyés ni lâchés :
+  // l'invité les garde enfoncés pour la touche suivante.
   combinaison(lettre, maj = false, code = `Key${lettre.toUpperCase()}`) {
-    this.touche({ code: 'ControlLeft', key: 'Control' }, true);
-    if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, true);
-    const k = maj ? lettre.toUpperCase() : lettre;
+    const tenue = (...c) => c.some(x => this.enfoncees.has(x));
+    const ctrl = !tenue('ControlLeft', 'ControlRight'), shift = maj && !tenue('ShiftLeft', 'ShiftRight');
+    if (ctrl) this.touche({ code: 'ControlLeft', key: 'Control' }, true);
+    if (shift) this.touche({ code: 'ShiftLeft', key: 'Shift' }, true);
+    const k = [...lettre].length === 1 ? (maj ? lettre.toUpperCase() : lettre) : lettre;
     this.touche({ code, key: k }, true); this.touche({ code, key: k }, false);
-    if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, false);
-    this.touche({ code: 'ControlLeft', key: 'Control' }, false);
+    if (shift) this.touche({ code: 'ShiftLeft', key: 'Shift' }, false);
+    if (ctrl) this.touche({ code: 'ControlLeft', key: 'Control' }, false);
   }
 
   touche(e, bas) {
@@ -764,15 +782,20 @@ export class Ecran {
       }
       this.synchroniserCaps(e);
       if (this.mac && /^Meta/.test(e.code)) { this.metaSeul = e.code; return; }
-      if (mod(e) && /^[cxazy]$/.test(lettre) && /^Key/.test(e.code)) {
-        if (e.repeat) return;
-        if (this.mac) this.metaSeul = null;
-        if (lettre === 'c' || lettre === 'x') this.armerCopie();
-        if (this.mac) this.combinaison(lettre, e.shiftKey, e.code);
-        else { this.enfoncees.set(e.code, e.key); this.touche(e, true); }
+      // Sur Mac, ⌘ + une touche devient Ctrl + la même touche dans l'invité
+      // (⌘S, ⌘F, ⌘T, ⌘←…), comme ⌘C et ⌘V ; ⌘Espace ouvre la recherche de
+      // l'invité (Super), ⌘Tab y change de fenêtre (Alt+Tab). macOS ne donne
+      // pas le relâché d'une touche lâchée sous ⌘ : elle était restée enfoncée
+      // dans l'invité, qui la répétait. L'appui part donc complet, tout de suite.
+      if (this.mac && e.metaKey && !/^(Shift|Control|Alt)/.test(e.code)) {
+        this.metaSeul = null;
+        if (e.code === 'Space') { if (!e.repeat) this.combo('MetaLeft'); return; }
+        if (e.code === 'Tab') { if (!e.repeat) this.combo('AltLeft', 'Tab'); return; }
+        if (lettre === 'c' || lettre === 'x') { if (e.repeat) return; this.armerCopie(); }
+        this.combinaison(lettre || e.key, e.shiftKey, e.code);
         return;
       }
-      if (this.metaSeul) { this.enfoncees.set(this.metaSeul, 'Meta'); this.touche({ code: this.metaSeul, key: 'Meta' }, true); this.metaSeul = null; }
+      if (!this.mac && mod(e) && (lettre === 'c' || lettre === 'x') && !e.repeat) this.armerCopie();
       if (e.repeat && !this.enfoncees.has(e.code)) return;
       this.enfoncees.set(e.code, e.key);
       this.touche(e, true);
