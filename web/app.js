@@ -855,7 +855,11 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   // Nette : la VM reçoit les pixels réels de cet écran (×2 sur un écran Retina)
   // et l'image est affichée sans agrandissement ; sinon, un pixel de la VM par
   // point CSS (moins de pixels à transmettre, image adoucie sur un écran dense).
-  let nette = lireLocal('proxlab-ajuster-nette', '1') === '1';
+  // Par défaut, un pixel de la VM par point : sur un écran Retina, « nette »
+  // demandait à la VM deux fois plus de pixels par côté (3024 × 1898), quatre
+  // fois plus à dessiner pour une VM sans carte graphique — elle ramait, et ses
+  // touches se répétaient (« xxxx »). « Qualité nette » reste au choix.
+  let nette = lireLocal('proxlab-ajuster-nette', '0') === '1';
   // Plein écran : l'image remplit tout l'écran, quitte à être un peu étirée,
   // plutôt que de laisser des bandes noires quand la VM n'a pas les mêmes
   // proportions que l'écran (console texte qui ne change pas de taille).
@@ -1086,8 +1090,8 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
         } },
         { texte: 'Qualité nette (pixels de cet écran)', ic: nette ? 'verifie' : null, inactif: !ajusterTaille, agir: () => {
           nette = !nette; poserLocal('proxlab-ajuster-nette', nette ? '1' : '0');
-          toast(nette ? 'La VM reçoit les pixels réels de cet écran. Si le texte est trop petit : dans la VM, Paramètres → Écrans → Échelle 200 %.' : 'Un pixel de la VM par point : plus léger, image adoucie sur un écran dense.');
-          reajuster();
+          toast(nette ? 'La VM reçoit les pixels réels de cet écran (plus lourd pour elle). Si le texte est trop petit : dans la VM, Paramètres → Écrans → Échelle 200 %.' : 'Un pixel de la VM par point : bien plus léger pour la VM, image adoucie sur un écran dense.');
+          if (ecran?.etendu) ecran.ajuster(...cibleTaille().map(v => Math.round(v * densite())));
         } },
         ...(admin && !/^virtio/.test(genreVga) && !virtioPrevu ? [{ texte: 'Passer en VirtIO-GPU…', ic: 'ecran', agir: passerVirtio }] : []),
       ] },
@@ -1130,7 +1134,13 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
       remplir,
       surEtat: (q, d) => {
         if (q === 'pret') { vivante = true; essaisOuverture = 0; clearTimeout(chien); }
-        if (q === 'ajustable') return reajuster();
+        if (q === 'ajustable') {
+          // Une VM restée à la taille « nette » d'avant (deux fois la fenêtre
+          // sur chaque côté) revient à la taille de la fenêtre.
+          const [l, h] = cibleTaille().map(v => Math.round(v * densite())), t = ecran.toile;
+          if (ajusterTaille && !nette && Math.abs(t.width / l - 2) < 0.25 && Math.abs(t.height / h - 2) < 0.25) return ecran.ajuster(l, h);
+          return reajuster();
+        }
         if (q === 'ajustement-refuse') {
           // Dit une fois par VM et par affichage, pas à chaque ouverture.
           const cle = `proxlab-ajuster-refus:${f.node}/${f.vmid}`;

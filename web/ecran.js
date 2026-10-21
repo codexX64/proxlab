@@ -613,11 +613,11 @@ export class Ecran {
             : code.startsWith('Key') ? (maj ? code.slice(3) : code.slice(3).toLowerCase()) : code.startsWith('Digit') ? code.slice(5) : code === 'Space' ? ' ' : code;
           touchees.set(code, key);
           this.touche({ code, key }, true);
-          await attendre(6);
+          await attendre(8);
           this.touche({ code, key }, false);
           if (altgr) this.touche({ code: 'AltRight', key: 'AltGraph' }, false);
           if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, false);
-          await attendre(10);
+          await attendre(22);
         }
         if (i % 8 === 7) surAvance(i + 1, caracteres.length);
       }
