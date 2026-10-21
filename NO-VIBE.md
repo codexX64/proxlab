@@ -210,3 +210,7 @@ Ouverture de l'écran refaite jusqu'à la première image ; plein écran rempli.
 ## Suivi du 2026-10-21 (2.10.0)
 
 Décodeur Tight dans le client d'écran, sans dépendance (zlib par DecompressionStream, JPEG par createImageBitmap). Le faux Proxmox parle Tight comme QEMU. Les 31 essais restent verts sans retouche.
+
+## Suivi du 2026-10-21 (2.11.0)
+
+Inflate maison à la place de DecompressionStream, double tampon de l'écran, frappe cadencée. Les 31 essais d'avant restent verts sans retouche ; un essai ajouté.
