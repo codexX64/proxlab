@@ -81,6 +81,8 @@ Suivi du 2026-10-21 (2.11.0) : **écran figé jusqu'à « Rouvrir »** : la déc
 
 Suivi du 2026-10-21 (2.12.0) : **VM trop chargée par ProxLab**. Sur un écran Retina, « Qualité nette » était active par défaut : la VM recevait deux fois plus de pixels par côté (3024 × 1898), quatre fois plus à dessiner pour une VM sans carte graphique ; elle ramait et ses touches se répétaient pendant un collage. Elle est maintenant coupée par défaut (`web/app.js:862`), une VM restée à cette taille revient à celle de la fenêtre à l'ouverture, et la frappe est un peu plus lente (environ 30 caractères par seconde). Changements d'interface : aucun contrôle ne change de statut. Essais : 32 du service ; parcours du navigateur : taille Retina puis retour, frappe, Tight.
 
+Suivi du 2026-10-21 (2.13.0) : en plein écran, la barre (Actions, Fermer, Réduire) est cachée ; la souris gardée trois secondes contre le bord gauche la montre en haut à gauche, elle repart quand la souris s'éloigne, sauf menu ouvert (`web/app.js:1006`). Interface seulement : aucun contrôle ne change de statut. Essais : 32 du service ; parcours du navigateur : 9 vérifications de la barre.
+
 ## Control status
 | ID | Severity | Status | Evidence | Notes |
 |---|---|---|---|---|

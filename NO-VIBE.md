@@ -218,3 +218,7 @@ Inflate maison à la place de DecompressionStream, double tampon de l'écran, fr
 ## Suivi du 2026-10-21 (2.12.0)
 
 « Qualité nette » coupée par défaut, retour de taille, frappe plus lente. Les 32 essais restent verts sans retouche.
+
+## Suivi du 2026-10-21 (2.13.0)
+
+Barre du plein écran cachée, montrée au bord gauche. Les 32 essais restent verts sans retouche.
