@@ -246,3 +246,7 @@ Keyboard Lock en plein écran entier. Les 32 essais restent verts sans retouche.
 ## Suivi du 2026-10-21 (2.19.0)
 
 Menu Actions bâti par une seule fonction (`groupesActions`), rejouée telle quelle dans la fenêtre à part : aucune action dupliquée. `combinaison` réutilisée pour ⌘ + touche ; envoi des encodages factorisé (`envoyerEncodages`). Essais : 33 verts, dont un nouveau.
+
+## Suivi du 2026-10-21 (2.19.1)
+
+`reajuster` revenu à sa forme de 2.16 (agrandir seulement), commentaire réécrit. 33 essais verts.
