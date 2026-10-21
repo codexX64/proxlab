@@ -899,6 +899,9 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     minuteurTaille = setTimeout(() => {
       if (!ajusterTaille || !ecran?.etendu || !hote.isConnected) return;
       const [l, h] = cibleTaille().map(v => Math.round(v * densite()));
+      // Quelques pixels de plus (barre de menus du plein écran qui passe, au
+      // retour d'un autre bureau) ne valent pas un changement de taille.
+      if (l - ecran.toile.width < 24 && h - ecran.toile.height < 24) return;
       ecran.ajuster(Math.max(l, ecran.toile.width), Math.max(h, ecran.toile.height));
     }, 400);
   };
@@ -908,7 +911,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const tailleMax = () => { const [l, h] = String(lireLocal(cleTailleMax, '')).split('x').map(Number); return l > 0 && h > 0 ? [l, h] : null; };
   const noterTaille = (l, h) => { const m = tailleMax(); if (!m || l * h > m[0] * m[1]) poserLocal(cleTailleMax, `${l}x${h}`); };
   new ResizeObserver(reajuster).observe(hote);
-  hote.addEventListener('fullscreenchange', reajuster);
+  hote.addEventListener('fullscreenchange', () => { ecran?.repeindre(); reajuster(); });
   // Fenêtre passée d'un écran à un autre de densité différente.
   const suivreDensite = () => matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`).addEventListener('change', () => { reajuster(); suivreDensite(); }, { once: true });
   suivreDensite();
@@ -1282,7 +1285,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     try { wsCourant.close(); } catch { /* déjà fermé */ }
     ouvrir();
   }
-  const surRetour = () => { if (document.visibilityState === 'visible') revenir(); };
+  const surRetour = () => { if (document.visibilityState === 'visible') { ecran?.repeindre(); revenir(); } };
   const nettoyer = () => { clearInterval(veille); document.removeEventListener('visibilitychange', surRetour); window.removeEventListener('focus', surRetour); };
   const veille = setInterval(() => {
     if (hote.isConnected) { monte = true; if (morte()) revenir(); return; }
@@ -1300,7 +1303,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const carteEcran = h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Écran' }), etat, seul ? null : outils, bouton), panneau, hote);
   if (seul) fenetre(true);
   carteEcran.nettoyer = nettoyer;
-  carteEcran.addEventListener('montre', () => { if (ecran?.actif) ecran.toile.focus({ preventScroll: true }); revenir(); });
+  carteEcran.addEventListener('montre', () => { ecran?.repeindre(); if (ecran?.actif) ecran.toile.focus({ preventScroll: true }); revenir(); });
   return carteEcran;
 }
 

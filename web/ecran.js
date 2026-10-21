@@ -470,7 +470,7 @@ export class Ecran {
   finImage() {
     const z = this.zone;
     if (z) { const l = z[2] - z[0], h = z[3] - z[1]; if (l > 0 && h > 0) this.vue.drawImage(this.hors, z[0], z[1], l, h, z[0], z[1], l, h); this.zone = null; }
-    this.derniereImage = Date.now();
+    this.derniereImage = Date.now(); this.vu = true;
     if (this.attente) {
       const h = this.attente, avait = h.contains(document.activeElement);
       this.attente = null;
@@ -480,16 +480,28 @@ export class Ecran {
     }
     this.etat = 'message'; this.demander(true);
   }
+  // L'image gardée hors écran, remise d'un coup sur la toile : Safari peut vider
+  // une toile restée cachée (autre bureau, onglet en arrière-plan) — au retour,
+  // elle revient aussitôt, sans attendre le réseau.
+  repeindre() { if (this.vu) this.vue.drawImage(this.hors, 0, 0); }
   // La part de l'image qu'une mise à jour a touchée, à montrer à sa fin.
   marquer(r) {
     const x1 = Math.min(r.x + r.l, this.hors.width), y1 = Math.min(r.y + r.h, this.hors.height);
     this.zone = this.zone ? [Math.min(this.zone[0], r.x), Math.min(this.zone[1], r.y), Math.max(this.zone[2], x1), Math.max(this.zone[3], y1)] : [r.x, r.y, x1, y1];
   }
+  // Nouvelle taille : l'image d'avant, mise à l'échelle, reste affichée
+  // jusqu'à la nouvelle — un changement de taille ne passe plus par du noir.
   taille(l, h) {
     if (l < 1 || h < 1 || l > 8192 || h > 8192) throw new Error('taille d\'écran invalide');
+    let ancienne = null;
+    if (this.vu && this.hors.width > 1) {
+      ancienne = document.createElement('canvas'); ancienne.width = this.hors.width; ancienne.height = this.hors.height;
+      ancienne.getContext('2d').drawImage(this.hors, 0, 0);
+    }
     this.toile.width = l; this.toile.height = h; this.hors.width = l; this.hors.height = h;
     this.ctx.fillStyle = '#000'; this.ctx.fillRect(0, 0, l, h);
     this.vue.fillStyle = '#000'; this.vue.fillRect(0, 0, l, h);
+    if (ancienne) { this.ctx.drawImage(ancienne, 0, 0, l, h); this.vue.drawImage(ancienne, 0, 0, l, h); }
     this.zone = null;
     this.surEtat('taille', `${l} × ${h}`);
   }
