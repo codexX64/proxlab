@@ -921,8 +921,11 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     if (!ecran?.actif) return toast('Ouvre l\'écran d\'abord.', true);
     const manque = intapables(texte, disposition);
     if ([...texte].length > FRAPPE_MAX) toast(`Seuls les ${FRAPPE_MAX} premiers caractères sont tapés.`);
+    if (ecran.enFrappe) return toast('Une frappe est déjà en cours : attends qu’elle finisse.', true);
     ecran.toile.focus();
-    const r = await ecran.taper(texte, disposition, { surAvance: (i, n) => { avance.textContent = i < n ? `frappe ${i}/${n}…` : ''; } });
+    ecran.enFrappe = true;
+    let r;
+    try { r = await ecran.taper(texte, disposition, { surAvance: (i, n) => { avance.textContent = i < n ? `frappe ${i}/${n}…` : ''; } }); } finally { if (ecran) ecran.enFrappe = false; avance.textContent = ''; }
     if (r.sautes) toast(`Tapé, sauf ${r.sautes} caractère${r.sautes > 1 ? 's' : ''} absent${r.sautes > 1 ? 's' : ''} de la disposition ${DISPOSITIONS[disposition].nom} : ${manque.slice(0, 8).join(' ')}`, true);
   };
   const coller = texte => {
