@@ -250,3 +250,7 @@ Menu Actions bâti par une seule fonction (`groupesActions`), rejouée telle que
 ## Suivi du 2026-10-21 (2.19.1)
 
 `reajuster` revenu à sa forme de 2.16 (agrandir seulement), commentaire réécrit. 33 essais verts.
+
+## Suivi du 2026-10-21 (2.19.2)
+
+Réglage booléen `nette` remplacé par `echelle` ; `Ecran.qualite` et le suivi de densité de l'écran retirés, devenus sans appelant. 33 essais verts.
