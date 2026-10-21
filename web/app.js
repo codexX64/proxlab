@@ -454,8 +454,19 @@ async function pageFiche(noeud, type, vmid) {
   // cachés, pas fermés. Ils ne se ferment qu'en quittant la fiche.
   const vivants = {};
   const fermerVivant = k => { vivants[k]?.fermer(); vivants[k]?.el.remove(); delete vivants[k]; };
-  const fermerConsole = () => { for (const k of Object.keys(vivants)) fermerVivant(k); };
+  // Écran en continu : en quittant la fiche, l'écran reste connecté à part et
+  // revient tel quel au retour.
+  const cleVm = `${noeud}/${vmid}`;
+  const fermerConsole = () => {
+    for (const k of Object.keys(vivants)) {
+      if (k === 'ecran' && ecranContinu()) { garderEcran(cleVm, vivants[k]); vivants[k].el.remove(); delete vivants[k]; } else fermerVivant(k);
+    }
+  };
   const vivant = (k, creer) => {
+    if (!vivants[k] && k === 'ecran' && ECRANS_GARDES.has(cleVm)) {
+      vivants[k] = ECRANS_GARDES.get(cleVm); ECRANS_GARDES.delete(cleVm);
+      corps.append(vivants[k].el);
+    }
     if (!vivants[k]) {
       const slot = { term: null, ws: null };
       const fermer = () => { try { slot.ws?.close(); } catch { /* fermé */ } slot.term?.detruire?.(); slot.term = slot.ws = null; };
@@ -838,6 +849,15 @@ function menuActions(groupes, { titre = 'Actions' } = {}) {
   return { ancre, bouton, fermer };
 }
 
+// Écrans gardés en continu, trois VM au plus : la plus ancienne est fermée.
+const ECRANS_GARDES = new Map();
+const ecranContinu = () => lireLocal('proxlab-ecran-continu', '0') === '1';
+function garderEcran(cle, v) {
+  ECRANS_GARDES.delete(cle); ECRANS_GARDES.set(cle, v);
+  while (ECRANS_GARDES.size > 3) { const [k, x] = ECRANS_GARDES.entries().next().value; ECRANS_GARDES.delete(k); x.fermer(); x.el.nettoyer?.(); }
+}
+function lacherEcrans() { for (const x of ECRANS_GARDES.values()) { x.fermer(); x.el.nettoyer?.(); } ECRANS_GARDES.clear(); }
+
 function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const cible = { noeud: f.node, type: f.type, vmid: String(f.vmid) }, enMarche = f.status === 'running';
   const agent = /clipboard=vnc/.test(f.config?.vga || '');
@@ -1090,6 +1110,11 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
           { texte: 'Plein écran dans la fenêtre', ic: modePlein === 'fenetre' ? 'verifie' : 'agrandir', inactif: off, agir: () => { modePlein = 'fenetre'; poserLocal('proxlab-plein', 'fenetre'); fenetre(true); } },
           { texte: 'Ouvrir dans une fenêtre à part', ic: modePlein === 'apart' ? 'verifie' : 'lien', agir: () => { modePlein = 'apart'; poserLocal('proxlab-plein', 'apart'); apart(); } },
         ]),
+        { texte: 'Écran en continu (reste ouvert en quittant la page)', ic: ecranContinu() ? 'verifie' : null, agir: () => {
+          const on = !ecranContinu(); poserLocal('proxlab-ecran-continu', on ? '1' : '0');
+          if (!on) lacherEcrans();
+          toast(on ? 'L’écran reste connecté quand tu quittes la page ou l’onglet, et reprend tel quel au retour (trois VM au plus).' : 'L’écran se ferme de nouveau en quittant la page.');
+        } },
         { texte: 'Plein écran sans bandes noires (image étirée)', ic: remplir ? 'verifie' : null, agir: () => {
           remplir = !remplir; poserLocal('proxlab-remplir', remplir ? '1' : '0');
           hote.classList.toggle('remplir', remplir); if (ecran) ecran.remplir = remplir;
@@ -1184,6 +1209,8 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
       },
       // ⌘V / Ctrl+V dans l'écran : le texte du collage natif, sinon la lecture du presse-papiers.
       surColler: ({ maj, texte }) => (texte !== null && texte !== undefined ? collerTexte(texte, maj) : collerDepuisIci(maj)),
+      // Une reconnexion garde l'image d'avant jusqu'à la première nouvelle : pas d'écran noir.
+      garderImage: !!hote.querySelector('canvas.ecran'),
     });
     if (hote.classList.contains('fenetre')) hote.append(sortieFenetre);
     garder({ detruire: () => { ecran?.relacher(); fenetre(false); } }, ws);
@@ -1256,9 +1283,11 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     ouvrir();
   }
   const surRetour = () => { if (document.visibilityState === 'visible') revenir(); };
+  const nettoyer = () => { clearInterval(veille); document.removeEventListener('visibilitychange', surRetour); window.removeEventListener('focus', surRetour); };
   const veille = setInterval(() => {
     if (hote.isConnected) { monte = true; if (morte()) revenir(); return; }
-    if (monte) { clearInterval(veille); document.removeEventListener('visibilitychange', surRetour); window.removeEventListener('focus', surRetour); }
+    // Gardé en continu hors de la fiche : il reste en vie, sans rien demander.
+    if (monte && ![...ECRANS_GARDES.values()].some(x => x.el === carteEcran)) nettoyer();
   }, 20e3);
   document.addEventListener('visibilitychange', surRetour);
   window.addEventListener('focus', surRetour);
@@ -1270,7 +1299,8 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   if (seul) sortieFenetre.append(outils, h('button', { class: 'btn sm', type: 'button', title: 'Fermer cette fenêtre', onclick: () => window.close() }, icone('croix', 14), 'Fermer'));
   const carteEcran = h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Écran' }), etat, seul ? null : outils, bouton), panneau, hote);
   if (seul) fenetre(true);
-  carteEcran.addEventListener('montre', () => { if (ecran?.actif) ecran.toile.focus({ preventScroll: true }); });
+  carteEcran.nettoyer = nettoyer;
+  carteEcran.addEventListener('montre', () => { if (ecran?.actif) ecran.toile.focus({ preventScroll: true }); revenir(); });
   return carteEcran;
 }
 

@@ -383,6 +383,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
     const e = { cible: vt.cle, authentifie: false, messages: [], presse: null, invite: '', ext: false, couper: () => ws.close(), flux: [], octets: 0,
       copierInvite(texte) { e.invite = texte; if (e.ext) couper(ext.NOTIFY | ext.TEXTE); } };
     ecrans.push(e);
+    ws.on('fermeture', () => { e.ferme = true; });
     let tampon = Buffer.alloc(0), etape = 'version', defi = crypto.randomBytes(16);
     ws.envoyerBinaire(Buffer.from('RFB 003.008\n', 'latin1'));
     const longueur = b => ({ 0: 20, 3: 10, 4: 8, 5: 6, 255: 12 }[b[0]] ?? (b[0] === 2 && b.length >= 4 ? 4 + 4 * b.readUInt16BE(2) : b[0] === 6 && b.length >= 8 ? 8 + Math.abs(b.readInt32BE(4)) : b[0] === 251 && b.length >= 8 ? 8 + 16 * b[6] : 0));

@@ -209,7 +209,7 @@ export const intapables = (texte, d) => [...new Set([...texte.replace(/\r\n?/g, 
 export const estMac = () => /mac|iphone|ipad/i.test(navigator.userAgentData?.platform || navigator.platform || '');
 
 export class Ecran {
-  constructor(hote, ws, { surEtat = () => {}, surPresse = () => {}, surColler = null, remplir = false } = {}) {
+  constructor(hote, ws, { surEtat = () => {}, surPresse = () => {}, surColler = null, remplir = false, garderImage = false } = {}) {
     this.ws = ws; this.surEtat = surEtat; this.surPresse = surPresse; this.surColler = surColler; this.remplir = remplir;
     this.actif = false; this.capsPresse = 0; this.aFournir = null; this.dernierPresse = ''; this.copie = null;
     this.mac = estMac(); this.metaSeul = null;
@@ -239,7 +239,14 @@ export class Ecran {
     this.piege.className = 'ecran-piege';
     this.piege.tabIndex = -1;
     this.piege.setAttribute('aria-hidden', 'true');
-    hote.replaceChildren(this.toile, this.piege);
+    // garderImage : l'image d'avant reste affichée jusqu'à la première de
+    // cette connexion (une reconnexion ne passe pas par un écran noir).
+    if (garderImage) {
+      for (const x of hote.querySelectorAll('[data-attente]')) x.remove();   // essais d'avant restés sans image
+      this.toile.hidden = true; this.toile.dataset.attente = '1'; this.piege.dataset.attente = '1';
+      this.attente = hote;
+      hote.append(this.toile, this.piege);
+    } else hote.replaceChildren(this.toile, this.piege);
     this.brancher();
   }
 
@@ -464,6 +471,13 @@ export class Ecran {
     const z = this.zone;
     if (z) { const l = z[2] - z[0], h = z[3] - z[1]; if (l > 0 && h > 0) this.vue.drawImage(this.hors, z[0], z[1], l, h, z[0], z[1], l, h); this.zone = null; }
     this.derniereImage = Date.now();
+    if (this.attente) {
+      const h = this.attente, avait = h.contains(document.activeElement);
+      this.attente = null;
+      for (const x of [...h.querySelectorAll('canvas.ecran, .ecran-piege, p.vide')]) if (x !== this.toile && x !== this.piege) x.remove();
+      this.toile.hidden = false; delete this.toile.dataset.attente; delete this.piege.dataset.attente;
+      if (avait) this.toile.focus({ preventScroll: true });
+    }
     this.etat = 'message'; this.demander(true);
   }
   // La part de l'image qu'une mise à jour a touchée, à montrer à sa fin.
