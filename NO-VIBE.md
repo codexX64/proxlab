@@ -222,3 +222,7 @@ Inflate maison à la place de DecompressionStream, double tampon de l'écran, fr
 ## Suivi du 2026-10-21 (2.13.0)
 
 Barre du plein écran cachée, montrée au bord gauche. Les 32 essais restent verts sans retouche.
+
+## Suivi du 2026-10-21 (2.14.0)
+
+Sonde d'image au retour, reprise après la fenêtre à part. Les 32 essais restent verts sans retouche.

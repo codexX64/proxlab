@@ -83,6 +83,8 @@ Suivi du 2026-10-21 (2.12.0) : **VM trop chargée par ProxLab**. Sur un écran R
 
 Suivi du 2026-10-21 (2.13.0) : en plein écran, la barre (Actions, Fermer, Réduire) est cachée ; la souris gardée trois secondes contre le bord gauche la montre en haut à gauche, elle repart quand la souris s'éloigne, sauf menu ouvert (`web/app.js:1006`). Interface seulement : aucun contrôle ne change de statut. Essais : 32 du service ; parcours du navigateur : 9 vérifications de la barre.
 
+Suivi du 2026-10-21 (2.14.0) : **écran figé au retour malgré une connexion ouverte** (Proxmox ou le tunnel l'ont lâchée sans la fermer : le battement continuait, rien ne semblait mort). Au retour sur l'onglet, ou au premier geste après trente secondes sans image, l'écran demande l'image entière ; sans elle en cinq secondes, il est rouvert par une passe neuve (`web/app.js:1234`). La fenêtre à part fermée, l'écran revient de lui-même dans la fiche. Interface seulement : aucun contrôle ne change de statut. Essais : 32 du service ; parcours du navigateur : retour de la fenêtre à part, écran gelé rouvert, écran vivant laissé tel quel.
+
 ## Control status
 | ID | Severity | Status | Evidence | Notes |
 |---|---|---|---|---|
