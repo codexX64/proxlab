@@ -85,6 +85,8 @@ Suivi du 2026-10-21 (2.13.0) : en plein écran, la barre (Actions, Fermer, Rédu
 
 Suivi du 2026-10-21 (2.14.0) : **écran figé au retour malgré une connexion ouverte** (Proxmox ou le tunnel l'ont lâchée sans la fermer : le battement continuait, rien ne semblait mort). Au retour sur l'onglet, ou au premier geste après trente secondes sans image, l'écran demande l'image entière ; sans elle en cinq secondes, il est rouvert par une passe neuve (`web/app.js:1234`). La fenêtre à part fermée, l'écran revient de lui-même dans la fiche. Interface seulement : aucun contrôle ne change de statut. Essais : 32 du service ; parcours du navigateur : retour de la fenêtre à part, écran gelé rouvert, écran vivant laissé tel quel.
 
+Suivi du 2026-10-21 (2.15.0) : **écran en continu** (option du navigateur, coupée par défaut, `web/app.js:853`) : en quittant la fiche, la connexion de l'écran reste ouverte et l'écran revient tel quel au retour ; trois VM au plus, la plus ancienne fermée ; l'option coupée, tout est fermé. Chaque connexion garde ses contrôles (session vérifiée chaque minute par le relais, passe à usage unique, journal) : rester ouverte ne contourne rien, une session fermée la ferme. Une reconnexion garde l'image d'avant jusqu'à la première nouvelle : plus d'écran noir. Interface seulement : aucun contrôle ne change de statut. Essais : 32 du service ; parcours du navigateur : page quittée sans fermeture, retour sans nouvelle connexion, reconnexion sans écran noir, option coupée.
+
 ## Control status
 | ID | Severity | Status | Evidence | Notes |
 |---|---|---|---|---|
