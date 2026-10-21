@@ -215,6 +215,7 @@ export class Ecran {
     this.mac = estMac(); this.metaSeul = null;
     this.morceaux = []; this.dispo = 0;
     this.etat = 'init'; this.rects = 0; this.rect = null; this.flux = [null, null, null, null]; this.occupe = false;
+    this.derniereImage = Date.now();   // la fin de la dernière mise à jour reçue
     this.qemu = false; this.enfoncees = new Map(); this.boutons = 0;
     // Taille de l'écran demandée à la VM (ExtendedDesktopSize) : connue quand
     // QEMU l'annonce ; this.ecranId est l'écran qu'il décrit.
@@ -462,6 +463,7 @@ export class Ecran {
   finImage() {
     const z = this.zone;
     if (z) { const l = z[2] - z[0], h = z[3] - z[1]; if (l > 0 && h > 0) this.vue.drawImage(this.hors, z[0], z[1], l, h, z[0], z[1], l, h); this.zone = null; }
+    this.derniereImage = Date.now();
     this.etat = 'message'; this.demander(true);
   }
   // La part de l'image qu'une mise à jour a touchée, à montrer à sa fin.

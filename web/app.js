@@ -1030,6 +1030,12 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     etat.textContent = 'dans une fenêtre à part';
     hote.replaceChildren(h('p', { class: 'vide' }, 'L\'écran est ouvert dans une fenêtre à part (bouton vert de la fenêtre : plein écran dans son propre bureau). ',
       h('button', { class: 'btn sm', type: 'button', onclick: () => { try { w.close(); } catch { /* fermée */ } reprise = false; ouvrir(); } }, icone('ecran', 14), 'Reprendre ici')));
+    // La fenêtre à part fermée : l'écran revient ici de lui-même.
+    const guet = setInterval(() => {
+      if (!w.closed) return;
+      clearInterval(guet);
+      if (hote.isConnected && !wsCourant && etat.textContent === 'dans une fenêtre à part') { reprise = false; essaisOuverture = 0; essaisAuto = 0; ouvrir(); }
+    }, 800);
   };
   const fenetre = on => {
     if (seul && !on) return;
@@ -1221,9 +1227,29 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   // après une session fermée, ni quand l'écran est dans une fenêtre à part.
   let dernier = 0, essaisAuto = 0, essaisOuverture = 0, sansRetour = false, monte = false;
   const morte = () => !!wsCourant && (wsCourant.readyState > 1 || Date.now() - dernier > 70e3);
+  // Une connexion peut rester ouverte et ne plus rien donner (Proxmox ou le
+  // tunnel l'ont lâchée sans la fermer) : on demande l'image entière ; sans
+  // elle en cinq secondes, l'écran est rouvert.
+  let sondeEnCours = false;
+  function sonder() {
+    if (!ecran?.actif || sondeEnCours || !wsCourant || wsCourant.readyState !== 1) return;
+    sondeEnCours = true;
+    const ws0 = wsCourant, e0 = ecran, t = Date.now();
+    e0.demander(false);
+    setTimeout(() => {
+      sondeEnCours = false;
+      if (wsCourant !== ws0 || ecran !== e0 || e0.derniereImage >= t || !hote.isConnected || ouverture || sansRetour) return;
+      essaisAuto = 0; reprise = true; etat.textContent = 'reconnexion…';
+      try { ws0.close(); } catch { /* déjà fermé */ }
+      ouvrir();
+    }, 5000);
+  }
+  // Retour sur l'écran après un moment sans image : la même vérification au premier geste.
+  hote.addEventListener('pointerdown', () => { if (ecran?.actif && Date.now() - ecran.derniereImage > 30e3) sonder(); }, true);
+  hote.addEventListener('keydown', () => { if (ecran?.actif && Date.now() - ecran.derniereImage > 30e3) sonder(); }, true);
   function revenir() {
     if (!hote.isConnected || document.visibilityState !== 'visible' || ouverture || sansRetour) return;
-    if (!morte()) { if (ecran?.actif) ecran.demander(false); return; }
+    if (!morte()) return sonder();
     if (essaisAuto >= 3) return;
     essaisAuto++; reprise = true; etat.textContent = 'reconnexion…';
     try { wsCourant.close(); } catch { /* déjà fermé */ }

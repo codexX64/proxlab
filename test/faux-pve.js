@@ -456,7 +456,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
             ws.envoyerBinaire(Buffer.concat([t, Buffer.alloc(L * H * 4, 90)]));
           }
         }
-        if (m[0] === 3 && m[1] === 0) {
+        if (m[0] === 3 && m[1] === 0 && !e.gele) {
           const source = L === EL && H === EH ? pixels : Buffer.alloc(L * H * 4, 90);
           if (e.tight) imageTight(e, L, H, source).then(b => { e.octets += b.length; ws.envoyerBinaire(b); });
           else {
