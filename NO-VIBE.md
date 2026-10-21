@@ -206,3 +206,7 @@ Taille de l'écran : agrandir seulement, rapetisser à la demande, revenir à la
 ## Suivi du 2026-10-20 (2.9.0)
 
 Ouverture de l'écran refaite jusqu'à la première image ; plein écran rempli. Les 31 essais restent verts sans retouche.
+
+## Suivi du 2026-10-21 (2.10.0)
+
+Décodeur Tight dans le client d'écran, sans dépendance (zlib par DecompressionStream, JPEG par createImageBitmap). Le faux Proxmox parle Tight comme QEMU. Les 31 essais restent verts sans retouche.
