@@ -214,3 +214,7 @@ Décodeur Tight dans le client d'écran, sans dépendance (zlib par Decompressio
 ## Suivi du 2026-10-21 (2.11.0)
 
 Inflate maison à la place de DecompressionStream, double tampon de l'écran, frappe cadencée. Les 31 essais d'avant restent verts sans retouche ; un essai ajouté.
+
+## Suivi du 2026-10-21 (2.12.0)
+
+« Qualité nette » coupée par défaut, retour de taille, frappe plus lente. Les 32 essais restent verts sans retouche.
