@@ -958,6 +958,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     Object.entries(DISPOSITIONS).map(([k, d]) => h('option', { value: k, text: d.nom, selected: k === disposition })));
   const avance = h('span', { class: 'note' });
   const taper = async texte => {
+    if (!ecran?.actif && distantVivant()) return versApart({ agir: 'taper', texte });
     if (!ecran?.actif) return toast('Ouvre l\'écran d\'abord.', true);
     const manque = intapables(texte, disposition);
     if ([...texte].length > FRAPPE_MAX) toast(`Seuls les ${FRAPPE_MAX} premiers caractères sont tapés.`);
@@ -1016,6 +1017,12 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     if (!t) return toast('Le presse-papiers est vide.');
     if (agent && modeColler === 'agent') { ecran.envoyerPresse(t); setTimeout(() => ecran?.combinaison('v', maj), 150); } else taper(t);
   };
+  // Fiche dont l'écran est dans la fenêtre à part : le presse-papiers est lu
+  // ici (le clic est ici), le texte part là-bas.
+  const collerVersApart = () => {
+    if (!navigator.clipboard?.readText) { montrerPanneau(true); aEnvoyer.focus(); return toast('Colle ton texte dans le panneau, puis « Taper dans la VM ».'); }
+    navigator.clipboard.readText().then(t => (t ? versApart({ agir: 'coller', texte: t }) : toast('Le presse-papiers est vide.')), () => { montrerPanneau(true); aEnvoyer.focus(); });
+  };
   const collerDepuisIci = (maj = false) => {
     if (!navigator.clipboard?.readText) { montrerPanneau(true); aEnvoyer.focus(); return toast('Colle ton texte dans le panneau, puis « Taper dans la VM ».'); }
     navigator.clipboard.readText().then(t => { ecran?.toile.focus(); collerTexte(t, maj); }, () => { montrerPanneau(true); aEnvoyer.focus(); toast(`Le navigateur n'a pas donné le presse-papiers : colle-le ici (${MOD}V), puis envoie-le.`, true); });
@@ -1056,16 +1063,49 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   // Deux écrans de la même VM se disputeraient sa taille : celui de la fiche se
   // ferme quand la fenêtre à part s'ouvre, et se reprend d'un clic.
   let wsCourant = null;
+  // La fenêtre à part et la fiche se parlent (même origine) : la fenêtre dit
+  // son état toutes les deux secondes ; le menu Actions de la fiche agit sur
+  // elle, plein écran compris, au lieu d'être grisé.
+  const canal = typeof BroadcastChannel === 'function' ? new BroadcastChannel(`proxlab-ecran:${f.node}/${f.vmid}`) : null;
+  let fenetreApart = null, distant = null;
+  const distantVivant = () => !seul && !ecran?.actif && !!fenetreApart && !fenetreApart.closed && !!distant?.actif && Date.now() - distant.t < 90e3;
+  const versApart = message => { canal?.postMessage(message); try { fenetreApart?.focus(); } catch { /* fermée */ } };
+  const annoncer = () => canal?.postMessage({ etat: { actif: !!ecran?.actif, l: ecran?.toile.width || 0, h: ecran?.toile.height || 0, caps: ecran?.verrous ? !!ecran.verrous.caps : null } });
+  if (canal) canal.onmessage = ({ data: m }) => {
+    if (!m || typeof m !== 'object') return;
+    if (!seul) { if (m.etat && typeof m.etat === 'object') distant = { ...m.etat, t: Date.now() }; return; }
+    if (m.qui) return annoncer();
+    if (typeof m.agir !== 'string' || !ecran?.actif) return;
+    if (m.agir === 'taper') return taper(String(m.texte ?? ''));
+    if (m.agir === 'coller') return collerTexte(String(m.texte ?? ''), !!m.maj);
+    const it = groupesActions().flatMap(g => g.items).find(x => x.id === m.agir);
+    if (it && !it.inactif) { it.agir(); setTimeout(annoncer, 300); }
+  };
+  // Une fenêtre en arrière-plan voit ses minuteries ralenties : la fiche
+  // redemande l'état quand on y revient et à chaque ouverture du menu.
+  if (seul && canal) { setInterval(annoncer, 2000); addEventListener('focus', annoncer); }
+  const demanderEtat = () => { if (!seul && fenetreApart && !fenetreApart.closed) canal?.postMessage({ qui: 1 }); };
+  if (!seul) addEventListener('focus', demanderEtat);
+  // Réglages changés dans l'autre fenêtre : appliqués ici aussi.
+  window.addEventListener('storage', e => {
+    if (!hote.isConnected) return;
+    if (e.key === 'proxlab-ajuster-nette') { nette = e.newValue === '1'; ecran?.qualite(nette); reajuster(); }
+    else if (e.key === 'proxlab-remplir') { remplir = e.newValue === '1'; hote.classList.toggle('remplir', remplir); if (ecran) ecran.remplir = remplir; }
+    else if (e.key === 'proxlab-ajuster') { ajusterTaille = e.newValue === '1'; reajuster(); }
+  });
+  const reprendreIci = () => { try { fenetreApart?.close(); } catch { /* fermée */ } fenetreApart = null; reprise = false; essaisOuverture = 0; essaisAuto = 0; ouvrir(); };
   const apart = () => {
     const w = window.open(`/#ecran/${encodeURIComponent(f.node)}/qemu/${f.vmid}`, `proxlab-ecran-${f.node}-${f.vmid}`, 'popup,width=1280,height=800');
     if (!w) return toast('Le navigateur a bloqué la fenêtre : autorise les fenêtres de ProxLab, puis recommence.', true);
+    fenetreApart = w; distant = null;
+    setTimeout(demanderEtat, 4000);
     fenetre(false);
     const ancien = wsCourant; wsCourant = null;
     try { ancien?.close(); } catch { /* déjà fermé */ }
     ecran = null;
     etat.textContent = 'dans une fenêtre à part';
     hote.replaceChildren(h('p', { class: 'vide' }, 'L\'écran est ouvert dans une fenêtre à part (bouton vert de la fenêtre : plein écran dans son propre bureau). ',
-      h('button', { class: 'btn sm', type: 'button', onclick: () => { try { w.close(); } catch { /* fermée */ } reprise = false; ouvrir(); } }, icone('ecran', 14), 'Reprendre ici')));
+      h('button', { class: 'btn sm', type: 'button', onclick: reprendreIci }, icone('ecran', 14), 'Reprendre ici')));
     // La fenêtre à part fermée : l'écran revient ici de lui-même.
     const guet = setInterval(() => {
       if (!w.closed) return;
@@ -1089,15 +1129,19 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     if (document.fullscreenElement) return pleinEcran();
     return modePlein === 'fenetre' ? fenetre(true) : modePlein === 'apart' ? apart() : pleinEcran();
   };
-  const actions = menuActions(() => {
-    const off = !ecran?.actif;
+  // Les actions de l'écran ; « id » : celles que la fiche fait faire à la
+  // fenêtre à part quand c'est elle qui tient l'écran.
+  function groupesActions() {
+    const vu = ecran?.actif ? { actif: true, l: ecran.toile.width, h: ecran.toile.height, caps: ecran.verrous ? !!ecran.verrous.caps : null }
+      : distantVivant() ? distant : null;
+    const off = !vu?.actif;
     const r = (l, maj = false) => dansVm(() => ecran.raccourci(l, { maj, disposition }));
     return [
       { titre: 'Presse-papiers', items: [
-        { texte: 'Copier', ic: 'copie', touche: `${MOD}C`, inactif: off, agir: dansVm(() => { ecran.armerCopie(); ecran.raccourci('c', { disposition }); }) },
-        { texte: 'Couper', ic: 'ciseaux', touche: `${MOD}X`, inactif: off, agir: dansVm(() => { ecran.armerCopie(); ecran.raccourci('x', { disposition }); }) },
-        { texte: 'Coller', ic: 'presse', touche: `${MOD}V`, inactif: off, agir: () => collerDepuisIci() },
-        { texte: 'Tout sélectionner', ic: 'selection', touche: `${MOD}A`, inactif: off, agir: r('a') },
+        { id: 'copier', texte: 'Copier', ic: 'copie', touche: `${MOD}C`, inactif: off, agir: dansVm(() => { ecran.armerCopie(); ecran.raccourci('c', { disposition }); }) },
+        { id: 'couper', texte: 'Couper', ic: 'ciseaux', touche: `${MOD}X`, inactif: off, agir: dansVm(() => { ecran.armerCopie(); ecran.raccourci('x', { disposition }); }) },
+        { texte: 'Coller', ic: 'presse', touche: `${MOD}V`, inactif: off, agir: () => (distantVivant() ? collerVersApart() : collerDepuisIci()) },
+        { id: 'tout', texte: 'Tout sélectionner', ic: 'selection', touche: `${MOD}A`, inactif: off, agir: r('a') },
         { texte: 'Taper un texte…', ic: 'clavier', agir: () => { montrerPanneau(true); aEnvoyer.focus(); } },
       ] },
       { titre: 'Clavier de la VM', items: [
@@ -1109,21 +1153,21 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
         ...(detection?.raison === 'agent' && !agentPrevuClavier && admin ? [{ texte: 'Activer l\'agent QEMU…', ic: 'clavier', agir: activerAgent }] : []),
       ] },
       { titre: 'Édition', items: [
-        { texte: 'Annuler', ic: 'annuler', touche: `${MOD}Z`, inactif: off, agir: r('z') },
-        { texte: 'Rétablir', ic: 'retablir', touche: `${T_MAJ}Z`, inactif: off, agir: r('z', true) },
+        { id: 'annuler', texte: 'Annuler', ic: 'annuler', touche: `${MOD}Z`, inactif: off, agir: r('z') },
+        { id: 'retablir', texte: 'Rétablir', ic: 'retablir', touche: `${T_MAJ}Z`, inactif: off, agir: r('z', true) },
       ] },
       { titre: 'Touches', items: [
-        { texte: 'Ctrl+Alt+Suppr', inactif: off, agir: dansVm(() => ecran.ctrlAltSuppr()) },
-        { texte: 'Touche Super (Windows)', inactif: off, agir: dansVm(() => ecran.combo('MetaLeft')) },
-        { texte: 'Alt+Tab', inactif: off, agir: dansVm(() => ecran.combo('AltLeft', 'Tab')) },
-        { texte: 'Échap', inactif: off, agir: dansVm(() => ecran.combo('Escape')) },
-        { texte: 'Impr. écran', inactif: off, agir: dansVm(() => ecran.combo('PrintScreen')) },
+        { id: 'cas', texte: 'Ctrl+Alt+Suppr', inactif: off, agir: dansVm(() => ecran.ctrlAltSuppr()) },
+        { id: 'super', texte: 'Touche Super (Windows)', inactif: off, agir: dansVm(() => ecran.combo('MetaLeft')) },
+        { id: 'alttab', texte: 'Alt+Tab', inactif: off, agir: dansVm(() => ecran.combo('AltLeft', 'Tab')) },
+        { id: 'echap', texte: 'Échap', inactif: off, agir: dansVm(() => ecran.combo('Escape')) },
+        { id: 'impr', texte: 'Impr. écran', inactif: off, agir: dansVm(() => ecran.combo('PrintScreen')) },
       ] },
       { items: [
         { texte: panneau.hidden ? 'Afficher le presse-papiers' : 'Masquer le presse-papiers', ic: 'presse', agir: () => montrerPanneau() },
-        ...(seul ? [] : [{ texte: document.fullscreenElement ? 'Quitter le plein écran' : 'Plein écran (écran entier)', ic: 'agrandir', inactif: off, agir: () => { modePlein = 'ecran'; poserLocal('proxlab-plein', 'ecran'); pleinEcran(); } }]),
+        ...(seul ? [] : [{ texte: document.fullscreenElement ? 'Quitter le plein écran' : 'Plein écran (écran entier)', ic: 'agrandir', inactif: off, agir: () => { modePlein = 'ecran'; poserLocal('proxlab-plein', 'ecran'); if (distantVivant()) reprendreIci(); pleinEcran(); } }]),
         ...(seul ? [] : [
-          { texte: 'Plein écran dans la fenêtre', ic: modePlein === 'fenetre' ? 'verifie' : 'agrandir', inactif: off, agir: () => { modePlein = 'fenetre'; poserLocal('proxlab-plein', 'fenetre'); fenetre(true); } },
+          { texte: 'Plein écran dans la fenêtre', ic: modePlein === 'fenetre' ? 'verifie' : 'agrandir', inactif: off, agir: () => { modePlein = 'fenetre'; poserLocal('proxlab-plein', 'fenetre'); if (distantVivant()) reprendreIci(); fenetre(true); } },
           { texte: 'Ouvrir dans une fenêtre à part', ic: modePlein === 'apart' ? 'verifie' : 'lien', agir: () => { modePlein = 'apart'; poserLocal('proxlab-plein', 'apart'); apart(); } },
         ]),
         { texte: 'Écran en continu (reste ouvert en quittant la page)', ic: ecranContinu() ? 'verifie' : null, agir: () => {
@@ -1142,26 +1186,33 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
           if (!/^virtio/.test(genreVga)) return toast(`L'affichage de cette VM (${genreVga}) ne change pas de taille : il faut VirtIO-GPU${admin ? ' (« Passer en VirtIO-GPU… »)' : ' : demande-le à un administrateur'}.`, true);
           toast('La VM prend la taille de la fenêtre, et la suit.'); reajuster();
         } },
-        { texte: 'Réveiller l\'écran', ic: 'ecran', inactif: off, agir: dansVm(() => ecran.reveiller()) },
-        { texte: 'Adapter la VM à cette fenêtre maintenant', inactif: off || !ajusterTaille, agir: () => {
+        { id: 'reveiller', texte: 'Réveiller l\'écran', ic: 'ecran', inactif: off, agir: dansVm(() => ecran.reveiller()) },
+        { id: 'adapter', texte: 'Adapter la VM à sa fenêtre maintenant', inactif: off || !ajusterTaille, agir: () => {
           ecran.ajuster(...cibleTaille().map(v => Math.round(v * densite())));
           toast('La VM prend la taille de la fenêtre. Une console texte Linux peut alors être rognée : « Revenir à … » la rend entière.');
         } },
-        ...(() => { const m = tailleMax(); return m && !off && (m[0] !== ecran?.toile.width || m[1] !== ecran?.toile.height) ? [{ texte: `Revenir à ${m[0]} × ${m[1]} (écran entier)`, agir: () => { ecran.ajuster(m[0], m[1], { libre: true }); toast(`La VM revient à ${m[0]} × ${m[1]}.`); } }] : []; })(),
-        ...(ecran?.verrous ? [{ texte: `Verr. Maj de la VM : ${ecran.verrous.caps ? 'allumé — l’éteindre' : 'éteint — l’allumer'}`, inactif: off, agir: dansVm(() => ecran.basculerCaps()) }] : []),
-        { texte: 'Revenir à 1280 × 800', inactif: off, agir: () => {
+        ...(() => { const m = tailleMax(); return m && !off && (m[0] !== vu.l || m[1] !== vu.h) ? [{ id: 'rmax', texte: `Revenir à ${m[0]} × ${m[1]} (écran entier)`, agir: () => { ecran.ajuster(m[0], m[1], { libre: true }); toast(`La VM revient à ${m[0]} × ${m[1]}.`); } }] : []; })(),
+        ...(typeof vu?.caps === 'boolean' ? [{ id: 'caps', texte: `Verr. Maj de la VM : ${vu.caps ? 'allumé — l’éteindre' : 'éteint — l’allumer'}`, inactif: off, agir: dansVm(() => ecran.basculerCaps()) }] : []),
+        { id: 'r1280', texte: 'Revenir à 1280 × 800', inactif: off, agir: () => {
           ajusterTaille = false; poserLocal('proxlab-ajuster', '0');
           ecran.ajuster(1280, 800, { libre: true });
           toast('La VM revient à 1280 × 800 ; l\'ajustement à la fenêtre est coupé (menu Actions pour le remettre).');
         } },
         { texte: 'Qualité nette (pixels de cet écran)', ic: nette ? 'verifie' : null, inactif: !ajusterTaille, agir: () => {
           nette = !nette; poserLocal('proxlab-ajuster-nette', nette ? '1' : '0');
-          toast(nette ? 'La VM reçoit les pixels réels de cet écran (plus lourd pour elle). Si le texte est trop petit : dans la VM, Paramètres → Écrans → Échelle 200 %.' : 'Un pixel de la VM par point : bien plus léger pour la VM, image adoucie sur un écran dense.');
+          toast(nette ? 'Image sans perte, aux pixels réels de cet écran (plus lourd pour la VM et le réseau). Si le texte est trop petit : dans la VM, Paramètres → Écrans → Échelle 200 %.' : 'Un pixel de la VM par point, image compressée : bien plus léger, un peu adouci sur un écran dense.');
+          ecran?.qualite(nette);
           if (ecran?.etendu) ecran.ajuster(...cibleTaille().map(v => Math.round(v * densite())));
         } },
         ...(admin && !/^virtio/.test(genreVga) && !virtioPrevu ? [{ texte: 'Passer en VirtIO-GPU…', ic: 'ecran', agir: passerVirtio }] : []),
       ] },
     ];
+  }
+  const actions = menuActions(() => {
+    demanderEtat();
+    const groupes = groupesActions();
+    if (!distantVivant()) return groupes;
+    return groupes.map(g => ({ ...g, items: g.items.map(it => (it.id ? { ...it, agir: () => versApart({ agir: it.id }) } : it)) }));
   });
 
   // Taille fixe (affichage sans redimensionnement) : dit en permanence à côté
@@ -1197,7 +1248,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     wsCourant = ws;
     ws.binaryType = 'arraybuffer';
     ecran = new Ecran(hote, ws, {
-      remplir,
+      remplir, nette,
       surEtat: (q, d) => {
         if (q === 'pret') { vivante = true; essaisOuverture = 0; clearTimeout(chien); }
         if (q === 'ajustable') return reajuster();
