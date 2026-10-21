@@ -242,3 +242,7 @@ Taille de la VM : suit la fenêtre dans les deux sens. Les 32 essais restent ver
 ## Suivi du 2026-10-21 (2.18.0)
 
 Keyboard Lock en plein écran entier. Les 32 essais restent verts sans retouche.
+
+## Suivi du 2026-10-21 (2.19.0)
+
+Menu Actions bâti par une seule fonction (`groupesActions`), rejouée telle quelle dans la fenêtre à part : aucune action dupliquée. `combinaison` réutilisée pour ⌘ + touche ; envoi des encodages factorisé (`envoyerEncodages`). Essais : 33 verts, dont un nouveau.
