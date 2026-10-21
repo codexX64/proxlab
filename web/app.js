@@ -889,18 +889,19 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const cibleTaille = () => document.fullscreenElement === hote || hote.classList.contains('fenetre')
     ? [hote.clientWidth, hote.clientHeight]
     : [hote.clientWidth, Math.max(320, Math.min(innerHeight * 0.75, innerHeight - Math.max(0, hote.getBoundingClientRect().top) - 24))];
-  // La VM suit la fenêtre, en plus grand comme en plus petit : déplacée sur un
-  // autre écran ou agrandie, elle garde un pixel par point au lieu d'une image
-  // réduite où tout devient minuscule. Quelques pixels d'écart (barre de menus
-  // du plein écran qui passe) ne valent pas un changement de taille. Une
-  // console texte qui rogne en rapetissant : « Revenir à … (écran entier) ».
+  // La VM grandit avec la fenêtre, sans jamais rapetisser d'elle-même : une
+  // fenêtre plus petite (autre écran, fenêtre réduite) montre la même image,
+  // réduite, au lieu d'agrandir tout ce qu'elle affiche et de rogner ce que
+  // l'invité a posé pour la grande taille. Rapetisser reste un geste : « Adapter
+  // la VM à sa fenêtre maintenant ». Quelques pixels de plus (barre de menus du
+  // plein écran qui passe) ne valent pas un changement de taille.
   const reajuster = () => {
     clearTimeout(minuteurTaille);
     minuteurTaille = setTimeout(() => {
       if (!ajusterTaille || !ecran?.etendu || !hote.isConnected) return;
       const [l, h] = cibleTaille().map(v => Math.round(v * densite()));
-      if (Math.abs(l - ecran.toile.width) < 24 && Math.abs(h - ecran.toile.height) < 24) return;
-      ecran.ajuster(l, h);
+      if (l - ecran.toile.width < 24 && h - ecran.toile.height < 24) return;
+      ecran.ajuster(Math.max(l, ecran.toile.width), Math.max(h, ecran.toile.height));
     }, 500);
   };
   // La plus grande taille vue pour cette VM, ici : celle à laquelle revenir
@@ -1184,7 +1185,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
           ajusterTaille = !ajusterTaille; poserLocal('proxlab-ajuster', ajusterTaille ? '1' : '0'); refusSignale = false; if (tailleVue) peindreEtat();
           if (!ajusterTaille) return toast('La VM garde sa résolution.');
           if (!/^virtio/.test(genreVga)) return toast(`L'affichage de cette VM (${genreVga}) ne change pas de taille : il faut VirtIO-GPU${admin ? ' (« Passer en VirtIO-GPU… »)' : ' : demande-le à un administrateur'}.`, true);
-          toast('La VM prend la taille de la fenêtre, et la suit.'); reajuster();
+          toast('La VM prend la taille de la fenêtre et grandit avec elle ; pour la rapetisser : « Adapter la VM à sa fenêtre maintenant ».'); reajuster();
         } },
         { id: 'reveiller', texte: 'Réveiller l\'écran', ic: 'ecran', inactif: off, agir: dansVm(() => ecran.reveiller()) },
         { id: 'adapter', texte: 'Adapter la VM à sa fenêtre maintenant', inactif: off || !ajusterTaille, agir: () => {
