@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import { lireConfig } from '../socle/src/index.js';
 
-export const VERSION = '2.14.0';
+export const VERSION = '2.15.0';
 
 export function lireConfigProxlab(env = process.env) {
   // SOCLE_CLE_FILE posée dit « la clé vient d'un secret » : un fichier vide ne
