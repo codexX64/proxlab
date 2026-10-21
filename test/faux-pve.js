@@ -369,7 +369,8 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
         res[(y * 8 + x) * 3 + c] = (vraie(x, y, c) - Math.max(0, Math.min(255, g + h - gh))) & 255;
       }
       rects.push(Buffer.concat([entete(16, 0, 8, 8), await base(0, 2, Buffer.alloc(0), res, 2)]));
-      rects.push(Buffer.concat([entete(24, 0, 8, 8), Buffer.from([0x90]), compacte(JPEG_BLEU.length), JPEG_BLEU]));
+      // JPEG seulement si le client a donné une qualité (-32 à -23), comme QEMU.
+      if (e.jpeg) rects.push(Buffer.concat([entete(24, 0, 8, 8), Buffer.from([0x90]), compacte(JPEG_BLEU.length), JPEG_BLEU]));
       rects.push(Buffer.concat([entete(40, 0, 8, 8), Buffer.from([0x80, 12, 34, 56])]));
     }
     const t = Buffer.alloc(4); t.writeUInt16BE(rects.length, 2);
@@ -431,6 +432,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
           if (encs.includes(-258)) { const t = Buffer.alloc(16); t.writeUInt16BE(1, 2); t.writeInt32BE(-258, 12); ws.envoyerBinaire(t); }
           if (encs.includes(-308)) etendu(0, 0);
           e.tight = encs.includes(7);
+          e.jpeg = encs.some(x => x >= -32 && x <= -23);
           if (encs.includes(-261)) { e.voyants = true; e.caps = !!etat.verrMaj?.[vt.cle]; voyants(); }
           if (encs.includes(0xC0A1E5CE | 0)) { e.ext = true; const max = Buffer.alloc(4); max.writeUInt32BE(64 * 1024); couper(ext.CAPS | ext.REQUEST | ext.NOTIFY | ext.PROVIDE | ext.TEXTE, max); }
         }

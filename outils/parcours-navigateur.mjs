@@ -106,6 +106,19 @@ await page.getByText('ouvert · 1024 × 640').waitFor();
 await page.locator('canvas.ecran').click({ position: { x: 40, y: 40 } });
 await page.keyboard.type('ana');
 await controle('ecran');
+// Écran dans une fenêtre à part : le menu Actions de la fiche la pilote.
+const [aPart] = await Promise.all([page.waitForEvent('popup'), (async () => {
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Ouvrir dans une fenêtre à part' }).click();
+})()]);
+await aPart.locator('canvas.ecran').waitFor();
+await page.getByText('dans une fenêtre à part', { exact: true }).waitFor();
+await page.waitForTimeout(2500);
+await page.getByRole('button', { name: 'Actions', exact: true }).click();
+if (await page.getByRole('menuitem', { name: 'Échap' }).isDisabled()) throw new Error('Actions de la fiche grisées avec la fenêtre à part');
+await page.getByRole('menuitem', { name: 'Échap' }).click();
+await aPart.close();
+await page.locator('span.note', { hasText: /^ouvert · / }).first().waitFor();
 // La console d'une VM en marche s'ouvre d'elle-même avec l'onglet.
 await page.getByRole('tab', { name: 'Console' }).click();
 await page.locator('.terminal', { hasText: 'invite-101:~#' }).waitFor();

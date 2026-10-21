@@ -18,7 +18,7 @@ import { Connexion } from '../src/websocket.js';
 import { corpsTicket, urgence } from '../src/alerte.js';
 import { desChiffrer, reponseVnc } from '../src/des.js';
 import { longueurMessageClient, relayerEcran } from '../src/ecran.js';
-import { Inflate } from '../web/ecran.js';
+import { Inflate, encodages } from '../web/ecran.js';
 import { relayer } from '../src/console.js';
 import { dispositionDe, lireSortie, detecterClavier } from '../src/clavier.js';
 
@@ -1090,6 +1090,13 @@ test('écran : flux zlib de Tight décompressé ici, morceau par morceau, comme 
   assert.throws(() => new Inflate().lire(z.subarray(0, z.length - 3), 1000), /tronquées|moins/);
   assert.throws(() => new Inflate().lire(Buffer.from([0x78, 0x9c, 0xff, 0xff]), 10), /./);
   assert.throws(() => new Inflate().lire(Buffer.from([0x12, 0x34, 0]), 1), /en-tête/);
+});
+
+test('écran : qualité JPEG demandée par défaut, image sans perte en « Qualité nette »', () => {
+  const qualites = l => l.filter(x => x >= -32 && x <= -23);
+  assert.deepEqual(qualites(encodages(false)), [-24]);
+  assert.deepEqual(qualites(encodages(true)), []);
+  for (const n of [false, true]) assert.ok(encodages(n).includes(7) && encodages(n).includes(-261) && encodages(n).includes(-308));
 });
 
 test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont rescellés, Proxmox reste joignable', async () => {
