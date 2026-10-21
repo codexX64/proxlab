@@ -909,7 +909,22 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const tailleMax = () => { const [l, h] = String(lireLocal(cleTailleMax, '')).split('x').map(Number); return l > 0 && h > 0 ? [l, h] : null; };
   const noterTaille = (l, h) => { const m = tailleMax(); if (!m || l * h > m[0] * m[1]) poserLocal(cleTailleMax, `${l}x${h}`); };
   new ResizeObserver(reajuster).observe(hote);
-  hote.addEventListener('fullscreenchange', () => { ecran?.repeindre(); reajuster(); });
+  // Plein écran (écran entier) : le clavier entier va à la VM, raccourcis du
+  // système compris (⌘Espace, ⌘Tab, Échap…), là où le navigateur le permet
+  // (Keyboard Lock : Chrome, Edge). Safari ne le permet pas : il garde ces
+  // raccourcis pour macOS, et on le dit une fois.
+  let clavierPris = false;
+  const prendreClavier = async () => {
+    if (document.fullscreenElement === hote) {
+      if (navigator.keyboard?.lock) {
+        try { await navigator.keyboard.lock(); clavierPris = true; toast('Toutes les touches vont à la VM, raccourcis du Mac compris (⌘Espace, ⌘Tab…). Pour sortir du plein écran : garde Échap enfoncée.'); } catch { /* refusé par le navigateur */ }
+      } else if (lireLocal('proxlab-astuce-clavier', '') !== '1') {
+        poserLocal('proxlab-astuce-clavier', '1');
+        toast('Ce navigateur garde ⌘Espace, ⌘Tab et les raccourcis du système pour lui. Avec Chrome ou Edge, en plein écran, toutes les touches vont à la VM.', true);
+      }
+    } else if (clavierPris) { try { navigator.keyboard.unlock(); } catch { /* déjà rendu */ } clavierPris = false; }
+  };
+  hote.addEventListener('fullscreenchange', () => { ecran?.repeindre(); reajuster(); prendreClavier(); });
   // Fenêtre passée d'un écran à un autre de densité différente.
   const suivreDensite = () => matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`).addEventListener('change', () => { reajuster(); suivreDensite(); }, { once: true });
   suivreDensite();
