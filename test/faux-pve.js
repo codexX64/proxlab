@@ -333,12 +333,54 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
     pixels.set([r, g, b, 0], i);
   }
   const ecrans = [];
+  // Tight, comme QEMU : une bande de 16 lignes unie part en remplissage, une
+  // autre en copie compressée dans le flux zlib 0, gardé d'une image à l'autre
+  // et vidé à chaque rectangle. etat.tightEssai ajoute un rectangle de chaque
+  // autre genre (palette 2 et 3 couleurs, gradient, JPEG, remplissage).
+  const JPEG_BLEU = Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgr/2wBDAQICAgICAgUDAwUKBwYHCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgr/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDx+iiiv9VD/Nc//9k=', 'base64');
+  const compacte = n => (n < 128 ? Buffer.from([n]) : n < 16384 ? Buffer.from([0x80 | (n & 0x7f), n >> 7]) : Buffer.from([0x80 | (n & 0x7f), 0x80 | ((n >> 7) & 0x7f), n >> 14]));
+  const vider = (d, buf) => new Promise(ok => { d.write(buf); d.flush(zlib.constants.Z_SYNC_FLUSH, () => { const p = []; let c; while ((c = d.read()) !== null) p.push(c); ok(Buffer.concat(p)); }); });
+  const entete = (x, y, l, h) => { const t = Buffer.alloc(12); t.writeUInt16BE(x, 0); t.writeUInt16BE(y, 2); t.writeUInt16BE(l, 4); t.writeUInt16BE(h, 6); t.writeInt32BE(7, 8); return t; };
+  async function imageTight(e, L, H, source) {
+    const rects = [];
+    const base = async (ctl, filtre, prefixe, donnees, n) => {
+      const tete = Buffer.concat([Buffer.from([ctl | (n << 4) | (filtre === null ? 0 : 0x40)]), filtre === null ? Buffer.alloc(0) : Buffer.from([filtre]), prefixe]);
+      if (donnees.length < 12) return Buffer.concat([tete, donnees]);
+      if (ctl & (1 << n) || !e.flux[n]) e.flux[n] = zlib.createDeflate();
+      const z = await vider(e.flux[n], donnees);
+      return Buffer.concat([tete, compacte(z.length), z]);
+    };
+    e.images = (e.images || 0) + 1;
+    for (let y0 = 0; y0 < H; y0 += 16) {
+      const h = Math.min(16, H - y0), rgb = Buffer.alloc(L * h * 3);
+      for (let y = 0; y < h; y++) for (let x = 0; x < L; x++) { const o = ((y0 + y) * L + x) * 4; rgb.set([source[o], source[o + 1], source[o + 2]], (y * L + x) * 3); }
+      const unie = rgb.every((v, i) => v === rgb[i % 3]);
+      // Une image sur trois remet le flux 0 à zéro, comme QEMU après un changement de niveau.
+      rects.push(Buffer.concat([entete(0, y0, L, h), unie ? Buffer.from([0x80, rgb[0], rgb[1], rgb[2]]) : await base(e.images % 3 === 0 && y0 === 0 ? 1 : 0, null, Buffer.alloc(0), rgb, 0)]));
+    }
+    if (etat.tightEssai) {
+      const vert = [0, 255, 0], rouge = [255, 0, 0];
+      rects.push(Buffer.concat([entete(0, 0, 8, 8), await base(0, 1, Buffer.from([1, ...rouge, ...vert]), Buffer.alloc(8, 0b01010101), 1)]));
+      const idx = Buffer.alloc(64); for (let k = 0; k < 64; k++) idx[k] = (k % 8) % 3;
+      rects.push(Buffer.concat([entete(8, 0, 8, 8), await base(0, 1, Buffer.from([2, 10, 20, 30, 40, 50, 60, 70, 80, 90]), idx, 1)]));
+      const vraie = (x, y, c) => (x * 20 + y * 10 + c * 30) & 255, res = Buffer.alloc(8 * 8 * 3);
+      for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) for (let c = 0; c < 3; c++) {
+        const g = x ? vraie(x - 1, y, c) : 0, h = y ? vraie(x, y - 1, c) : 0, gh = x && y ? vraie(x - 1, y - 1, c) : 0;
+        res[(y * 8 + x) * 3 + c] = (vraie(x, y, c) - Math.max(0, Math.min(255, g + h - gh))) & 255;
+      }
+      rects.push(Buffer.concat([entete(16, 0, 8, 8), await base(0, 2, Buffer.alloc(0), res, 2)]));
+      rects.push(Buffer.concat([entete(24, 0, 8, 8), Buffer.from([0x90]), compacte(JPEG_BLEU.length), JPEG_BLEU]));
+      rects.push(Buffer.concat([entete(40, 0, 8, 8), Buffer.from([0x80, 12, 34, 56])]));
+    }
+    const t = Buffer.alloc(4); t.writeUInt16BE(rects.length, 2);
+    return Buffer.concat([t, ...rects]);
+  }
   function ecranVnc(ws, vt, ticket) {
     // Presse-papiers étendu (comme QEMU avec clipboard=vnc) : capacités, avis,
     // demande, fourniture compressée en zlib ; l'ancien ClientCutText aussi.
     const ext = { CAPS: 1 << 24, REQUEST: 1 << 25, NOTIFY: 1 << 27, PROVIDE: 1 << 28, TEXTE: 1 };
     const couper = (flags, donnees = Buffer.alloc(0)) => { const t = Buffer.alloc(12); t[0] = 3; t.writeInt32BE(-(4 + donnees.length), 4); t.writeUInt32BE(flags >>> 0, 8); ws.envoyerBinaire(Buffer.concat([t, donnees])); };
-    const e = { cible: vt.cle, authentifie: false, messages: [], presse: null, invite: '', ext: false, couper: () => ws.close(),
+    const e = { cible: vt.cle, authentifie: false, messages: [], presse: null, invite: '', ext: false, couper: () => ws.close(), flux: [], octets: 0,
       copierInvite(texte) { e.invite = texte; if (e.ext) couper(ext.NOTIFY | ext.TEXTE); } };
     ecrans.push(e);
     let tampon = Buffer.alloc(0), etape = 'version', defi = crypto.randomBytes(16);
@@ -387,6 +429,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
           // QEMU accuse la touche étendue par un rectangle -258 vide.
           if (encs.includes(-258)) { const t = Buffer.alloc(16); t.writeUInt16BE(1, 2); t.writeInt32BE(-258, 12); ws.envoyerBinaire(t); }
           if (encs.includes(-308)) etendu(0, 0);
+          e.tight = encs.includes(7);
           if (encs.includes(-261)) { e.voyants = true; e.caps = !!etat.verrMaj?.[vt.cle]; voyants(); }
           if (encs.includes(0xC0A1E5CE | 0)) { e.ext = true; const max = Buffer.alloc(4); max.writeUInt32BE(64 * 1024); couper(ext.CAPS | ext.REQUEST | ext.NOTIFY | ext.PROVIDE | ext.TEXTE, max); }
         }
@@ -414,8 +457,12 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
           }
         }
         if (m[0] === 3 && m[1] === 0) {
-          const t = Buffer.alloc(16); t.writeUInt16BE(1, 2); t.writeUInt16BE(L, 8); t.writeUInt16BE(H, 10); t.writeInt32BE(0, 12);
-          ws.envoyerBinaire(Buffer.concat([t, L === EL && H === EH ? pixels : Buffer.alloc(L * H * 4, 90)]));
+          const source = L === EL && H === EH ? pixels : Buffer.alloc(L * H * 4, 90);
+          if (e.tight) imageTight(e, L, H, source).then(b => { e.octets += b.length; ws.envoyerBinaire(b); });
+          else {
+            const t = Buffer.alloc(16); t.writeUInt16BE(1, 2); t.writeUInt16BE(L, 8); t.writeUInt16BE(H, 10); t.writeInt32BE(0, 12);
+            const b = Buffer.concat([t, source]); e.octets += b.length; ws.envoyerBinaire(b);
+          }
         }
       }
     });

@@ -43,9 +43,37 @@ export function keysym(e) {
 export const codeQemu = xt => ((xt >> 8) === 0xe0 && (xt & 0xff) < 0x7f ? (xt & 0xff) | 0x80 : xt);
 
 const PRESSE_EXT = 0xC0A1E5CE | 0;       // pseudo-encodage du presse-papiers étendu
-// CopyRect, Raw, DesktopSize, ExtendedDesktopSize, touche étendue QEMU,
-// voyants du clavier de QEMU (Verr. Maj), presse-papiers
-const ENCODAGES = [1, 0, -223, -308, -258, -261, PRESSE_EXT];
+// Tight d'abord : l'image arrive compressée (zlib, et JPEG pour les zones
+// photographiques), dix à cent fois moins lourde que Raw — c'est ce qui
+// rendait l'écran lent, peint par morceaux. Puis CopyRect, Raw, DesktopSize,
+// ExtendedDesktopSize, touche étendue QEMU, voyants du clavier (Verr. Maj),
+// presse-papiers, qualité JPEG 6 (-32 + 6) et compression 2 (-256 + 2).
+const ENCODAGES = [7, 1, 0, -223, -308, -258, -261, PRESSE_EXT, -26, -254];
+
+// Un flux zlib de Tight : le serveur le garde d'un rectangle à l'autre et le
+// vide à chaque rectangle (Z_SYNC_FLUSH). Décompressé par le navigateur.
+class FluxZlib {
+  constructor() {
+    const d = new DecompressionStream('deflate');
+    this.ecrivain = d.writable.getWriter(); this.lecteur = d.readable.getReader(); this.reste = new Uint8Array(0);
+  }
+  async lire(compresse, n) {
+    this.ecrivain.write(compresse).catch(() => {});
+    const sortie = new Uint8Array(n);
+    let k = 0;
+    while (k < n) {
+      if (!this.reste.length) {
+        const { value, done } = await this.lecteur.read();
+        if (done) throw new Error('flux zlib terminé');
+        this.reste = value;
+      }
+      const t = Math.min(this.reste.length, n - k);
+      sortie.set(this.reste.subarray(0, t), k); k += t; this.reste = this.reste.subarray(t);
+    }
+    return sortie;
+  }
+  fermer() { this.ecrivain.abort().catch(() => {}); this.lecteur.cancel().catch(() => {}); }
+}
 const PP = { TEXTE: 1, CAPS: 1 << 24, REQUEST: 1 << 25, PEEK: 1 << 26, NOTIFY: 1 << 27, PROVIDE: 1 << 28 };
 const PRESSE_MAX = 64 * 1024 - 64;      // ProxLab refuse au-delà de 64 Kio
 export const FRAPPE_MAX = 4000;
@@ -108,7 +136,7 @@ export class Ecran {
     this.actif = false; this.capsPresse = 0; this.aFournir = null; this.dernierPresse = ''; this.copie = null;
     this.mac = estMac(); this.metaSeul = null;
     this.morceaux = []; this.dispo = 0;
-    this.etat = 'init'; this.rects = 0; this.rect = null;
+    this.etat = 'init'; this.rects = 0; this.rect = null; this.flux = [null, null, null, null]; this.occupe = false;
     this.qemu = false; this.enfoncees = new Map(); this.boutons = 0;
     // Taille de l'écran demandée à la VM (ExtendedDesktopSize) : connue quand
     // QEMU l'annonce ; this.ecranId est l'écran qu'il décrit.
@@ -142,8 +170,24 @@ export class Ecran {
     const u = new Uint8Array(donnees);
     if (!u.length) return;
     this.morceaux.push(u); this.dispo += u.length;
-    try { while (this.pas()); } catch (e) { this.surEtat(`erreur : ${e.message}`); this.ws.close(); }
+    this.pomper();
   }
+  // Un pas peut attendre (zlib, JPEG) : les suivants attendent avec lui, l'ordre reste.
+  pomper() {
+    if (this.occupe) return;
+    try {
+      for (;;) {
+        const r = this.pas();
+        if (!r) return;
+        if (typeof r.then === 'function') {
+          this.occupe = true;
+          r.then(() => { this.occupe = false; this.pomper(); }, e => { this.occupe = false; this.echec(e); });
+          return;
+        }
+      }
+    } catch (e) { this.echec(e); }
+  }
+  echec(e) { this.surEtat(`erreur : ${e.message}`); this.ws.close(); }
   // n octets, consommés ; null s'il en manque.
   prendre(n) {
     if (this.dispo < n) return null;
@@ -215,6 +259,10 @@ export class Ecran {
         const s = this.prendre(4); if (!s) return false;
         const v = new DataView(s.buffer);
         if (r.l && r.h) this.ctx.drawImage(this.toile, v.getUint16(0), v.getUint16(2), r.l, r.h, r.x, r.y, r.l, r.h);
+      } else if (r.enc === 7) {
+        const fait = this.tight(r);
+        if (fait === false) return false;
+        if (fait !== true) return fait.then(() => this.finRect());
       } else if (r.enc === -223) this.taille(r.l, r.h);
       else if (r.enc === -308) {
         // x : la raison (0 la VM, 1 notre demande, 2 un autre client) ; y : le
@@ -239,11 +287,86 @@ export class Ecran {
         this.surEtat('verrous', { ...this.verrous });
       }
       else throw new Error(`encodage ${r.enc} non demandé`);
-      this.rect = null;
-      if (--this.rects <= 0) this.finImage();
-      return true;
+      return this.finRect();
     }
     return false;
+  }
+  finRect() { this.rect = null; if (--this.rects <= 0) this.finImage(); return true; }
+
+  // ── Tight ── Un octet de contrôle : ses 4 bits bas remettent à zéro les flux
+  // zlib nommés ; le haut dit le genre — remplissage (8), JPEG (9), ou base
+  // (flux 0 à 3, filtre copie, palette ou gradient). Les octets d'un rectangle
+  // sont tous là avant d'en consommer un seul. Rend true, false (il en manque)
+  // ou une promesse (décompression, décodage JPEG).
+  tight(r) {
+    const vu = n => (this.dispo >= n ? this.regarder(n) : null);
+    let t = vu(1); if (!t) return false;
+    const ctl = t[0], genre = ctl >> 4;
+    const longueur = (b, i) => {           // longueur compacte : 1 à 3 octets
+      if (b.length <= i) return null;
+      let n = b[i] & 0x7f; if (!(b[i] & 0x80)) return [n, 1];
+      if (b.length <= i + 1) return null;
+      n |= (b[i + 1] & 0x7f) << 7; if (!(b[i + 1] & 0x80)) return [n, 2];
+      if (b.length <= i + 2) return null;
+      return [n | (b[i + 2] << 14), 3];
+    };
+    const remettre = () => { for (let i = 0; i < 4; i++) if (ctl & (1 << i)) { this.flux[i]?.fermer(); this.flux[i] = null; } };
+    if (genre === 8) {
+      const b = this.prendre(4); if (!b) return false;
+      remettre();
+      this.ctx.fillStyle = `rgb(${b[1]},${b[2]},${b[3]})`; this.ctx.fillRect(r.x, r.y, r.l, r.h);
+      return true;
+    }
+    if (genre === 9) {
+      t = vu(Math.min(4, this.dispo)); const lg = longueur(t, 1); if (!lg) return false;
+      const total = 1 + lg[1] + lg[0];
+      if (this.dispo < total) return false;
+      const b = this.prendre(total); remettre();
+      return createImageBitmap(new Blob([b.subarray(1 + lg[1])], { type: 'image/jpeg' })).then(img => { this.ctx.drawImage(img, r.x, r.y); img.close?.(); });
+    }
+    if (genre > 9) throw new Error(`Tight : genre ${genre} inconnu`);
+    let i = 1, filtre = 0, couleurs = 0;
+    if (ctl & 0x40) { t = vu(2); if (!t) return false; filtre = t[1]; i = 2; }
+    if (filtre === 1) { t = vu(3); if (!t) return false; couleurs = t[2] + 1; i = 3 + 3 * couleurs; }
+    else if (filtre > 2) throw new Error(`Tight : filtre ${filtre} inconnu`);
+    const brut = filtre === 1 ? (couleurs === 2 ? ((r.l + 7) >> 3) * r.h : r.l * r.h) : r.l * r.h * 3;
+    let total = i + brut, lg = null;
+    if (brut >= 12) {
+      t = vu(Math.min(i + 3, this.dispo)); if (!t || t.length < i + 1) return false;
+      lg = longueur(t, i); if (!lg) return false;
+      total = i + lg[1] + lg[0];
+    }
+    if (this.dispo < total) return false;
+    const b = this.prendre(total); remettre();
+    const palette = filtre === 1 ? b.subarray(3, 3 + 3 * couleurs) : null;
+    const peindre = d => this.peindreTight(r, d, filtre, palette, couleurs);
+    if (!lg) { peindre(b.subarray(i)); return true; }
+    const n = (ctl >> 4) & 3;
+    this.flux[n] ||= new FluxZlib();
+    return this.flux[n].lire(b.subarray(i + lg[1]), brut).then(peindre);
+  }
+  peindreTight(r, d, filtre, palette, couleurs) {
+    if (!r.l || !r.h) return;
+    const img = new ImageData(r.l, r.h), px = img.data;
+    if (filtre === 1) {
+      const ligne = (r.l + 7) >> 3;
+      for (let y = 0; y < r.h; y++) for (let x = 0; x < r.l; x++) {
+        const c = couleurs === 2 ? (d[y * ligne + (x >> 3)] >> (7 - (x & 7))) & 1 : d[y * r.l + x];
+        const o = (y * r.l + x) * 4;
+        px[o] = palette[c * 3]; px[o + 1] = palette[c * 3 + 1]; px[o + 2] = palette[c * 3 + 2]; px[o + 3] = 255;
+      }
+    } else if (filtre === 2) {
+      // Gradient : chaque composante prédite par gauche + haut - haut-gauche.
+      for (let y = 0; y < r.h; y++) for (let x = 0; x < r.l; x++) for (let c = 0; c < 3; c++) {
+        const o = (y * r.l + x) * 4 + c;
+        const g = x ? px[o - 4] : 0, h = y ? px[o - r.l * 4] : 0, gh = x && y ? px[o - r.l * 4 - 4] : 0;
+        px[o] = (Math.max(0, Math.min(255, g + h - gh)) + d[(y * r.l + x) * 3 + c]) & 255;
+        if (c === 2) px[o + 1] = 255;
+      }
+    } else {
+      for (let k = 0, o = 0; k < r.l * r.h * 3; k += 3, o += 4) { px[o] = d[k]; px[o + 1] = d[k + 1]; px[o + 2] = d[k + 2]; px[o + 3] = 255; }
+    }
+    this.ctx.putImageData(img, r.x, r.y);
   }
   finImage() { this.etat = 'message'; this.demander(true); }
   taille(l, h) {
