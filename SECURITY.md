@@ -87,6 +87,8 @@ Suivi du 2026-10-21 (2.14.0) : **écran figé au retour malgré une connexion ou
 
 Suivi du 2026-10-21 (2.15.0) : **écran en continu** (option du navigateur, coupée par défaut, `web/app.js:853`) : en quittant la fiche, la connexion de l'écran reste ouverte et l'écran revient tel quel au retour ; trois VM au plus, la plus ancienne fermée ; l'option coupée, tout est fermé. Chaque connexion garde ses contrôles (session vérifiée chaque minute par le relais, passe à usage unique, journal) : rester ouverte ne contourne rien, une session fermée la ferme. Une reconnexion garde l'image d'avant jusqu'à la première nouvelle : plus d'écran noir. Interface seulement : aucun contrôle ne change de statut. Essais : 32 du service ; parcours du navigateur : page quittée sans fermeture, retour sans nouvelle connexion, reconnexion sans écran noir, option coupée.
 
+Suivi du 2026-10-21 (2.16.0) : **écran noir au retour d'un autre bureau**. Safari peut vider une toile restée cachée ; l'image gardée hors écran est remise d'un coup au retour, sans attendre le réseau (`web/ecran.js:486`). Un changement de taille garde l'image d'avant, mise à l'échelle, jusqu'à la nouvelle ; quelques pixels de plus (barre de menus du plein écran) ne demandent plus de changement de taille. Interface seulement : aucun contrôle ne change de statut. Essais : 32 du service ; parcours du navigateur : toile vidée puis repeinte aussitôt, Proxmox muet.
+
 ## Control status
 | ID | Severity | Status | Evidence | Notes |
 |---|---|---|---|---|

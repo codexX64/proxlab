@@ -230,3 +230,7 @@ Sonde d'image au retour, reprise après la fenêtre à part. Les 32 essais reste
 ## Suivi du 2026-10-21 (2.15.0)
 
 Écrans gardés en continu, reconnexion sans écran noir. Les 32 essais restent verts sans retouche.
+
+## Suivi du 2026-10-21 (2.16.0)
+
+Repeint depuis l'image hors écran, taille sans noir. Les 32 essais restent verts sans retouche.
