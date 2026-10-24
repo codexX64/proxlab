@@ -683,6 +683,12 @@ test('Hub : jeton de service, état et événements en lecture, seulement trois 
   assert.equal(manifeste.version, paquet.version);
   assert.equal(manifeste.config.find(c => c.key === 'IMAGE_TAG').default, paquet.version, 'le Hub installe l\'image de cette version');
   assert.equal((await import('../src/config.js')).VERSION, paquet.version);
+  // Derrière Relay (réseau Docker du Hub), le HTTPS n'est reconnu que si le relais est de confiance.
+  const proxys = manifeste.config.find(c => c.key === 'SOCLE_PROXYS').default;
+  assert.ok(proxys, 'relais de confiance vide : ProxLab se croirait en HTTP derrière Relay');
+  const relais = new net.BlockList();
+  for (const p of proxys.split(',')) { const [a, l] = p.trim().split('/'); relais.addSubnet(a, Number(l)); }
+  assert.ok(relais.check('172.18.0.5') && !relais.check('10.30.10.11'), 'le réseau Docker du Hub, pas le réseau local');
   const e = await hub('GET', '/api/hub/etat');
   assert.equal(e.status, 200);
   assert.equal(e.json.relie, true);
