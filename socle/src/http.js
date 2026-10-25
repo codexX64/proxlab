@@ -182,7 +182,7 @@ const TYPES = {
 
 // Les gammes de SOMA. Une page HTML qui porte data-gamme="__GAMME__" la reçoit
 // rendue côté serveur : aucun éclair d'une gamme à l'autre au chargement.
-export const GAMMES = ['soma', 'console', 'exploitation'];
+export const GAMMES = ['soma', 'console', 'exploitation', 'lavande'];
 
 // Renvoie false si le fichier n'existe pas (l'appelant décide du 404).
 // Fichiers de l'interface sous /v/<version>/ : l'adresse change avec la

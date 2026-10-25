@@ -768,7 +768,8 @@ export function pageSecurite(api, { service, confidentialite = null }) {
       h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Sécurité' }), h('p', { class: 'lede', text: `Connecté en tant que ${c.identifiant} (${c.role}). Chaque changement ici demande une confirmation récente et ferme tes autres sessions.` }))),
       d.modeHttp ? h('div', { class: 'note warn' }, icone('alerte'), h('div', { text: 'Mode HTTP : clés d’accès indisponibles et trafic non chiffré. Sers ce service en HTTPS pour sortir de ce mode.' })) : null,
       !d.modeHttp && d.sansCle ? h('div', { class: 'note' }, icone('cadenas'), h('div', { text: `Ouvert par son adresse : les clés d’accès ne peuvent ni servir ni se créer ici. Ouvre ${service} par son nom en HTTPS pour ${c.cle === 'ailleurs' && !d.cles.length ? 'créer ta clé' : 'les utiliser'}.` })) : null,
-      facteurs, courriel, h('div', { class: 'split' }, sessions, alertes), donnees].filter(Boolean));
+      // L'une sous l'autre : côte à côte, les appareils (souvent une ligne) s'étiraient jusqu'au bas des événements.
+      facteurs, courriel, sessions, alertes, donnees].filter(Boolean));
     if (d.alertes.some(a => !a.vue)) api.post('/api/compte/alertes/vues').catch(() => { /* restent « nouvelles » : rien d'autre à faire */ });
   }
   peindre();
@@ -868,7 +869,8 @@ export function pageComptes(api, { service }) {
     page.replaceChildren(
       h('div', { class: 'headrow' }, h('div', {}, h('h1', { class: 'title', text: 'Comptes' }), h('p', { class: 'lede', text: `Qui accède à ${service}, avec quels facteurs. Un administrateur invite ; chacun pose lui-même son mot de passe et ses facteurs.` })),
         h('div', { class: 'actions' }, h('button', { class: 'btn solid', type: 'button', onclick: () => inviter(api).then(peindre) }, icone('plus'), 'Inviter'))),
-      table, h('div', { class: 'split' }, politique, trace));
+      // L'une sous l'autre : côte à côte, la politique (courte) s'étirait jusqu'au bas du journal.
+      table, politique, trace);
   }
   peindre();
   return page;
