@@ -132,6 +132,10 @@ canvas.ecran:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .menu-ancre[hidden]{display:none}
 .menu-actions{position:fixed;z-index:60;min-width:250px;max-width:calc(100vw - 16px);overflow:auto;overscroll-behavior:contain;padding:6px;background:var(--surface);border:1px solid var(--hair);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.28)}
 .menu-actions[hidden]{display:none}
+/* Un calque fixe se place par rapport à la fenêtre, pas à sa carte : le verre
+   d'une gamme (filtre d'arrière-plan) ferait de la carte son repère, le menu
+   ou l'écran en plein fenêtre coupés par ses bords. Retiré le temps qu'il est ouvert. */
+.card:has(.menu-actions:not([hidden])),.card:has(.ecran-hote.fenetre){backdrop-filter:none;-webkit-backdrop-filter:none}
 .menu-titre{padding:8px 10px 4px;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
 .menu-sep{height:1px;margin:5px 4px;background:var(--hair-soft)}
 .menu-item{display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border:0;border-radius:8px;background:none;color:var(--ink);font:inherit;font-size:13px;text-align:left;cursor:pointer}
