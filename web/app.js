@@ -264,7 +264,7 @@ function contenuVue() {
       fig('Sauvegardes, 24 h', String(sy.sauvegardes.recentes.ok), sy.sauvegardes.recentes.echec ? `/ ${sy.sauvegardes.recentes.ok + sy.sauvegardes.recentes.echec}` : '', sy.sauvegardes.recentes.echec ? `${sy.sauvegardes.recentes.echec} en échec` : 'aucun échec')),
     h('div', { class: 'split' },
       carteReseau(enLigne),
-      h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'État de la grappe' }), h('span', { class: 'note', text: '7 jours' })),
+      h('div', { class: 'card carte-pleine' }, h('header', {}, h('h2', { text: 'État de la grappe' }), h('span', { class: 'note', text: '7 jours' })),
         h('div', { class: 'pad etat-grappe' },
           jauge({ valeur: dispo, centre: `${nf(dispo, 1)} %`, sous: 'sans incident', libelle: 'Heures sans incident sur sept jours', etat: dispo >= 99 ? 'g-ok' : dispo >= 95 ? 'g-degrade' : 'g-incident' }),
           h('div', { class: 'resume' },
@@ -273,7 +273,7 @@ function contenuVue() {
             ligne('Mémoire', `${mem} %`, mem >= 85 ? 'warn' : ''),
             ligne('Nuits en échec', echecs.length ? String(echecs.length) : 'aucune', echecs.length ? 'warn' : ''))))),
     h('div', { class: 'split mt16' }, carteATraiter(sy.actives), carteJournal()),
-    h('div', { class: 'split mt16' }, carteNoeuds(et, sy), h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Invités' }), h('span', { class: 'note', text: `${et.machines.length} au total` })),
+    h('div', { class: 'split mt16' }, carteNoeuds(et, sy), h('div', { class: 'card carte-pleine' }, h('header', {}, h('h2', { text: 'Invités' }), h('span', { class: 'note', text: `${et.machines.length} au total` })),
       h('div', { class: 'pad' }, anneau({
         libelle: 'Répartition des invités', centre: String(invites.length), sous: 'invités',
         parts: [
@@ -284,9 +284,9 @@ function contenuVue() {
         ],
       })))),
     h('div', { class: 'split mt16' },
-      h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Sauvegardes' }), h('span', { class: 'note', text: '28 nuits' })),
+      h('div', { class: 'card carte-pleine' }, h('header', {}, h('h2', { text: 'Sauvegardes' }), h('span', { class: 'note', text: '28 nuits' })),
         h('div', { class: 'pad' }, calendrierSauvegardes(sy.sauvegardes.jours), legendeEtats('Réussies', 'Partielles', 'En échec', 'Aucune'))),
-      h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Disponibilité' }), h('span', { class: 'note', text: '7 jours, heure par heure' })),
+      h('div', { class: 'card carte-pleine' }, h('header', {}, h('h2', { text: 'Disponibilité' }), h('span', { class: 'note', text: '7 jours, heure par heure' })),
         h('div', { class: 'pad' }, calendrierDispo(sy.disponibilite), legendeEtats('Sans incident', 'Dégradé', 'Incident')))),
     h('div', { class: 'card mt16' }, h('header', {}, h('h2', { text: 'Stockage' }), h('span', { class: 'note', text: `${octets(utilise)} sur ${octets(total)}` })),
       h('div', { class: 'pad' }, tuiles({ libelle: 'Occupation des stockages', format: octets, parts: st.map(s => ({ nom: `${s.alias || s.storage}${s.shared ? '' : ' · ' + (noeudAffiche(s.node))}`, valeur: s.disk, detail: `${pct(s.disk, s.maxdisk)} % de ${octets(s.maxdisk)}` })) })))];
@@ -334,7 +334,7 @@ function axeTemps(temps, tf) {
 
 function carteATraiter(actives) {
   const vers = a => (/^(qemu|lxc)\/\d+$/.test(a.target || '') ? () => { const m = E.etat.machines.find(x => cibleDe(x) === a.target); if (m) aller('fiche', [m.node, m.type, String(m.vmid)]); } : null);
-  return h('div', { class: 'card' }, h('header', {}, h('h2', {}, 'À traiter', h('span', { class: 'compte', text: String(actives.length) })), h('button', { class: 'btn sm flat', type: 'button', onclick: () => aller('evenements') }, 'Événements', icone('fleche', 14))),
+  return h('div', { class: 'card carte-pleine' }, h('header', {}, h('h2', {}, 'À traiter', h('span', { class: 'compte', text: String(actives.length) })), h('button', { class: 'btn sm flat', type: 'button', onclick: () => aller('evenements') }, 'Événements', icone('fleche', 14))),
     h('div', { class: 'tw' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', { text: 'Élément' }), h('th', { class: 'cache-m', text: 'Nœud' }), h('th', { text: 'Observation' }), h('th', { class: 'cache-s fin', text: 'Depuis' }))),
       h('tbody', {}, actives.length ? actives.slice(0, 8).map(a => {
         const tr = h('tr', { class: vers(a) ? 'cliquable' : '' },
@@ -344,7 +344,8 @@ function carteATraiter(actives) {
           h('td', { class: 'cache-s fin mono', text: age(a.since) }));
         const f = vers(a); if (f) ouvrable(tr, f);
         return tr;
-      }) : h('tr', {}, h('td', { colspan: 4, class: 'vide', text: 'Rien à traiter.' }))))));
+      }) : h('tr', {}, h('td', { colspan: 4, class: 'vide', text: 'Rien à traiter.' }))))),
+    actives.length && actives.length <= 8 ? h('p', { class: 'vide reste', text: 'Rien d\'autre à traiter.' }) : null);
 }
 
 const journal = h('div', { class: 'journal' });
@@ -352,7 +353,7 @@ function carteJournal() {
   api.get('/api/evenements?limite=6').then(liste => {
     journal.replaceChildren(...(liste.length ? liste.map(ligneEvenement) : [h('p', { class: 'vide', text: 'Rien pour l\'instant.' })]));
   }).catch(() => {});
-  return h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Journal d\'activité' }), h('span', { class: 'note', text: 'en direct' })), journal);
+  return h('div', { class: 'card carte-pleine' }, h('header', {}, h('h2', { text: 'Journal d\'activité' }), h('span', { class: 'note', text: 'en direct' })), journal);
 }
 function ligneEvenement(e, { heure = false } = {}) {
   const ic = e.severity === 'critique' ? 'alerte' : /^backup/.test(e.kind) ? 'archive' : /^snapshot/.test(e.kind) ? 'photo' : /^node|^storage/.test(e.kind) ? 'noeud' : 'vm';
@@ -382,7 +383,7 @@ function carteNoeuds(et, sy) {
       h('div', { class: 'noeud-ratio' }, h('b', { text: hors ? 'hors ligne' : `${nf(n.cpu * 100)} %` }), h('small', { text: hors ? '' : `CPU · RAM ${pct(n.mem, n.maxmem)} %` })));
     return b;
   });
-  return h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Nœuds' }), h('span', { class: 'note', text: 'invités par état' })),
+  return h('div', { class: 'card carte-pleine' }, h('header', {}, h('h2', { text: 'Nœuds' }), h('span', { class: 'note', text: 'invités par état' })),
     h('div', { class: 'pad' }, lignes, legendeEtats('En marche', null, 'En panne', 'Arrêtés')));
 }
 function legendeEtats(ok, degrade, incident, vide = null) {
@@ -561,7 +562,7 @@ function resumeMachine(f, base) {
       fig('Mémoire', marche ? octets(f.mem) : '—', '', `sur ${octets(f.maxmem)}`),
       fig('Disque', octets(f.maxdisk), '', f.disk ? `${octets(f.disk)} occupés` : 'taille allouée'),
       fig('En marche depuis', marche ? duree(f.uptime) : '—', '', marche ? 'sans interruption' : 'arrêtée')),
-    h('div', { class: 'rowline mb12' }, h('h2', { class: 'grow1 fs13', text: 'Relevés' }), choix),
+    h('div', { class: 'rowline mb16' }, h('h2', { class: 'grow1 fs13', text: 'Relevés' }), choix),
     graphes);
 }
 
