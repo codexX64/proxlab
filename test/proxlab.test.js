@@ -711,7 +711,7 @@ test('Hub : jeton de service, état et événements en lecture, seulement trois 
   assert.ok(proxys, 'relais de confiance vide : ProxLab se croirait en HTTP derrière Relay');
   const relais = new net.BlockList();
   for (const p of proxys.split(',')) { const [a, l] = p.trim().split('/'); relais.addSubnet(a, Number(l)); }
-  assert.ok(relais.check('172.18.0.5') && !relais.check('10.30.10.11'), 'le réseau Docker du Hub, pas le réseau local');
+  assert.ok(relais.check('172.18.0.5') && !relais.check('10.0.0.11'), 'le réseau Docker du Hub, pas le réseau local');
   const e = await hub('GET', '/api/hub/etat');
   assert.equal(e.status, 200);
   assert.equal(e.json.relie, true);
