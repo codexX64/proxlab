@@ -1531,17 +1531,34 @@ async function pageReseau() {
       const ordre = i => ({ bridge: 0, OVSBridge: 0, bond: 1, OVSBond: 1, vlan: 2 })[i.type] ?? 3;
       ifaces.sort((a, b) => ordre(a) - ordre(b) || a.iface.localeCompare(b.iface, 'fr', { numeric: true }));
       const marquer = i => sur(async () => { if (await etiqueter({ genre: 'reseau', noeud: n.node, objet: i.iface, actuel: i.alias })) { toast('Étiquette enregistrée.'); peindre(); } });
+      // Les adresses MAC viennent du rapport du nœud, plus lent : la table est
+      // montrée d'abord, chaque case se remplit à l'arrivée.
+      const casesMac = new Map(ifaces.map(i => [i.iface, h('td', { class: 'cache-s mono dim mac', text: '…' })]));
+      const avisMac = h('p', { class: 'hint avis-carte', hidden: true });
+      if (!erreurIf) api.get(`/api/noeuds/${encodeURIComponent(n.node)}/reseau/mac`).then(macs => {
+        for (const [iface, td] of casesMac) {
+          const m = Object.hasOwn(macs, iface) ? macs[iface] : null;
+          td.textContent = m?.mac || '—';
+          if (m?.autresNoms?.length) { td.title = `Aussi nommée ${m.autresNoms.join(', ')}`; td.append(h('small', { text: m.autresNoms.join(', ') })); }
+        }
+      }, e => {
+        for (const td of casesMac.values()) td.textContent = '—';
+        avisMac.textContent = `Adresses MAC illisibles : ${e.message}${/permission|Sys\.Audit/i.test(e.message) ? ' Le jeton de ProxLab doit avoir Sys.Audit sur le nœud (rôle PVEAuditor).' : ''}`;
+        avisMac.hidden = false;
+      });
       return h('div', { class: 'card mb16' },
         h('header', {}, h('span', { class: 'itile' }, icone('noeud', 15)), h('h2', { text: n.alias || n.node }), h('span', { class: 'note', text: `${ifaces.length} interface${ifaces.length > 1 ? 's' : ''}` })),
         erreurIf ? h('p', { class: 'vide', text: erreurIf }) : h('div', { class: 'tw' }, h('table', {},
-          h('thead', {}, h('tr', {}, h('th', { text: 'Interface' }), h('th', { class: 'cache-s', text: 'Relie' }), h('th', { class: 'cache-m', text: 'Adresse' }), h('th', { text: 'État' }), admin ? h('th', { class: 'fin' }) : null)),
+          h('thead', {}, h('tr', {}, h('th', { text: 'Interface' }), h('th', { class: 'cache-s', text: 'Relie' }), h('th', { class: 'cache-m', text: 'Adresse' }), h('th', { class: 'cache-s', text: 'MAC' }), h('th', { text: 'État' }), admin ? h('th', { class: 'fin' }) : null)),
           h('tbody', {}, ifaces.map(i => h('tr', {},
             h('td', { class: 'principal' }, h('div', { class: 'who-cell' }, h('span', { class: 'itile' }, icone(/bridge/i.test(i.type) ? 'reseau' : 'noeud')),
               nomEtiquete(i.iface, i.alias, GENRE_IFACE[i.type] || i.type, i.commentaire && i.commentaire !== i.alias ? `« ${i.commentaire} »` : ''))),
             h('td', { class: 'cache-s mono dim', text: i.ports || '—' }),
             h('td', { class: 'cache-m mono', text: i.cidr || '—' }),
+            casesMac.get(i.iface),
             h('td', {}, h('span', { class: 'tag ' + (i.active ? '' : 'idle') }, h('i', { class: 'd' }), i.active ? 'active' : 'inactive')),
-            admin ? h('td', { class: 'fin' }, boutonEtiquette(i.iface, marquer(i))) : null))))));
+            admin ? h('td', { class: 'fin' }, boutonEtiquette(i.iface, marquer(i))) : null))))),
+        avisMac);
     }));
     const hors = et.noeuds.filter(n => n.status !== 'online').map(n => n.alias || n.node);
     page.replaceChildren(tete, ...cartes, hors.length ? h('p', { class: 'hint', text: `Hors ligne, interfaces illisibles : ${hors.join(', ')}.` }) : '');

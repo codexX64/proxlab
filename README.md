@@ -23,6 +23,10 @@ Projet [CodexX64](https://github.com/CodexX64). Licence AGPL-3.0 ou ultérieure.
   sous renfort récent). Chaque geste est un événement, signé de son auteur.
 - **Nœuds** : ressources, interfaces réseau et shell d'un nœud (administrateur,
   sous renfort, journalisé).
+- **Réseau** : les interfaces de chaque nœud, ce qu'elles relient, leur adresse,
+  leur adresse MAC et leurs autres noms (`enp3s0` derrière `nic0`). L'API réseau
+  de Proxmox ne donne pas les adresses MAC : ProxLab les lit dans le rapport du
+  nœud, au plus une fois toutes les dix minutes, et n'en garde rien d'autre.
 - **Stockage** et **Tâches** : contenu de chaque stockage, tâches de la grappe
   et leur journal ; arrêt d'une tâche (administrateur, sous renfort).
 - **Surveillance** : à chaque passe, l'état est comparé au précédent ; une
@@ -151,7 +155,7 @@ bouton (collage encadré quand le shell le demande).
 
 **Droits à donner dans Proxmox.** Un utilisateur dédié (par exemple
 `proxlab@pve`) et un jeton d'API à séparation de privilèges, avec les rôles
-`PVEAuditor` (lecture) et `PVEVMUser` (alimentation, console) sur `/`, plus
+`PVEAuditor` (lecture, adresses MAC comprises : `Sys.Audit`) et `PVEVMUser` (alimentation, console) sur `/`, plus
 `PVEDatastoreUser` sur les stockages de sauvegarde ; ajouter `PVEVMAdmin` pour
 la migration, la configuration et les instantanés. Le mot de passe de cet
 utilisateur ne sert qu'à la console. Le shell d'un nœud exige `Sys.Console`.

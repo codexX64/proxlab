@@ -63,6 +63,8 @@ function grappeInitiale() {
     taches: historiqueSauvegardes(),
     // Interfaces réseau ajoutées par un essai, en plus de vmbr0 et eno1.
     reseau: { 'pve-a': [], 'pve-b': [] },
+    // Le rapport d'un nœud : texte, ou un statut d'erreur (403 sans Sys.Audit).
+    rapport: { 'pve-a': rapportNoeud(), 'pve-b': 403 },
   };
 }
 
@@ -136,6 +138,10 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
         if (p === '/cluster/nextid') { let n = 100; while (etat.machines.some(m => m.vmid === n)) n++; return repondre(200, String(n)); }
         if (s[0] !== 'nodes' || !etat.noeuds.some(n => n.node === s[1])) return repondre(404, null, 'no such node');
         const node = s[1];
+        if (s[2] === 'report') {
+          const x = etat.rapport[node];
+          return typeof x === 'number' ? repondre(x, null, x === 403 ? 'Permission check failed (/nodes/' + node + ', Sys.Audit)' : 'erreur') : repondre(200, x);
+        }
         if (s[2] === 'network') return repondre(200, [{ iface: 'vmbr0', type: 'bridge', cidr: node === 'pve-a' ? '192.0.2.10/24' : '192.0.2.11/24', gateway: '192.0.2.1', bridge_ports: 'eno1', active: 1 }, { iface: 'eno1', type: 'eth', active: 1 }, ...etat.reseau[node]]);
         if (s[2] === 'rrddata') return repondre(200, rrd(1));
         if (s[2] === 'vzdump' && req.method === 'POST') {
@@ -478,4 +484,32 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
     empreinte: new crypto.X509Certificate(certificats.cert).fingerprint256,
     fermer: () => new Promise(f => { serveur.closeAllConnections?.(); serveur.close(f); }),
   };
+}
+
+// Un rapport de nœud au format de pvereport, adresses MAC de la plage de
+// documentation (RFC 7042). Un leurre suit la section lue : il ne doit pas sortir.
+function rapportNoeud() {
+  return [
+    '==== general system info ====', '', '# hostname', 'pve-a', '',
+    '==== info about network ====', '', '# ip -details -statistics address',
+    '1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000',
+    '    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0',
+    '2: eno1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq master vmbr0 state UP group default qlen 1000',
+    '    link/ether 00:00:5E:00:53:01 brd ff:ff:ff:ff:ff:ff promiscuity 1 allmulti 0 minmtu 68 maxmtu 9216',
+    '    bridge_slave state forwarding priority 32 cost 4',
+    '    altname enp3s0f0',
+    '    RX:  bytes packets errors dropped  missed   mcast', '    123456 789 0 0 0 0',
+    '3: eno2: <BROADCAST,MULTICAST,SLAVE,UP,LOWER_UP> mtu 1500 qdisc mq master bond0 state UP group default qlen 1000',
+    '    link/ether 00:00:5e:00:53:10 brd ff:ff:ff:ff:ff:ff permaddr 00:00:5e:00:53:02 promiscuity 0',
+    '    altname enp3s0f1',
+    '4: vmbr0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000',
+    '    link/ether 00:00:5e:00:53:01 brd ff:ff:ff:ff:ff:ff promiscuity 0',
+    '    inet 192.0.2.10/24 scope global vmbr0',
+    '5: vmbr0.20@vmbr0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000',
+    '    link/ether zz:00:5e:00:53:01 brd ff:ff:ff:ff:ff:ff promiscuity 0',
+    '6: <script>: <BROADCAST> mtu 1500', '    link/ether 00:00:5e:00:53:99 brd ff:ff:ff:ff:ff:ff', '',
+    '# ip -details -4 route show', 'default via 192.0.2.1 dev vmbr0 proto kernel onlink', '',
+    '# cat /etc/network/interfaces',
+    '7: leurre: <BROADCAST,MULTICAST,UP> mtu 1500', '    link/ether 00:00:5e:00:53:66 brd ff:ff:ff:ff:ff:ff', '',
+  ].join('\n');
 }

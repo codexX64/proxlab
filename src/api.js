@@ -18,6 +18,7 @@ import { ErreurProxmox, Proxmox, chemin } from './pve.js';
 import { observer, empreinte, empreinteValide } from './tls.js';
 import { ENTETE } from './alerte.js';
 import { classer } from './reseau.js';
+import { Materiel } from './materiel.js';
 import { Images, ImageRefusee, FICHIER_ISO } from './images.js';
 import { DestinationRefusee, lireUrl } from './sortie.js';
 
@@ -165,6 +166,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
   const { portail, journal, limiteur, comptes } = socle;
   const pve = (fn) => fn().catch(e => versClient(e, log));
   const images = new Images({ proxmox, journal, evenements, log });
+  const materiel = new Materiel({ proxmox, chemin });
   const image = fn => pve(() => fn().catch(versClientImage));
 
   // Le jeton du Hub : vérifié en temps constant, un faux compte comme un échec
@@ -265,6 +267,14 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
       alias: etiquetteDe('reseau', `${n}/${i.iface}`), commentaire: String(i.comments || '').replace(/\s+/g, ' ').trim().slice(0, 200),
     }))
       .sort((a, b) => String(a.iface).localeCompare(String(b.iface)));
+  }, { role: 'lecture' });
+
+  // Adresse MAC et autres noms de chaque interface, lus dans le rapport du nœud
+  // (lent : la page Réseau les demande après avoir montré les interfaces).
+  r.get('/api/noeuds/:noeud/reseau/mac', async ctx => {
+    session(ctx);
+    const n = noeud(ctx.params.noeud);
+    return pve(() => materiel.macs(n));
   }, { role: 'lecture' });
 
   r.get('/api/noeuds/:noeud/rrd', async ctx => {

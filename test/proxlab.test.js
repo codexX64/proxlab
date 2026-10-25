@@ -247,6 +247,29 @@ test('état de la grappe et fiche d\'une machine : champs choisis, rien de sensi
   assert.ok(Array.isArray(t));
 });
 
+test('réseau : adresse MAC de chaque interface, lue dans la seule section `ip address` du rapport, demandée une fois', async () => {
+  const rapports = () => pve.appels.filter(a => /^\/nodes\/[^/]+\/report$/.test(a.chemin)).length;
+  const n0 = rapports();
+  const [a, b] = await Promise.all([lecteur.get('/api/noeuds/pve-a/reseau/mac'), lecteur.get('/api/noeuds/pve-a/reseau/mac')]);
+  assert.equal(a.status, 200);
+  assert.deepEqual(a.json, {
+    eno1: { mac: '00:00:5e:00:53:01', autresNoms: ['enp3s0f0'] },
+    eno2: { mac: '00:00:5e:00:53:02', autresNoms: ['enp3s0f1'] },
+    vmbr0: { mac: '00:00:5e:00:53:01', autresNoms: [] },
+  }, 'adresse d’usine d’une carte d’agrégat, ni bouclage, ni nom hors format, ni adresse malformée, ni leurre hors section');
+  assert.deepEqual(b.json, a.json);
+  assert.equal((await lecteur.get('/api/noeuds/pve-a/reseau/mac')).status, 200);
+  assert.equal(rapports() - n0, 1, 'une seule demande de rapport, même concurrente');
+  assert.ok(!JSON.stringify(a.json).includes('192.0.2'), 'rien d’autre du rapport ne sort');
+  const refus = await lecteur.get('/api/noeuds/pve-b/reseau/mac');
+  assert.equal(refus.status, 502);
+  assert.match(refus.json.erreur || refus.json.message || JSON.stringify(refus.json), /Sys\.Audit/);
+  assert.equal((await lecteur.get('/api/noeuds/pve-b/reseau/mac')).status, 502);
+  assert.equal(rapports() - n0, 2, 'un refus est retenu aussi : Proxmox n’est pas relancé à chaque affichage');
+  assert.equal((await lecteur.get('/api/noeuds/-pve/reseau/mac')).status, 404);
+  assert.equal(rapports() - n0, 2);
+});
+
 test('chemins : un segment hors format n\'atteint jamais Proxmox', async () => {
   const n0 = pve.appels.length;
   for (const p of ['/api/machines/pve-a/qemu/1', '/api/machines/pve-a/qemu/101abc', '/api/machines/pve-a/kvm/101', '/api/machines/..%2F..%2Fnodes/qemu/101',

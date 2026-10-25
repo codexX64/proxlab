@@ -17,7 +17,9 @@ const contexte = await navigateur.newContext({ viewport: { width: 1280, height: 
 const page = await contexte.newPage();
 contexte.setDefaultTimeout(12000);
 const erreurs = [];
-page.on('console', m => { if (m.type() === 'error') erreurs.push(m.text()); });
+// Seul refus attendu : le rapport de pve-b, que la vitrine refuse (Sys.Audit) pour montrer l'avis.
+const ATTENDU = /\/api\/noeuds\/pve-b\/reseau\/mac$/;
+page.on('console', m => { if (m.type() === 'error' && !ATTENDU.test(m.location()?.url || '')) erreurs.push(m.text()); });
 page.on('pageerror', e => erreurs.push(String(e)));
 const cdp = await contexte.newCDPSession(page);
 await cdp.send('WebAuthn.enable');
@@ -130,6 +132,10 @@ await controle('console');
 await rail('Réseau');
 await titre('Réseau');
 await page.locator('.card', { hasText: 'vmbr0' }).first().waitFor();
+// Adresses MAC lues après coup ; un nœud sans Sys.Audit le dit sous sa table.
+await page.locator('td', { hasText: '00:00:5e:00:53:01' }).first().waitFor();
+await page.locator('td', { hasText: 'enp3s0f0' }).waitFor();
+await page.locator('.card .hint', { hasText: /Adresses MAC illisibles.*PVEAuditor/ }).waitFor();
 await controle('reseau');
 
 await rail('Nœuds');

@@ -44,7 +44,7 @@ export class Proxmox {
   }
   oublier() { this.agent?.destroy(); this.agent = null; this.cle = null; this.ticket = null; }
 
-  get(p, q) { return this.appel('GET', p, q); }
+  get(p, q, { delai } = {}) { return this.appel('GET', p, q, { delai }); }
   post(p, q) { return this.appel('POST', p, q); }
   put(p, q) { return this.appel('PUT', p, q); }
   del(p, q) { return this.appel('DELETE', p, q); }
@@ -53,7 +53,7 @@ export class Proxmox {
   // WebSocket qui le présente est ouvert avec le ticket de session.
   postSession(p, q) { return this.appel('POST', p, q, { parTicket: true }); }
 
-  async appel(methode, p, params = {}, { relance = true, parTicket = false } = {}) {
+  async appel(methode, p, params = {}, { relance = true, parTicket = false, delai = this.timeout } = {}) {
     const l = this.liaison();
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null && v !== '') qs.append(k, String(v));
@@ -61,8 +61,8 @@ export class Proxmox {
     const url = '/api2/json' + p + (corps === null && qs.size ? '?' + qs : '');
     const entetes = { Accept: 'application/json', ...(await this.authentification(l, methode, parTicket)) };
     if (corps !== null) Object.assign(entetes, { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(corps) });
-    const r = await brut({ agent: this.agent, hote: l.hote, port: l.port, methode, url, entetes, corps, timeout: this.timeout });
-    if (r.status === 401 && relance && (!l.jeton_id || parTicket)) { this.ticket = null; return this.appel(methode, p, params, { relance: false, parTicket }); }
+    const r = await brut({ agent: this.agent, hote: l.hote, port: l.port, methode, url, entetes, corps, timeout: delai });
+    if (r.status === 401 && relance && (!l.jeton_id || parTicket)) { this.ticket = null; return this.appel(methode, p, params, { relance: false, parTicket, delai }); }
     let json = null;
     try { json = JSON.parse(r.texte); } catch { /* page d'erreur HTML */ }
     if (r.status >= 400) {
