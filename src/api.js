@@ -13,12 +13,14 @@
 // recopié et une confirmation d'identité faite pour elle seule.
 import { detecterClavier, activerConsoleSerie, agentActif } from './clavier.js';
 import crypto from 'node:crypto';
-import { ErreurHttp, Routeur, lireCorps, valider, repondreJson, egal } from '../socle/src/index.js';
+import { ErreurHttp, Routeur, lireCorps, valider, repondreJson, egal, Frappes, FRAPPE_MAX } from '../socle/src/index.js';
 import { ErreurProxmox, Proxmox, chemin } from './pve.js';
 import { observer, empreinte, empreinteValide } from './tls.js';
 import { ENTETE } from './alerte.js';
 import { classer } from './reseau.js';
 import { Materiel } from './materiel.js';
+import { lienVnc } from './frappe.js';
+import { ouvrirVnc } from './ecran.js';
 import { Images, ImageRefusee, FICHIER_ISO } from './images.js';
 import { DestinationRefusee, lireUrl } from './sortie.js';
 
@@ -64,6 +66,7 @@ const S = {
     stockage: { type: 'chaine', requis: true, max: 100, motif: STOCKAGE }, mode: { type: 'chaine', parmi: ['snapshot', 'suspend', 'stop'], defaut: 'snapshot' },
     compression: { type: 'chaine', parmi: ['zstd', 'lzo', 'gzip', '0'], defaut: 'zstd' }, notes: { type: 'chaine', max: 200, defaut: '' },
   },
+  frappe: { texte: { type: 'chaine', requis: true, min: 1, max: FRAPPE_MAX }, disposition: { type: 'chaine', requis: true, parmi: ['fr', 'us'] } },
   console: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, type: { type: 'chaine', requis: true, parmi: ['node', ...TYPES] }, vmid: { type: 'chaine', max: 9, motif: VMID }, mode: { type: 'chaine', parmi: ['texte', 'ecran'] } },
   sonde: { hote: { type: 'chaine', requis: true, max: 253 }, port: { type: 'entier', min: 1, max: 65535, defaut: 8006 } },
   liaison: {
@@ -488,6 +491,46 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
   // pas plus d'une toutes les cinq secondes même relancée, et chacune au journal
   // (une ligne par VM et par minute).
   const clavierConnu = new Map();
+
+  // Frappe d'un texte par ProxLab lui-même (src/frappe.js) : le navigateur peut
+  // partir, la frappe continue. Le droit est celui de l'écran (membre) ; le
+  // texte n'est ni journalisé ni rendu, seulement sa longueur.
+  const frappes = new Frappes({
+    ouvrir: ({ noeud: n, vmid }) => lienVnc(() => ouvrirVnc(proxmox, { noeud: n, vmid })),
+    journal: f => journal.ecrire({ acteur: f.par?.compte || null, action: 'machine.frappe.fin', objet: `qemu/${f.vmid}`, resultat: f.etat === 'échec' ? 'erreur' : 'ok', details: { noeud: f.noeud, etat: f.etat, total: f.total, tapes: f.tapes, sautes: f.sautes } }),
+  });
+  const cleFrappe = m => `${m.noeud}/${m.vmid}`;
+  const frappeDe = ctx => {
+    const m = machine(ctx.params);
+    if (m.type !== 'qemu') throw new ErreurHttp(400, 'La frappe passe par l\'écran d\'une machine virtuelle ; un conteneur a sa console texte.');
+    return m;
+  };
+  r.post('/api/machines/:noeud/:type/:vmid/frappe', async ctx => {
+    session(ctx, { role: 'membre' });
+    const m = frappeDe(ctx);
+    const b = valider(await lireCorps(ctx.req, { limite: 512 * 1024 }), S.frappe);
+    if (!reglages.lire('liaison')?.utilisateur) throw new ErreurHttp(409, 'La frappe passe par l\'écran : elle demande l\'utilisateur et le mot de passe Proxmox dans la liaison (Réglages).');
+    const st = await pve(() => proxmox.get(m.base + '/status/current'));
+    if (st?.status !== 'running') throw new ErreurHttp(409, 'La VM est arrêtée : démarre-la pour taper dedans.');
+    const qui = acteur(ctx);
+    const e = frappes.demarrer(cleFrappe(m), { cible: { noeud: m.noeud, vmid: m.vmid }, texte: b.texte, disposition: b.disposition, mode: 'qemu', par: { compte: qui.acteurCompte, nom: qui.acteur }, contexte: { noeud: m.noeud, vmid: m.vmid } });
+    journal.ecrire({ acteur: qui.acteurCompte, action: 'machine.frappe', objet: m.cible, ip: ctx.ip, details: { noeud: m.noeud, caracteres: e.total, disposition: b.disposition } });
+    return publiqueFrappe(e);
+  }, { role: 'membre' });
+  const publiqueFrappe = e => (e ? { ...e, par: e.par?.nom || '' } : { etat: 'aucune' });
+  r.get('/api/machines/:noeud/:type/:vmid/frappe', async ctx => {
+    session(ctx, { role: 'membre' });
+    const m = frappeDe(ctx);
+    return publiqueFrappe(frappes.etat(cleFrappe(m)));
+  }, { role: 'membre' });
+  r.del('/api/machines/:noeud/:type/:vmid/frappe', async ctx => {
+    session(ctx, { role: 'membre' });
+    const m = frappeDe(ctx);
+    const e = frappes.arreter(cleFrappe(m));
+    if (e?.etat === 'en cours') journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'machine.frappe.arret', objet: m.cible, ip: ctx.ip, details: { noeud: m.noeud, tapes: e.tapes, total: e.total } });
+    return publiqueFrappe(e);
+  }, { role: 'membre' });
+
   r.get('/api/machines/:noeud/:type/:vmid/clavier', async ctx => {
     session(ctx, { role: 'membre' });
     const m = machine(ctx.params);
@@ -1028,6 +1071,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     routeur: r,
     prendrePasse,
     images,
+    frappes,
     async traiter(ctx) {
       const p = ctx.url.pathname;
       if (!p.startsWith('/api/')) return false;

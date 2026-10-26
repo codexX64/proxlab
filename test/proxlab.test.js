@@ -1103,6 +1103,61 @@ test('battement : un écran ou une console immobile garde sa connexion, de bout 
   navC.emit('fermeture');
 });
 
+test('frappe par ProxLab : le texte tapé dans la VM par sa propre connexion VNC, touches de la disposition de la VM, la page peut partir', async () => {
+  const url = '/api/machines/pve-a/qemu/101/frappe';
+  const attendreFin = async (c = membre) => { for (let i = 0; i < 400; i++) { const e = (await c.get(url)).json; if (e.etat !== 'en cours') return e; await new Promise(r => setTimeout(r, 25)); } throw new Error('frappe sans fin'); };
+  const avant = pve.ecrans.length;
+  const texte = 'Aé@ ê\nz';
+  const r = await membre.post(url, { texte, disposition: 'fr' });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.etat, 'en cours');
+  assert.equal(r.json.total, [...texte].length);
+  assert.ok(!JSON.stringify(r.json).includes('ê'), 'l’état ne rend jamais le texte');
+  const fin = await attendreFin();
+  assert.equal(fin.etat, 'terminée', JSON.stringify(fin));
+  assert.equal(fin.tapes, [...texte].length);
+  const e = pve.ecrans.slice(avant).find(x => x.messages.some(m => m[0] === 255));
+  assert.ok(e && e.authentifie && e.cible === 'qemu/101', 'connexion VNC à elle, authentifiée par le ticket de vncproxy');
+  assert.deepEqual(e.messages[0].slice(0, 4), [2, 0, 0, 1], 'touche étendue de QEMU demandée');
+  const touches = e.messages.filter(m => m[0] === 255).map(m => { const b = Buffer.from(m); return `${b.readUInt16BE(2) ? '+' : '-'}${b.readUInt32BE(8).toString(16)}`; });
+  // A = Maj + Q ; é = 2 ; @ = Alt Gr + 0 ; espace ; ê = ^ puis e ; Entrée ; z = W.
+  assert.deepEqual(touches.join(' '), '+2a +10 -10 -2a +3 -3 +b8 +b -b -b8 +39 -39 +1a -1a +12 -12 +1c -1c +11 -11');
+  assert.equal(Buffer.from(e.messages.filter(m => m[0] === 255)[1]).readUInt32BE(4), 'A'.charCodeAt(0), 'keysym en majuscule : QEMU ne bascule pas Verr. Maj');
+  assert.ok(e.ferme, 'la connexion est fermée à la fin');
+  const j = s.db.prepare("SELECT action, details FROM socle_journal WHERE action LIKE 'machine.frappe%'").all();
+  assert.deepEqual(j.map(x => x.action).sort(), ['machine.frappe', 'machine.frappe.fin']);
+  assert.ok(!j.some(x => /@|Aé|ê/.test(String(x.details))), 'jamais le texte au journal');
+  assert.equal(JSON.parse(j.find(x => x.action === 'machine.frappe').details).caracteres, [...texte].length);
+
+  // Une frappe longue : une seule à la fois par VM, arrêtée à la demande.
+  const long = 'abcdefghij'.repeat(300);
+  assert.equal((await membre.post(url, { texte: long, disposition: 'us' })).status, 200);
+  assert.equal((await membre.post(url, { texte: 'x', disposition: 'us' })).status, 409);
+  await new Promise(r => setTimeout(r, 120));
+  const arret = await membre.del(url);
+  assert.equal(arret.status, 200);
+  const coupe = await attendreFin();
+  assert.equal(coupe.etat, 'arrêtée');
+  assert.ok(coupe.tapes > 0 && coupe.tapes < long.length, `${coupe.tapes}`);
+  assert.ok(coupe.msParCaractere < 30, 'texte long : plus vite qu’un texte court');
+  const derniere = pve.ecrans.at(-1).messages.filter(m => m[0] === 255);
+  const enfoncees = new Set();
+  for (const m of derniere) { const b = Buffer.from(m); if (b.readUInt16BE(2)) enfoncees.add(b.readUInt32BE(8)); else enfoncees.delete(b.readUInt32BE(8)); }
+  assert.equal(enfoncees.size, 0, 'rien ne reste enfoncé dans la VM');
+
+  // Droits et refus.
+  assert.equal((await lecteur.post(url, { texte: 'x', disposition: 'fr' })).status, 403);
+  assert.equal((await lecteur.get(url)).status, 403);
+  assert.equal((await membre.post('/api/machines/pve-a/lxc/110/frappe', { texte: 'x', disposition: 'fr' })).status, 400);
+  const vm102 = pve.etat.machines.find(m => m.vmid === 102);
+  vm102.status = 'stopped';
+  try { assert.equal((await membre.post('/api/machines/pve-a/qemu/102/frappe', { texte: 'x', disposition: 'fr' })).status, 409, 'VM arrêtée'); } finally { vm102.status = 'running'; }
+  assert.equal((await membre.post(url, { texte: 'x', disposition: 'de' })).status, 400);
+  assert.equal((await membre.post(url, { texte: '', disposition: 'fr' })).status, 400);
+  assert.equal((await membre.post(url, { texte: 'x'.repeat(100001), disposition: 'fr' })).status, 400);
+  assert.equal((await membre.get('/api/machines/pve-a/qemu/102/frappe')).json.etat, 'aucune');
+});
+
 test('écran : flux zlib de Tight décompressé ici, morceau par morceau, comme le vide QEMU', async () => {
   const vider = (d, buf) => new Promise(ok => { const p = [], prendre = c => p.push(c); d.on('data', prendre); d.write(buf); d.flush(zlib.constants.Z_SYNC_FLUSH, () => setImmediate(() => { d.off('data', prendre); ok(Buffer.concat(p)); })); });
   // Textes répétitifs (renvois loin en arrière, d'un morceau à l'autre), octets

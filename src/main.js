@@ -122,6 +122,7 @@ export async function demarrer(env = process.env, { log = CONSOLE } = {}) {
   const arreter = () => new Promise(r => {
     socle.arreter(); clearInterval(bSurveillance); clearInterval(bPurge); proxmox.oublier();
     for (const ws of ouvertes) { try { ws.close(); } catch { /* fermé */ } }
+    api.frappes.arreterTout();
     serveur.close(() => { db.close(); r(); }); serveur.closeAllConnections?.();
   });
   return { serveur, socle, cfg, db, reglages, evenements, proxmox, surveillance, api, arreter };
