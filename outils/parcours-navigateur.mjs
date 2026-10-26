@@ -108,6 +108,34 @@ await page.getByText('ouvert · 1024 × 640').waitFor();
 await page.locator('canvas.ecran').click({ position: { x: 40, y: 40 } });
 await page.keyboard.type('ana');
 await controle('ecran');
+// Frappe au caractère : clavier QWERTY ici (Playwright), VM en AZERTY. « a »
+// doit partir sur la touche Q de la VM, « Q » sur Maj+A, « 1 » sur Maj+1.
+await page.getByRole('button', { name: 'Actions', exact: true }).click();
+await page.getByRole('menuitem', { name: /^AZERTY/ }).click();
+await page.evaluate(() => {
+  window.__touches = [];
+  const envoyer = WebSocket.prototype.send;
+  WebSocket.prototype.send = function (d) {
+    const b = d instanceof ArrayBuffer ? new Uint8Array(d) : null;
+    if (b && b[0] === 255 && b.length === 12 && b[3] === 1) window.__touches.push(new DataView(d).getUint32(8));
+    return envoyer.call(this, d);
+  };
+});
+await page.locator('canvas.ecran').click({ position: { x: 40, y: 40 } });
+await page.keyboard.type('aQ1');
+const touches = await page.evaluate(() => window.__touches.map(x => x.toString(16)).join(' '));
+if (touches !== '10 2a 1e 2a 2') erreurs.push(`frappe au caractère : ${touches} au lieu de 10 2a 1e 2a 2`);
+// Taper un texte : ProxLab le tape lui-même, la barre de l'écran suit la frappe.
+await page.getByRole('button', { name: 'Actions', exact: true }).click();
+await page.getByRole('menuitem', { name: 'Taper un texte…' }).click();
+await page.locator('textarea.presse-envoi').fill('Bonjour depuis ProxLab, texte collé puis tapé par le serveur. '.repeat(12));
+await page.getByRole('button', { name: 'Taper dans la VM' }).click();
+await page.locator('.frappe-chip', { hasText: /Frappe \d+\/\d+/ }).waitFor();
+await controle('ecran-frappe');
+await page.locator('.frappe-chip').getByRole('button', { name: 'Arrêter' }).click();
+await page.getByText('Frappe arrêtée.').waitFor();
+await page.getByRole('button', { name: 'Actions', exact: true }).click();
+await page.getByRole('menuitem', { name: 'Masquer le presse-papiers' }).click();
 // Écran dans une fenêtre à part : le menu Actions de la fiche la pilote.
 const [aPart] = await Promise.all([page.waitForEvent('popup'), (async () => {
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
