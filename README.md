@@ -86,8 +86,14 @@ protocole ensuite, et seuls les messages d'un client VNC ordinaire (format,
 encodages, demandes d'image, touches, souris, presse-papiers, taille d'écran
 demandée) passent, entiers et bornés. Le navigateur n'envoie ni touche ni souris avant la fin de la
 poignée, et une connexion que Proxmox coupe pendant la poignée est reprise une
-fois. Les touches partent avec leur code physique : la disposition du clavier
-est celle de la machine (AZERTY reste AZERTY). Ctrl+Alt+Suppr et le plein écran
+fois. Le clavier part au caractère : ce qui est tapé ici arrive tel quel dans
+la VM, quelle que soit la disposition de chacun (un Mac en AZERTY, une VM en
+QWERTY) — chaque caractère part sur la touche qui le donne dans la disposition
+de la VM ; les touches sans caractère (flèches, Entrée, fonctions) et les
+raccourcis partent par leur touche, la lettre d'un raccourci sur sa touche
+dans la VM (⌘A ou Ctrl+A sélectionne tout partout). « Touches physiques »
+(menu Actions) envoie au contraire chaque touche telle quelle, la disposition
+de la VM s'appliquant (jeux). Ctrl+Alt+Suppr et le plein écran
 ont leur bouton ; en plein écran, l'image remplit l'écran sans être déformée.
 Deux pleins écrans : celui du navigateur (l'écran entier), ou « dans la
 fenêtre », où l'écran de la VM couvre toute la page — le défaut sur Safari,
@@ -119,10 +125,19 @@ VM a copié, et le panneau « Presse-papiers » montre et envoie le texte à la
 main. Il faut à la VM `clipboard=vnc` sur son affichage (bouton « Brancher le
 presse-papiers », administrateur ; pris en compte au prochain redémarrage ; une
 VM ainsi réglée ne migre plus à chaud) et `spice-vdagent` dans l'invité, qui ne
-relaie rien sous une session GNOME Wayland. ⌘V/Ctrl+V dans l'écran tape par
-défaut le presse-papiers d'ici touche par touche, à la disposition choisie
-(AZERTY ou QWERTY) : ça marche partout, même à l'écran de connexion ; le
-panneau permet de le faire passer plutôt par le presse-papiers de la VM. Le
+relaie rien sous une session GNOME Wayland. ⌘V/Ctrl+V dans l'écran, et
+« Taper dans la VM » du panneau, font taper le texte par ProxLab lui-même :
+il ouvre sa propre connexion à l'écran de la VM (partagée avec celui qui est
+ouvert) et tape chaque caractère sur sa touche dans la disposition de la VM
+(AZERTY ou QWERTY), jusqu'à 100 000 caractères. On peut fermer l'écran ou
+quitter la page : la frappe continue, et la barre de l'écran la montre en
+revenant, avec de quoi l'arrêter. Le rythme suit la longueur : un texte court
+au pas d'une frappe rapide (25 ms par caractère), un long plus vite, jamais
+sous 8 ms (la file du clavier PS/2 de QEMU ne tient que quelques touches) —
+environ 13 s pour 1 000 caractères, 32 s pour 4 000. Ça marche partout, même
+à l'écran de connexion ; le panneau permet de passer plutôt par le
+presse-papiers de la VM. Le texte n'est ni gardé ni journalisé : le journal
+dit qui a fait taper combien de caractères. Le
 texte est pris par le collage du navigateur, sans demande d'autorisation, et
 ⌘+lettre sur Mac devient Ctrl+lettre dans la VM (même touche physique). Le
 bouton « Actions » de l'écran reprend tout cela à la souris : copier, couper,
