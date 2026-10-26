@@ -69,6 +69,8 @@ export function connecter({ hote, port, confiance, fp }, { timeout = 15000 } = {
       rejectUnauthorized: !epingle,
     }, () => {
       s.setTimeout(0);
+      // Petits messages (touches, souris) envoyés sitôt écrits, sans attendre d'en grouper.
+      s.setNoDelay(true);
       if (epingle && empreinte(s.getPeerCertificate(false)) !== empreinte(fp)) {
         s.destroy();
         return reject(Object.assign(new Error('empreinte du certificat de Proxmox différente de celle épinglée'), { code: 'EEMPREINTE' }));
