@@ -16,7 +16,8 @@ Projet [CodexX64](https://github.com/CodexX64). Licence AGPL-3.0 ou ultérieure.
 - **Machines** : machines virtuelles et conteneurs de tous les nœuds, filtrés
   et cherchés ; une fiche par machine avec ses relevés (processeur, mémoire,
   réseau, disque), ses instantanés, ses sauvegardes, sa configuration, l'écran
-  d'une machine virtuelle (clavier et souris) et la console texte.
+  d'une machine virtuelle (clavier et souris), son écran fluide (vidéo encodée
+  par Sunshine dans la VM, décodée par le navigateur) et la console texte.
 - **Gestes** : démarrer, arrêter proprement, redémarrer, suspendre, prendre un
   instantané, lancer une sauvegarde (membre) ; arrêt forcé, réinitialisation,
   migration, configuration, retour à un instantané, suppressions (administrateur,
@@ -159,6 +160,40 @@ onglet et restent ouverts quand on passe de l'un à l'autre ; ils se ferment en
 quittant la fiche. La console d'une VM n'envoie rien à l'ouverture (une ligne
 laissée par une autre session partirait) : un Entrée fait réapparaître
 l'invite de connexion du port série.
+
+**Écran fluide.** Un second écran, pour une VM où tourne
+[Sunshine](https://github.com/LizardByte/Sunshine) : l'écran de la VM est
+encodé en H.264 par sa carte graphique (ou son processeur), ProxLab le reçoit
+comme un client Moonlight et le relaie au navigateur, qui le décode lui-même
+(WebCodecs : Safari 16.4, Chrome, Edge, Firefox récents). 1080p ou 1440p à
+60 images par seconde, sans la lenteur du VNC sur un bureau animé. ProxLab est
+le seul client : rien à installer sur le poste, et le flux passe par la même
+connexion HTTPS que le reste (Hub, relais inverse) ; pas de WebRTC, qui
+annoncerait les adresses des machines.
+Réglage, une fois par VM, par un administrateur sous renfort (onglet « Écran
+fluide ») : l'adresse de Sunshine — réseau interne seulement, plages privées
+et bouclage ; l'agent QEMU en propose les adresses —, puis l'appairage : ProxLab
+tire un PIN, à saisir dans l'interface de Sunshine (`https://localhost:47990`,
+onglet PIN, demande « ProxLab ») ; la preuve de l'appairage GameStream
+(certificats signés, défis chiffrés par le PIN) est vérifiée de part et
+d'autre, puis le certificat de Sunshine est épinglé et revérifié avant chaque
+connexion. Le voir : membre, comme l'écran. Chiffrement : poser
+`lan_encryption_mode = 2` dans la configuration de Sunshine ; la poignée RTSP,
+le contrôle et les entrées sont toujours chiffrés (AES-128-GCM, clé tirée pour
+chaque session), la vidéo aussi dès que Sunshine le propose. Clavier au
+caractère, comme l'écran VNC (même réglage du clavier de la VM) ; souris en
+position absolue ; ⌘V/Ctrl+V tape le presse-papiers par ProxLab (la frappe de
+l'écran) ; Ctrl+Alt+Suppr et image complète dans le menu Actions. Qualité :
+Très haute (1440p, 60 i/s, 40 Mb/s), Haute (1080p, 60 i/s, 20 Mb/s), Équilibrée
+(1080p, 30 i/s) ou Légère (720p, 30 i/s). Les paquets perdus sont retrouvés par
+la parité Reed-Solomon de Sunshine ; une image perdue, ou un navigateur en
+retard, fait demander une image complète plutôt que de montrer un écran
+abîmé. Fermer l'écran laisse le bureau lancé dans Sunshine : la prochaine
+ouverture le reprend. Pas de son ni de copie depuis la VM (Sunshine n'en
+relaie pas). ProxLab joint Sunshine sur TCP 47984, 47989 et 48010 et UDP
+47998 à 48000 : la VM doit lui être joignable sur ces ports, par un réseau
+interne (une seconde carte sur un pont sans sortie, par exemple) ; Sunshine
+lui-même ne parle qu'à ProxLab.
 
 **Console d'une VM.** Elle passe par le port série de la VM : sans `serial0`,
 ProxLab le dit avant d'appeler Proxmox et propose de l'ajouter

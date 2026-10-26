@@ -47,6 +47,15 @@ Secrets de la liaison et des alertes
     jamais de l'API après enregistrement.
   Finalité : lire et piloter la grappe, ouvrir une console, envoyer les alertes.
 
+Écran fluide
+  - par machine virtuelle réglée : l'adresse de son Sunshine et le certificat
+    épinglé à l'appairage ; pour ProxLab, un certificat et sa clé privée,
+    scellée au repos comme les secrets ci-dessus.
+  - les images et les touches ne font que passer : rien n'est enregistré ni
+    journalisé, sinon l'ouverture, la taille, la fin et le nombre d'images
+    d'une session.
+  Finalité : voir et piloter l'écran d'une VM en vidéo.
+
 Sauvegardes
   - l'exploitant peut tirer une copie de la base entière, chiffrée pour une clé
     dont la partie privée ne vit pas sur la machine de ProxLab.
@@ -58,6 +67,10 @@ Sauvegardes
 
   - Proxmox VE reçoit les requêtes de lecture et les gestes demandés, par une
     connexion dont ProxLab vérifie le certificat (autorité ou empreinte épinglée)
+    avant le premier octet.
+  - Le Sunshine d'une machine virtuelle, si l'écran fluide y est réglé, reçoit
+    les touches et la souris de l'écran ouvert, sur le réseau interne
+    seulement, chiffrées par la clé de la session ; son certificat est vérifié
     avant le premier octet.
   - Le récepteur d'alertes, s'il est réglé, reçoit chaque panne sous forme de
     ticket : titre, description, machine et nœud concernés, jamais un secret.
