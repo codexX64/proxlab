@@ -952,12 +952,34 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const poserDispo = (k, { main = false } = {}) => {
     disposition = k; choixDispo.value = k;
     if (main) { poserLocal(cleDispo, k); poserLocal('proxlab-disposition', k); }
+    peindreDispo();
   };
   const detecter = async (relire = false) => {
     try { detection = await api.get(urlClavier + (relire ? '?relire=1' : '')); } catch (e) { detection = { disposition: null, raison: 'erreur', message: e.message }; }
     if (detection.disposition && detection.disposition !== disposition) { poserDispo(detection.disposition); toast(`Clavier de la VM détecté : ${DISPOSITIONS[detection.disposition].nom}.`); }
     else if (relire) toast(detection.disposition ? `Clavier de la VM : ${DISPOSITIONS[detection.disposition].nom} (détecté).` : detection.message || 'Pas de réponse de la VM.', !detection.disposition);
+    else if (!detection.disposition && !dispoSure()) toast(`Clavier de la VM inconnu : ${DISPOSITIONS[disposition].nom} supposé. Une lettre sort mal (q pour a) ? Clique « ${court(disposition)} ? » en haut de l'écran.`, true);
+    peindreDispo();
   };
+  // Le clavier de la VM, dit en permanence en haut de l'écran : un clic passe à
+  // l'autre. Choisi à la main ou détecté, il est sûr ; sinon il est supposé
+  // (langue d'ici) et marqué d'un « ? ».
+  const court = k => DISPOSITIONS[k].nom.split(' ')[0];
+  const dispoSure = () => !!DISPOSITIONS[lireLocal(cleDispo, '')] || detection?.disposition === disposition;
+  const boutonDispo = h('button', { class: 'btn sm dispo-vm', type: 'button', disabled: true, onclick: () => {
+    const ks = Object.keys(DISPOSITIONS), k = ks[(ks.indexOf(disposition) + 1) % ks.length];
+    poserDispo(k, { main: true });
+    ecran?.toile.focus();
+  } });
+  function peindreDispo() {
+    const sure = dispoSure();
+    boutonDispo.replaceChildren(icone('clavier', 14), h('span', { text: frappePhysique ? 'Touches physiques' : `${court(disposition)}${sure ? '' : ' ?'}` }));
+    boutonDispo.classList.toggle('devine', !sure && !frappePhysique);
+    boutonDispo.title = frappePhysique ? 'Chaque touche part telle quelle (menu Actions pour revenir au caractère)'
+      : `Clavier de la VM : ${DISPOSITIONS[disposition].nom}${sure ? (detection?.disposition === disposition ? ', détecté' : ', choisi') : ', supposé'}. Clic : ${DISPOSITIONS[Object.keys(DISPOSITIONS).find(k => k !== disposition)].nom}.`;
+    boutonDispo.setAttribute('aria-label', boutonDispo.title);
+  }
+  peindreDispo();
 
   // Le panneau du presse-papiers.
   const recu = h('pre', { class: 'presse-recu vide-doux', text: 'Rien de copié dans la VM pour l\'instant.' });
@@ -1192,7 +1214,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
           agir: () => { poserDispo(k, { main: true }); toast(`Clavier de la VM : ${d.nom}. Ce que tu tapes et colles arrive tel quel.`); ecran?.toile.focus(); },
         })),
         { texte: 'Touches physiques (sans traduction)', ic: frappePhysique ? 'verifie' : null, agir: () => {
-          frappePhysique = !frappePhysique; poserLocal('proxlab-frappe', frappePhysique ? 'physique' : '');
+          frappePhysique = !frappePhysique; poserLocal('proxlab-frappe', frappePhysique ? 'physique' : ''); peindreDispo();
           toast(frappePhysique ? 'Chaque touche part telle quelle : la disposition de la VM s’applique (jeux, raccourcis).' : 'Ce que tu tapes arrive tel quel dans la VM, quelle que soit la disposition de ton clavier.');
           ecran?.relacher(); ecran?.toile.focus();
         } },
@@ -1270,6 +1292,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     : null;
   const outils = h('div', { class: 'ecran-outils' },
     boutonVirtio,
+    boutonDispo,
     actions.ancre,
     // Dans la fenêtre à part, le plein écran est celui de la fenêtre (bouton vert) :
     // celui du navigateur ferait flouter Safari.
