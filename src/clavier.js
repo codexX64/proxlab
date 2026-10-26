@@ -4,11 +4,14 @@
 //
 // Un seul script, fixe, lu sur l'entrée standard de `sh` : rien de ce que
 // demande le navigateur n'entre dans la commande. Il lit les sources de saisie
-// de la session GNOME ouverte (la disposition réellement utilisée), sinon la
-// disposition du système (localectl), sinon ses fichiers (xorg.conf.d,
-// vconsole.conf, /etc/default/keyboard) quand l'agent n'a pas accès à D-Bus.
+// de la session ouverte (la disposition réellement utilisée : GNOME, puis
+// KDE Plasma, Hyprland, Sway ou Xfce par leur réglage et la session qui
+// tourne), sinon la disposition du système (localectl), sinon ses fichiers
+// (xorg.conf.d, vconsole.conf, /etc/default/keyboard).
 
-export const SCRIPT_CLAVIER = `for d in /run/user/*; do
+export const SCRIPT_CLAVIER = `actif() { command -v pgrep >/dev/null 2>&1 || return 0; pgrep -u "$1" -x "$2" >/dev/null 2>&1; }
+dire() { [ -n "$1" ] || return 0; echo "session $1"; [ -n "$2" ] && echo "variante $2"; exit 0; }
+for d in /run/user/*; do
   [ -S "$d/bus" ] || continue
   u=$(stat -c %U "$d" 2>/dev/null) || continue
   [ "$u" = root ] && continue
@@ -16,6 +19,29 @@ export const SCRIPT_CLAVIER = `for d in /run/user/*; do
     v=$(runuser -u "$u" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=$d/bus" gsettings get org.gnome.desktop.input-sources "$k" 2>/dev/null)
     case "$v" in *xkb*) echo "gnome $v"; exit 0;; esac
   done
+  h=$(getent passwd "$u" | cut -d: -f6)
+  [ -n "$h" ] || continue
+  f="$h/.config/kxkbrc"
+  if grep -qs '^Use=true' "$f" && actif "$u" 'plasmashell|kwin_wayland|kwin_x11'; then
+    i=$(runuser -u "$u" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=$d/bus" gdbus call --session --dest org.kde.keyboard --object-path /Layouts --method org.kde.KeyboardLayouts.getLayout 2>/dev/null | sed -n 's/.*uint32 \\([0-9]\\{1,2\\}\\).*/\\1/p')
+    n=$(( \${i:-0} + 1 ))
+    l=$(sed -n 's/^LayoutList=//p' "$f" | head -n 1)
+    v=$(sed -n 's/^VariantList=//p' "$f" | head -n 1)
+    k=$(echo "$l" | cut -d, -f$n); [ -n "$k" ] || { n=1; k=$(echo "$l" | cut -d, -f1); }
+    dire "$k" "$(echo "$v" | cut -d, -f$n)"
+  fi
+  f="$h/.config/hypr/hyprland.conf"
+  if [ -r "$f" ] && actif "$u" 'Hyprland'; then
+    dire "$(sed -n 's/^[[:space:]]*kb_layout[[:space:]]*=[[:space:]]*\\([A-Za-z0-9_-]*\\).*/\\1/p' "$f" | head -n 1)" "$(sed -n 's/^[[:space:]]*kb_variant[[:space:]]*=[[:space:]]*\\([A-Za-z0-9_-]*\\).*/\\1/p' "$f" | head -n 1)"
+  fi
+  f="$h/.config/sway/config"
+  if [ -r "$f" ] && actif "$u" 'sway'; then
+    dire "$(sed -n 's/.*xkb_layout[[:space:]]\\{1,\\}"\\{0,1\\}\\([A-Za-z0-9_-]*\\).*/\\1/p' "$f" | head -n 1)" "$(sed -n 's/.*xkb_variant[[:space:]]\\{1,\\}"\\{0,1\\}\\([A-Za-z0-9_-]*\\).*/\\1/p' "$f" | head -n 1)"
+  fi
+  f="$h/.config/xfce4/xfconf/xfce-perchannel-xml/keyboard-layout.xml"
+  if grep -qs 'name="XkbDisable" type="bool" value="false"' "$f" && actif "$u" 'xfsettingsd|xfce4-session'; then
+    dire "$(sed -n 's/.*name="XkbLayout"[^>]*value="\\([A-Za-z0-9_-]*\\).*/\\1/p' "$f" | head -n 1)" "$(sed -n 's/.*name="XkbVariant"[^>]*value="\\([A-Za-z0-9_-]*\\).*/\\1/p' "$f" | head -n 1)"
+  fi
 done
 l=$(localectl status 2>/dev/null | sed -n 's/.*X11 Layout: *\\(.*\\)/x11 \\1/p;s/.*X11 Variant: *\\(.*\\)/variante \\1/p;s/.*VC Keymap: *\\(.*\\)/vc \\1/p')
 [ -n "$l" ] && { echo "$l"; exit 0; }
@@ -49,6 +75,11 @@ export function lireSortie(sortie) {
   const t = String(sortie || '');
   const g = /^gnome .*?\('xkb', '([^']{1,64})'\)/m.exec(t);
   if (g) return { brut: g[1], source: 'gnome' };
+  const s = /^session ([^\s,]{1,64})/m.exec(t);
+  if (s) {
+    const v = /^variante ([^\s,]{1,64})/m.exec(t);
+    return { brut: v ? `${s[1]}+${v[1]}` : s[1], source: 'session' };
+  }
   const x = /^x11 ([^\s,]{1,64})/m.exec(t);
   if (x) {
     const v = /^variante ([^\s,]{1,64})/m.exec(t);

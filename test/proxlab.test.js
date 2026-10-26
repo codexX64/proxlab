@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { test, before, after } from 'node:test';
+import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,7 +24,7 @@ import { corpsTicket, urgence } from '../src/alerte.js';
 import { desChiffrer, reponseVnc } from '../src/des.js';
 import { longueurMessageClient, relayerEcran } from '../src/ecran.js';
 import { relayer } from '../src/console.js';
-import { dispositionDe, lireSortie, detecterClavier } from '../src/clavier.js';
+import { dispositionDe, lireSortie, detecterClavier, SCRIPT_CLAVIER } from '../src/clavier.js';
 
 const JETON_HUB = 'jeton-du-hub-pour-les-essais-de-proxlab-0123';
 const INSTALL = 'jeton-installation-proxlab-essai';
@@ -583,7 +584,12 @@ test('clavier de la VM : demandé à l\'agent QEMU par un script fixe, dispositi
   assert.deepEqual(lireSortie("gnome [('xkb', 'us'), ('xkb', 'fr+oss')]\n"), { brut: 'us', source: 'gnome' });
   assert.deepEqual(lireSortie('x11 fr\nvariante oss\nvc fr\n'), { brut: 'fr+oss', source: 'système' });
   assert.deepEqual(lireSortie('vc fr-latin9\n'), { brut: 'fr-latin9', source: 'console' });
-  for (const forme of ['x11 ', 'vc ', "gnome [('xkb', '"]) assert.ok(lireSortie(forme + 'x'.repeat(5000) + "')]\nvariante " + 'y'.repeat(5000)).brut.length <= 129, `sortie ${forme.trim()} bornée`);
+  // KDE, Hyprland, Sway, Xfce : la disposition de la session passe avant celle du système.
+  assert.deepEqual(lireSortie('session fr\nvariante oss\n'), { brut: 'fr+oss', source: 'session' });
+  assert.deepEqual(lireSortie('session us\nx11 fr\n'), { brut: 'us', source: 'session' });
+  assert.equal(dispositionDe(lireSortie('session fr\n').brut), 'fr');
+  assert.equal(spawnSync('sh', ['-n'], { input: SCRIPT_CLAVIER }).status, 0, 'le script lu par l’agent est du sh valide');
+  for (const forme of ['session ', 'x11 ', 'vc ', "gnome [('xkb', '"]) assert.ok(lireSortie(forme + 'x'.repeat(5000) + "')]\nvariante " + 'y'.repeat(5000)).brut.length <= 129, `sortie ${forme.trim()} bornée`);
   const refuse = { get: async () => ({ agent: '1' }), post: async () => { throw new Error('Permission check failed (/vms/101, VM.GuestAgent.Unrestricted)'); } };
   const sansDroit = await detecterClavier(refuse, '/nodes/pve1/qemu/101');
   assert.equal(sansDroit.raison, 'droit');
