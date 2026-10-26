@@ -23,6 +23,8 @@ import { lienVnc } from './frappe.js';
 import { ouvrirVnc } from './ecran.js';
 import { Images, ImageRefusee, FICHIER_ISO } from './images.js';
 import { DestinationRefusee, lireUrl } from './sortie.js';
+import { Fluide } from './fluide.js';
+import { ErreurFlux } from './flux/hote.js';
 
 const NOEUD = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,62}[A-Za-z0-9])?$/;
 const STOCKAGE = /^[A-Za-z][A-Za-z0-9._-]{0,99}$/;
@@ -67,8 +69,9 @@ const S = {
     compression: { type: 'chaine', parmi: ['zstd', 'lzo', 'gzip', '0'], defaut: 'zstd' }, notes: { type: 'chaine', max: 200, defaut: '' },
   },
   frappe: { texte: { type: 'chaine', requis: true, min: 1, max: FRAPPE_MAX }, disposition: { type: 'chaine', requis: true, parmi: ['fr', 'us'] } },
-  console: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, type: { type: 'chaine', requis: true, parmi: ['node', ...TYPES] }, vmid: { type: 'chaine', max: 9, motif: VMID }, mode: { type: 'chaine', parmi: ['texte', 'ecran'] } },
+  console: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, type: { type: 'chaine', requis: true, parmi: ['node', ...TYPES] }, vmid: { type: 'chaine', max: 9, motif: VMID }, mode: { type: 'chaine', parmi: ['texte', 'ecran', 'fluide'] } },
   sonde: { hote: { type: 'chaine', requis: true, max: 253 }, port: { type: 'entier', min: 1, max: 65535, defaut: 8006 } },
+  fluide: { hote: { type: 'chaine', requis: true, max: 253 }, portHttp: { type: 'entier', min: 1, max: 65535, defaut: 47989 }, portHttps: { type: 'entier', min: 1, max: 65535, defaut: 47984 } },
   liaison: {
     hote: { type: 'chaine', requis: true, max: 253 }, port: { type: 'entier', min: 1, max: 65535, defaut: 8006 },
     confiance: { type: 'chaine', requis: true, parmi: ['autorite', 'epingle'] }, fp: { type: 'chaine', max: 120, defaut: '' },
@@ -550,6 +553,59 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     } catch (e) { clavierConnu.delete(m.cible); throw e; }
   }, { role: 'membre', requete: { relire: { type: 'chaine', parmi: ['1'] } } });
 
+  // L'écran fluide (src/fluide.js, src/flux/) : Sunshine dans la VM, ProxLab
+  // client Moonlight. Le voir : membre, comme l'écran. Le configurer et
+  // l'appairer : administrateur sous renfort (c'est une confiance qui s'établit).
+  const fluide = new Fluide({ reglages });
+  const fluideDe = ctx => {
+    const m = machine(ctx.params);
+    if (m.type !== 'qemu') throw new ErreurHttp(400, 'L\'écran fluide est celui d\'une machine virtuelle.');
+    return m;
+  };
+  const versClientFlux = e => {
+    if (!(e instanceof ErreurFlux)) throw e;
+    const statut = { invalide: 400, interdite: 400, 'non-configure': 404, occupe: 409, pin: 409, 'non-appaire': 409, empreinte: 409 }[e.code] || 502;
+    throw new ErreurHttp(statut, `Sunshine : ${e.message}.`);
+  };
+  r.get('/api/machines/:noeud/:type/:vmid/fluide', ctx => {
+    const s = session(ctx, { role: 'membre' });
+    const m = fluideDe(ctx);
+    return fluide.publique(m.vmid, { admin: s.compteLigne.role === 'admin' });
+  }, { role: 'membre' });
+  // Les adresses internes de la VM, lues par son agent : des propositions.
+  r.get('/api/machines/:noeud/:type/:vmid/fluide/adresses', async ctx => {
+    session(ctx, { role: 'admin' });
+    const m = fluideDe(ctx);
+    const config = await pve(() => proxmox.get(m.base + '/config', { current: 1 }));
+    if (!agentActif(config?.agent)) return { adresses: [], raison: 'L\'agent QEMU n\'est pas activé dans cette VM.' };
+    try {
+      const r = await proxmox.get(m.base + '/agent/network-get-interfaces');
+      return { adresses: Fluide.adressesDe(r?.result) };
+    } catch { return { adresses: [], raison: 'L\'agent QEMU ne répond pas dans la VM.' }; }
+  }, { role: 'admin' });
+  r.post('/api/machines/:noeud/:type/:vmid/fluide', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const m = fluideDe(ctx);
+    const b = await corps(ctx, S.fluide);
+    const infos = await fluide.poser(m.vmid, b).catch(versClientFlux);
+    journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'machine.fluide.adresse', objet: m.cible, ip: ctx.ip, details: { noeud: m.noeud, sunshine: infos.version } });
+    return fluide.publique(m.vmid, { admin: true });
+  }, { role: 'admin' });
+  r.post('/api/machines/:noeud/:type/:vmid/fluide/appairage', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const m = fluideDe(ctx);
+    try { fluide.appairer(m.vmid); } catch (e) { versClientFlux(e); }
+    journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'machine.fluide.appairage', objet: m.cible, ip: ctx.ip, details: { noeud: m.noeud } });
+    return fluide.publique(m.vmid, { admin: true });
+  }, { role: 'admin' });
+  r.del('/api/machines/:noeud/:type/:vmid/fluide', ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const m = fluideDe(ctx);
+    fluide.oublier(m.vmid);
+    journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'machine.fluide.oubli', objet: m.cible, ip: ctx.ip, details: { noeud: m.noeud } });
+    return fluide.publique(m.vmid, { admin: true });
+  }, { role: 'admin' });
+
   // La connexion sur le port série dans l'invité (serial-getty), activée par
   // l'agent QEMU avec une commande fixe : la console texte répond ensuite.
   // Administrateur et renfort : c'est une commande lancée dans la VM, en root.
@@ -881,9 +937,14 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     if (b.type === 'node') session(ctx, { role: 'admin', renfort: true });
     else if (!b.vmid) throw new ErreurHttp(400, 'VMID requis.');
     // L'écran (VNC) : celui d'une machine virtuelle ; un conteneur n'a que sa console texte.
-    const mode = b.mode === 'ecran' ? 'ecran' : 'texte';
-    if (mode === 'ecran' && b.type !== 'qemu') throw new ErreurHttp(400, 'L\'écran est celui d\'une machine virtuelle ; un conteneur a sa console texte.');
-    if (!reglages.lire('liaison')?.utilisateur) throw new ErreurHttp(409, 'La console demande l\'utilisateur et le mot de passe Proxmox dans la liaison (Réglages).');
+    const mode = b.mode === 'ecran' || b.mode === 'fluide' ? b.mode : 'texte';
+    if (mode !== 'texte' && b.type !== 'qemu') throw new ErreurHttp(400, 'L\'écran est celui d\'une machine virtuelle ; un conteneur a sa console texte.');
+    if (mode === 'fluide') {
+      // Sunshine est joint directement : ni la liaison ni le port série n'y jouent.
+      const c = fluide.config(b.vmid);
+      if (!c) throw new ErreurHttp(404, 'L\'écran fluide n\'est pas configuré pour cette VM.');
+      if (!c.cert_serveur) throw new ErreurHttp(409, 'Sunshine n\'est pas encore appairé à ProxLab pour cette VM.');
+    } else if (!reglages.lire('liaison')?.utilisateur) throw new ErreurHttp(409, 'La console demande l\'utilisateur et le mot de passe Proxmox dans la liaison (Réglages).');
     // La console texte d'une VM passe par son port série : sans lui, Proxmox
     // ne répond que « unable to find a serial interface ». On le dit avant.
     if (mode === 'texte' && b.type === 'qemu') {
@@ -1072,6 +1133,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     prendrePasse,
     images,
     frappes,
+    fluide,
     async traiter(ctx) {
       const p = ctx.url.pathname;
       if (!p.startsWith('/api/')) return false;

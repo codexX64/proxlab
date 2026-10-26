@@ -1,0 +1,129 @@
+// L'écran fluide de ProxLab : son identité de client Moonlight (un certificat,
+// clé scellée par le coffre du socle) et, par VM, l'adresse de son Sunshine et
+// le certificat épinglé à l'appairage. L'appairage se fait sous renfort : un PIN
+// tiré ici est saisi par l'opérateur dans l'interface de Sunshine.
+import crypto from 'node:crypto';
+import { nouvelleIdentite, empreinteCert } from './flux/certificat.js';
+import { HoteSunshine, ErreurFlux, PORT_HTTP, PORT_HTTPS, adresseInterne, nomHoteValide } from './flux/hote.js';
+
+const APPAIRAGE_MS = 180e3;
+const ECART_SESSIONS_MS = 800;
+const CLE_VM = vmid => `fluide:${vmid}`;
+
+export class Fluide {
+  constructor({ reglages }) {
+    this.reglages = reglages;
+    this.appairages = new Map();          // vmid → { pin, etat, message, debut, fin }
+    this.apps = new Map();                // vmid → identifiant de l'application « Desktop »
+    this.finies = new Map();              // vmid → fin de la dernière session
+  }
+
+  // Sunshine démonte une session en quelques centaines de millisecondes (son,
+  // encodeur) : une réouverture collée à la fin d'une session (changement de
+  // qualité) attend qu'il ait fini, plutôt que de le prendre de vitesse.
+  noterFin(vmid) { this.finies.set(String(vmid), Date.now()); }
+  async patienter(vmid, ecartMs = ECART_SESSIONS_MS) {
+    const reste = (this.finies.get(String(vmid)) || 0) + ecartMs - Date.now();
+    if (reste > 0) await new Promise(r => setTimeout(r, Math.min(reste, ecartMs)));
+  }
+
+  // L'identité de ProxLab, créée au premier usage.
+  identite() {
+    let i = this.reglages.lire('fluide-identite');
+    if (!i?.cert || !i?.cle_scellee) {
+      const n = nouvelleIdentite();
+      i = { cert: n.certPem, cle_scellee: this.reglages.sceller('fluideCle', n.clePem), uniqueId: crypto.randomBytes(8).toString('hex').toUpperCase(), cree: Date.now() };
+      this.reglages.ecrire('fluide-identite', i);
+    }
+    return { certPem: i.cert, clePem: this.reglages.ouvrir('fluideCle', i.cle_scellee), uniqueId: i.uniqueId };
+  }
+
+  config(vmid) { return this.reglages.lire(CLE_VM(vmid)); }
+
+  publique(vmid, { admin = false } = {}) {
+    const c = this.config(vmid), a = this.appairages.get(String(vmid));
+    const appairage = a ? { etat: a.etat, message: a.message || '', ...(admin && a.etat === 'attente' ? { pin: a.pin, expire: a.fin } : {}) } : null;
+    if (!c) return { configure: false, appairage };
+    return {
+      configure: true, appaire: !!c.cert_serveur, hote: admin ? c.hote : undefined,
+      empreinte: admin ? c.empreinte || '' : undefined, nom: c.nom || '', version: c.version || '', appaireLe: c.appaire_le || 0, appairage,
+    };
+  }
+
+  hote(vmid, { certServeur } = {}) {
+    const c = this.config(vmid);
+    if (!c) throw new ErreurFlux('écran fluide non configuré pour cette VM', 'non-configure');
+    return new HoteSunshine({ hote: c.hote, portHttp: c.port_http || PORT_HTTP, portHttps: c.port_https || PORT_HTTPS, identite: this.identite(), certServeur: certServeur === undefined ? c.cert_serveur || null : certServeur });
+  }
+
+  // L'adresse de Sunshine (réseau interne seulement), vérifiée par son serverinfo.
+  async poser(vmid, { hote, portHttp = PORT_HTTP, portHttps = PORT_HTTPS }) {
+    const h = String(hote || '').trim().replace(/^\[|\]$/g, '').toLowerCase();
+    if (!nomHoteValide(h)) throw new ErreurFlux('adresse invalide', 'invalide');
+    const s = new HoteSunshine({ hote: h, portHttp, portHttps, identite: this.identite() });
+    const infos = await s.infos({ chiffre: false });
+    if (!infos.sunshine) throw new ErreurFlux('cet hôte n\'est pas un Sunshine', 'invalide');
+    const avant = this.config(vmid);
+    const meme = avant && avant.hote === h && (avant.port_http || PORT_HTTP) === portHttp && (avant.port_https || PORT_HTTPS) === portHttps;
+    // Une autre adresse : l'ancien appairage ne vaut plus.
+    this.reglages.ecrire(CLE_VM(vmid), {
+      hote: h, port_http: portHttp, port_https: portHttps, nom: infos.nom, version: infos.version,
+      cert_serveur: meme ? avant.cert_serveur || null : null, empreinte: meme ? avant.empreinte || '' : '', appaire_le: meme ? avant.appaire_le || 0 : 0,
+    });
+    this.apps.delete(String(vmid));
+    return infos;
+  }
+
+  oublier(vmid) {
+    this.reglages.ecrire(CLE_VM(vmid), null);
+    this.appairages.delete(String(vmid)); this.apps.delete(String(vmid));
+  }
+
+  // Lance l'appairage : rend le PIN tout de suite ; Sunshine répond quand
+  // l'opérateur l'a saisi dans son interface (ou au bout de trois minutes).
+  appairer(vmid) {
+    const cle = String(vmid);
+    const enCours = this.appairages.get(cle);
+    if (enCours?.etat === 'attente' && Date.now() < enCours.fin) return enCours;
+    const c = this.config(vmid);
+    if (!c) throw new ErreurFlux('écran fluide non configuré pour cette VM', 'non-configure');
+    const pin = String(crypto.randomInt(0, 10000)).padStart(4, '0');
+    const a = { pin, etat: 'attente', message: '', debut: Date.now(), fin: Date.now() + APPAIRAGE_MS };
+    this.appairages.set(cle, a);
+    const hote = this.hote(vmid, { certServeur: null });
+    hote.appairer(pin, { versionServeur: c.version, attentePin: APPAIRAGE_MS }).then(r => {
+      const actuelle = this.config(vmid);
+      if (!actuelle || actuelle.hote !== c.hote) { a.etat = 'echec'; a.message = 'adresse changée pendant l\'appairage'; return; }
+      this.reglages.ecrire(CLE_VM(vmid), { ...actuelle, cert_serveur: r.certServeur, empreinte: r.empreinte, appaire_le: Date.now() });
+      a.etat = 'reussi'; a.pin = '';
+      this.apps.delete(cle);
+    }, e => { a.etat = 'echec'; a.message = String(e?.message || e).slice(0, 200); a.pin = ''; });
+    return a;
+  }
+
+  // L'application à lancer : le bureau (« Desktop »), sinon la première.
+  async appId(vmid, hote) {
+    const cle = String(vmid);
+    if (this.apps.has(cle)) return this.apps.get(cle);
+    const apps = await hote.applications();
+    if (!apps.length) throw new ErreurFlux('Sunshine ne propose aucune application', 'refus');
+    const id = (apps.find(a => /^desktop$|^bureau$/i.test(a.titre)) || apps[0]).id;
+    this.apps.set(cle, id);
+    return id;
+  }
+
+  // Les adresses internes de la VM, lues par son agent QEMU (propositions).
+  static adressesDe(interfaces) {
+    const sortie = [];
+    for (const i of Array.isArray(interfaces) ? interfaces : []) {
+      if (!i || /^lo$/.test(i.name)) continue;
+      for (const a of Array.isArray(i['ip-addresses']) ? i['ip-addresses'] : []) {
+        const ip = String(a?.['ip-address'] || '');
+        if (a?.['ip-address-type'] === 'ipv4' && adresseInterne(ip) && !ip.startsWith('127.')) sortie.push({ interface: String(i.name).slice(0, 32), adresse: ip });
+      }
+    }
+    return sortie.slice(0, 16);
+  }
+}
+
+export { empreinteCert };

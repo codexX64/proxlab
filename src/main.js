@@ -12,6 +12,7 @@ import { creerApi } from './api.js';
 import { verifierUpgrade, accepter, refuser } from './websocket.js';
 import { ouvrirTermproxy, relayer } from './console.js';
 import { ouvrirVnc, relayerEcran } from './ecran.js';
+import { relayerFlux } from './flux/relais.js';
 import {
   Debit, ErreurHttp, demarrerSocle, entetesSecurite, envelopper, nonceCsp, politiqueContenu,
   repondreErreur, repondreJson, servirFichier, cheminVersionne, origineDe, adresseClient,
@@ -85,6 +86,7 @@ export async function demarrer(env = process.env, { log = CONSOLE } = {}) {
   // (tirée par POST /api/console, où le rôle et le renfort ont été vérifiés)
   // AVANT la mise à niveau.
   const ouvertes = new Set();
+  const fluides = new Map();
   serveur.on('upgrade', (req, socket) => {
     try {
       const url = new URL(req.url, 'http://proxlab');
@@ -106,7 +108,23 @@ export async function demarrer(env = process.env, { log = CONSOLE } = {}) {
       const sessionId = ctx.session.id, jeton = ctx.jeton;
       socle.journal.ecrire({ acteur: ctx.session.compte, action: 'console.ouverte', objet: cible.type === 'node' ? `node/${cible.noeud}` : `${cible.type}/${cible.vmid}`, ip: ctx.ip, details: { noeud: cible.noeud, mode: cible.mode } });
       const suivi = { vivante: () => socle.comptes.session(jeton)?.id === sessionId, surFin: () => ouvertes.delete(ws) };
-      if (cible.mode === 'ecran') relayerEcran(ws, () => ouvrirVnc(proxmox, cible), suivi);
+      if (cible.mode === 'fluide') {
+        // Une session fluide par VM : une nouvelle ouverture reprend la main.
+        fluides.get(cible.vmid)?.finir('écran fluide ouvert ailleurs');
+        const relais = relayerFlux(ws, {
+          ouvrirHote: async () => { await api.fluide.patienter(cible.vmid); return api.fluide.hote(cible.vmid); },
+          appId: hote => api.fluide.appId(cible.vmid, hote),
+          vivante: suivi.vivante,
+          journal: pret => socle.journal.ecrire({ acteur: ctx.session.compte, action: 'machine.fluide.session', objet: `qemu/${cible.vmid}`, ip: ctx.ip, details: { noeud: cible.noeud, largeur: pret.largeur, hauteur: pret.hauteur, ips: pret.ips, codec: pret.codec, chiffre: pret.chiffre } }),
+          surFin: (stats, raison) => {
+            if (fluides.get(cible.vmid) === relais) fluides.delete(cible.vmid);
+            api.fluide.noterFin(cible.vmid);
+            suivi.surFin();
+            if (stats) socle.journal.ecrire({ acteur: ctx.session.compte, action: 'machine.fluide.fin', objet: `qemu/${cible.vmid}`, details: { images: stats.images, perdues: stats.perdues, recuperes: stats.recuperes, raison: raison ? String(raison).slice(0, 120) : 'fermé par le navigateur' } });
+          },
+        });
+        fluides.set(cible.vmid, relais);
+      } else if (cible.mode === 'ecran') relayerEcran(ws, () => ouvrirVnc(proxmox, cible), suivi);
       else relayer(ws, () => ouvrirTermproxy(proxmox, cible), suivi);
     } catch { try { socket.destroy(); } catch { /* déjà fermé */ } }
   });

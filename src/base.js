@@ -33,7 +33,7 @@ export function ouvrirBase(dossier) {
 }
 
 // Usages du coffre : chacun sa sous-clé ; l'AAD lie un secret à son réglage.
-const SCEAUX = { jeton: ['pve-jeton', 'liaison'], motDePasse: ['pve-motdepasse', 'liaison'], cle: ['alerte-cle', 'alertes'], secret: ['alerte-secret', 'alertes'] };
+const SCEAUX = { jeton: ['pve-jeton', 'liaison'], motDePasse: ['pve-motdepasse', 'liaison'], cle: ['alerte-cle', 'alertes'], secret: ['alerte-secret', 'alertes'], fluideCle: ['fluide-cle', 'fluide-identite'] };
 const NIVEAUX = ['info', 'avertissement', 'critique'];
 const MAX_EVENEMENTS = 20000;
 
@@ -85,7 +85,7 @@ export class Reglages {
       if (!scelle) return scelle;
       const [usage, aad] = SCEAUX[quoi];
       try { this.coffre.ouvre(usage, scelle, aad); return scelle; } catch { /* scellé sous une autre clé */ }
-      if (!avant) throw new Error('Un secret de ProxLab (liaison Proxmox ou alertes) est illisible sous SOCLE_CLE : repose la clé remplacée dans SOCLE_CLE_ANCIENNE le temps d\'un démarrage.');
+      if (!avant) throw new Error('Un secret de ProxLab (liaison Proxmox, alertes ou écran fluide) est illisible sous SOCLE_CLE : repose la clé remplacée dans SOCLE_CLE_ANCIENNE le temps d\'un démarrage.');
       try { const clair = avant.ouvre(usage, scelle, aad); bilan.rescelles++; return this.coffre.scelle(usage, clair, aad); } catch { bilan.retires++; return null; }
     };
     transaction(this.db, () => {
@@ -93,6 +93,13 @@ export class Reglages {
       if (l) this.ecrire('liaison', { ...l, jeton_scelle: reprendre('jeton', l.jeton_scelle), mdp_scelle: reprendre('motDePasse', l.mdp_scelle) });
       const a = this.lire('alertes');
       if (a) this.ecrire('alertes', { ...a, cle_scellee: reprendre('cle', a.cle_scellee), secret_scelle: reprendre('secret', a.secret_scelle) });
+      // L'identité de l'écran fluide : illisible, elle est retirée et les VM
+      // sont à réappairer (un certificat neuf naît au prochain usage).
+      const f = this.lire('fluide-identite');
+      if (f) {
+        const cle = reprendre('fluideCle', f.cle_scellee);
+        this.ecrire('fluide-identite', cle ? { ...f, cle_scellee: cle } : null);
+      }
     });
     return bilan;
   }
