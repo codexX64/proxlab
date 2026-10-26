@@ -125,6 +125,18 @@ await page.locator('canvas.ecran').click({ position: { x: 40, y: 40 } });
 await page.keyboard.type('aQ1');
 const touches = await page.evaluate(() => window.__touches.map(x => x.toString(16)).join(' '));
 if (touches !== '10 2a 1e 2a 2') erreurs.push(`frappe au caractère : ${touches} au lieu de 10 2a 1e 2a 2`);
+// Le clavier de la VM, dit en haut de l'écran : un clic passe à l'autre, et « a » suit.
+const dispoVm = page.locator('button.dispo-vm');
+if ((await dispoVm.innerText()).trim() !== 'AZERTY') erreurs.push(`clavier de la VM affiché : « ${(await dispoVm.innerText()).trim()} » au lieu de « AZERTY »`);
+await dispoVm.click();
+await page.locator('button.dispo-vm', { hasText: /^QWERTY$/ }).waitFor();
+await page.evaluate(() => { window.__touches = []; });
+await page.locator('canvas.ecran').click({ position: { x: 40, y: 40 } });
+await page.keyboard.type('a');
+const enQwerty = await page.evaluate(() => window.__touches.map(x => x.toString(16)).join(' '));
+if (enQwerty !== '1e') erreurs.push(`« a » vers une VM QWERTY : ${enQwerty} au lieu de 1e`);
+await dispoVm.click();
+await page.locator('button.dispo-vm', { hasText: /^AZERTY$/ }).waitFor();
 // Taper un texte : ProxLab le tape lui-même, la barre de l'écran suit la frappe.
 await page.getByRole('button', { name: 'Actions', exact: true }).click();
 await page.getByRole('menuitem', { name: 'Taper un texte…' }).click();
