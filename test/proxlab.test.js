@@ -1192,6 +1192,218 @@ test('écran : qualité JPEG demandée par défaut, image sans perte en « Quali
   for (const n of [false, true]) assert.ok(encodages(n).includes(7) && encodages(n).includes(-261) && encodages(n).includes(-308));
 });
 
+// --- Écran fluide (Sunshine dans la VM, ProxLab client Moonlight) ---
+
+test('écran fluide, briques : certificat, Reed-Solomon de nanors, RTSP et contrôle chiffrés, entrées bornées, adresses internes', async () => {
+  const { nouvelleIdentite, signatureDe } = await import('../src/flux/certificat.js');
+  const { encoder, decoder } = await import('../src/flux/rs.js');
+  const { sceller, desceller, analyserUrl } = await import('../src/flux/rtsp.js');
+  const { scellerControle, ouvrirControle } = await import('../src/flux/controle.js');
+  const { lireEntree, lireDebut } = await import('../src/flux/relais.js');
+  const { HoteSunshine, adresseInterne } = await import('../src/flux/hote.js');
+  const { Fluide } = await import('../src/fluide.js');
+  // Un certificat autosigné que Node relit et vérifie ; sa signature fait 256 octets.
+  const id = nouvelleIdentite();
+  const x = new crypto.X509Certificate(id.certPem);
+  assert.ok(x.verify(x.publicKey));
+  assert.equal(signatureDe(id.certPem).length, 256);
+  // Parité identique à celle de nanors (vecteur tiré de sa bibliothèque), données retrouvées.
+  const ref = Buffer.from('466431296486ed9cd71fc207254820a2c4a85aeb0b2041494f8bf1f8cd30f113ee3a2cfe8a88d3d89bccec689af825ac', 'hex');
+  const morceaux = Array.from({ length: 6 }, (_, i) => new Uint8Array(ref.subarray(i * 8, i * 8 + 8)));
+  assert.deepEqual(encoder(morceaux.slice(0, 4), 2, 8).map(b => Buffer.from(b).toString('hex')), [morceaux[4], morceaux[5]].map(b => Buffer.from(b).toString('hex')));
+  const pertes = [morceaux[0], null, morceaux[2], null, morceaux[4], morceaux[5]];
+  assert.ok(decoder(pertes, 4, 2, 8));
+  assert.deepEqual(Buffer.from(pertes[1]), Buffer.from(morceaux[1]));
+  assert.equal(decoder([null, null, null, morceaux[3], morceaux[4], morceaux[5]], 4, 2, 8), false, 'trois pertes, deux paritités : impossible');
+  // RTSP : scellé côté client (« CR »), refusé s'il est altéré ou présenté comme venant de l'hôte.
+  const cle = crypto.randomBytes(16);
+  const sc = sceller('OPTIONS rtsp://x RTSP/1.0\r\n\r\n', cle, 1);
+  assert.throws(() => desceller(sc, cle), /falsifiée/, 'un message du client ne passe pas pour une réponse de l\'hôte');
+  const iv = Buffer.alloc(12); iv.writeUInt32LE(7, 0); iv[10] = 0x48; iv[11] = 0x52;
+  const c = crypto.createCipheriv('aes-128-gcm', cle, iv), clair = Buffer.from('RTSP/1.0 200 OK\r\n\r\n');
+  const ch = Buffer.concat([c.update(clair), c.final()]);
+  const h = Buffer.alloc(24); h.writeUInt32BE((0x80000000 | clair.length) >>> 0, 0); h.writeUInt32BE(7, 4); c.getAuthTag().copy(h, 8);
+  assert.match(desceller(Buffer.concat([h, ch]), cle), /^RTSP\/1\.0 200/);
+  const altere = Buffer.concat([h, ch]); altere[30] ^= 1;
+  assert.throws(() => desceller(altere, cle), /falsifiée/);
+  assert.throws(() => desceller(Buffer.concat([Buffer.from('RTSP/1.0 200 OK\r\n'), Buffer.alloc(20)]), cle), /non chiffrée/);
+  assert.deepEqual(analyserUrl('rtspenc://[fd00::5]:48010'), { chiffre: true, hote: 'fd00::5', port: 48010, url: 'rtspenc://[fd00::5]:48010' });
+  // Contrôle : le message du client (« CC ») ne s'ouvre pas comme un message de l'hôte (« HC »).
+  assert.equal(ouvrirControle(scellerControle(0x0206, Buffer.from([1, 2, 3]), cle, 0), cle), null);
+  // Entrées : formats exacts, bornes, rien d'autre.
+  const taille = { largeur: 1920, hauteur: 1080 };
+  const t = lireEntree(Buffer.from([0x10, 1, 0x41, 0, 0]), taille).clavier;
+  assert.equal(t.toString('hex'), '0000000a03000000004100000000', 'touche A enfoncée, en paquet GameStream');
+  assert.equal(lireEntree(Buffer.from([0x10, 1, 0xff, 0, 0]), taille), null, 'code de touche hors plage');
+  assert.equal(lireEntree(Buffer.from([0x10, 2, 0x41, 0, 0]), taille), null);
+  assert.equal(lireEntree(Buffer.from([0x11, 0x07, 0x80, 0, 1]), taille), null, 'position hors de l\'image');
+  assert.equal(lireEntree(Buffer.from([0x11, 0, 10, 0, 20]), taille).souris.toString('hex'), '0000000e05000000000a00140000077f0437');
+  assert.equal(lireEntree(Buffer.from([0x12, 1, 6]), taille), null, 'bouton inconnu');
+  assert.equal(lireEntree(Buffer.from([0x13, 0x7f, 0xff, 0, 0]), taille).souris.length, 1, 'molette bornée');
+  assert.equal(lireEntree(Buffer.from([0x99]), taille), null);
+  assert.deepEqual(lireDebut('{"debut":{"largeur":1921,"hauteur":1080,"ips":60,"debit":20000}}'), { largeur: 1920, hauteur: 1080, ips: 60, debit: 20000 });
+  for (const mauvais of ['{"debut":{"largeur":99999,"hauteur":1080,"ips":60,"debit":20000}}', '{"debut":{"largeur":1920,"hauteur":1080,"ips":61,"debit":20000}}', '{"debut":{"largeur":1920,"hauteur":1080,"ips":60,"debit":999999}}', 'pas du json', '{}']) assert.equal(lireDebut(mauvais), null, mauvais);
+  // Sunshine n'est joint que sur le réseau interne.
+  assert.ok(adresseInterne('127.0.0.1') && adresseInterne('10.0.0.11') && !adresseInterne('8.8.8.8') && !adresseInterne('169.254.169.254'));
+  assert.throws(() => new HoteSunshine({ hote: '8.8.8.8', identite: id }), /réseau interne/);
+  assert.deepEqual(Fluide.adressesDe([{ name: 'lo', 'ip-addresses': [{ 'ip-address-type': 'ipv4', 'ip-address': '127.0.0.1' }] }, { name: 'ens18', 'ip-addresses': [{ 'ip-address-type': 'ipv4', 'ip-address': '10.0.0.11' }, { 'ip-address-type': 'ipv4', 'ip-address': '203.0.113.9' }, { 'ip-address-type': 'ipv6', 'ip-address': 'fd00::1' }] }]), [{ interface: 'ens18', adresse: '10.0.0.11' }]);
+});
+
+test('écran fluide, file des images : paquets perdus retrouvés par la parité, image perdue → rien avant la prochaine image clé', async () => {
+  const { FileImages } = await import('../src/flux/video.js');
+  const { encoder } = await import('../src/flux/rs.js');
+  const tp = 512, bloc = tp + 16, utile = tp - 16;
+  let seq = 100;
+  const paquets = (numero, annexB, cle) => {
+    const tete = Buffer.alloc(8); tete[0] = 1; tete[3] = cle ? 2 : 1;
+    let dernier = (annexB.length + 8) % utile; if (!dernier) dernier = utile; tete.writeUInt16LE(dernier, 4);
+    const charge = Buffer.concat([tete, annexB]), d = Math.ceil(charge.length / utile), p = 2;
+    const donnees = Array.from({ length: d }, (_, i) => { const s = Buffer.alloc(bloc); s.writeUInt32LE(numero, 20); s[24] = 1; charge.copy(s, 32, i * utile, Math.min(charge.length, (i + 1) * utile)); return s; });
+    const tous = [...donnees, ...encoder(donnees, p, bloc).map(x => Buffer.from(x))];
+    tous.forEach((s, i) => { s.writeUInt16BE((seq + i) & 0xffff, 2); s.writeUInt32LE(numero, 20); s[27] = 0; s.writeUInt32LE(((i << 12) | (d << 22) | (Math.round(p * 100 / d) << 4)) >>> 0, 28); });
+    seq += tous.length;
+    return tous;
+  };
+  const file = new FileImages({ taillePaquet: tp });
+  const sorties = [];
+  let pertes = 0;
+  file.on('image', i => sorties.push(i));
+  file.on('perte', () => pertes++);
+  const image = n => crypto.randomBytes(n);
+  const a = image(1500), b = image(1500), c = image(700), d = image(900);
+  // 1 : image clé, deux paquets de données perdus, retrouvés.
+  const p1 = paquets(1, a, true);
+  for (const [i, q] of p1.entries()) if (i !== 0 && i !== 2) file.ajouter(q);
+  assert.equal(sorties.length, 1); assert.ok(sorties[0].cle); assert.deepEqual(sorties[0].donnees, a);
+  assert.equal(file.stats.recuperes, 2);
+  // 2 : trop de pertes (trois sur deux paritiés) ; 3 arrive : image 2 perdue, 3 (non clé) retenue.
+  const p2 = paquets(2, b, false);
+  for (const [i, q] of p2.entries()) if (i > 2) file.ajouter(q);
+  for (const q of paquets(3, c, false)) file.ajouter(q);
+  assert.equal(sorties.length, 1, 'rien après une perte tant qu\'aucune image clé n\'arrive');
+  assert.ok(pertes >= 1);
+  // 4 : image clé : elle sort, le flux reprend.
+  for (const q of paquets(4, d, true)) file.ajouter(q);
+  assert.equal(sorties.length, 2); assert.deepEqual(sorties[1].donnees, d); assert.equal(sorties[1].numero, 4);
+  // Doublons et paquets d'images passées : ignorés.
+  for (const q of paquets(4, d, true)) file.ajouter(q);
+  assert.equal(sorties.length, 2);
+});
+
+test('écran fluide : réglage et appairage par PIN sous renfort, droits par rôle, PIN faux refusé, rien du réglage pour le membre', async () => {
+  const { fauxSunshine } = await import('./faux-sunshine.js');
+  const sun = await fauxSunshine();
+  try {
+    const url = machine('pve-a', 'qemu', 101) + '/fluide';
+    assert.deepEqual((await membre.get(url)).json, { configure: false, appairage: null });
+    assert.equal((await lecteur.get(url)).status, 403, 'lecture : pas d\'écran');
+    assert.equal((await membre.post(url, { hote: '127.0.0.1' })).status, 403, 'membre : ne règle pas');
+    assert.equal((await sansRenfort(() => admin.post(url, { hote: '127.0.0.1', portHttp: sun.portHttp, portHttps: sun.portHttps }))).status, 403, 'renfort exigé');
+    assert.equal((await admin.post(url, { hote: '8.8.8.8' })).status, 400, 'adresse publique refusée');
+    assert.equal((await admin.get(machine('pve-a', 'lxc', 110) + '/fluide')).status, 400, 'conteneur : non');
+    const pose = await admin.post(url, { hote: '127.0.0.1', portHttp: sun.portHttp, portHttps: sun.portHttps });
+    assert.equal(pose.status, 200, JSON.stringify(pose.json));
+    assert.equal(pose.json.configure, true); assert.equal(pose.json.appaire, false); assert.equal(pose.json.version, '7.1.431.-1');
+    // Session refusée tant que Sunshine n'est pas appairé.
+    assert.equal((await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '101', mode: 'fluide' })).status, 409);
+    // PIN faux : Sunshine répond, la preuve ne tient pas, rien n'est épinglé.
+    let a = await admin.post(url + '/appairage');
+    assert.match(a.json.appairage.pin, /^\d{4}$/);
+    assert.equal((await membre.get(url)).json.appairage.pin, undefined, 'le PIN ne se montre qu\'à l\'administrateur');
+    sun.saisirPin(a.json.appairage.pin === '0000' ? '1111' : '0000');
+    await attendre(() => false, 0).catch(() => {});
+    let etat;
+    for (let i = 0; i < 200; i++) { etat = (await admin.get(url)).json; if (etat.appairage?.etat !== 'attente') break; await new Promise(r => setTimeout(r, 20)); }
+    assert.equal(etat.appairage.etat, 'echec'); assert.match(etat.appairage.message, /PIN incorrect/);
+    assert.equal(etat.appaire, false);
+    // Le bon PIN : appairé, certificat de Sunshine épinglé.
+    a = await admin.post(url + '/appairage');
+    sun.saisirPin(a.json.appairage.pin);
+    for (let i = 0; i < 200; i++) { etat = (await admin.get(url)).json; if (etat.appairage?.etat !== 'attente') break; await new Promise(r => setTimeout(r, 20)); }
+    assert.equal(etat.appairage.etat, 'reussi', JSON.stringify(etat)); assert.equal(etat.appaire, true);
+    assert.match(etat.empreinte, /^sha256:[0-9a-f]{64}$/);
+    const vu = (await membre.get(url)).json;
+    assert.equal(vu.appaire, true); assert.equal(vu.hote, undefined); assert.equal(vu.empreinte, undefined, 'adresse et empreinte : administrateur seulement');
+    // La clé privée de ProxLab est scellée dans la base, jamais en clair.
+    const identite = JSON.parse(s.db.prepare("SELECT valeur FROM reglages WHERE cle = 'fluide-identite'").get().valeur);
+    assert.ok(identite.cle_scellee && !/PRIVATE KEY/.test(JSON.stringify(identite)));
+    const actions = s.db.prepare("SELECT action FROM socle_journal WHERE action LIKE 'machine.fluide%'").all().map(l => l.action);
+    assert.ok(actions.includes('machine.fluide.adresse') && actions.includes('machine.fluide.appairage'));
+  } finally { await sun.fermer(); }
+});
+
+test('écran fluide de bout en bout : vidéo chiffrée relayée, parité, image clé redemandée, entrées transmises, fin par Sunshine', async () => {
+  const { fauxSunshine } = await import('./faux-sunshine.js');
+  const sun = await fauxSunshine();
+  try {
+    const url = machine('pve-a', 'qemu', 101) + '/fluide';
+    await admin.post(url, { hote: '127.0.0.1', portHttp: sun.portHttp, portHttps: sun.portHttps });
+    const a = await admin.post(url + '/appairage');
+    sun.saisirPin(a.json.appairage.pin);
+    await attendre(() => !!sun.appaire);
+    for (let i = 0; i < 100 && !(await admin.get(url)).json.appaire; i++) await new Promise(r => setTimeout(r, 20));
+    assert.equal((await lecteur.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '101', mode: 'fluide' })).status, 403);
+    const { passe } = (await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '101', mode: 'fluide' })).json;
+    const w = await ouvrirWs(membre, passe);
+    assert.equal(w.code, 101);
+    w.conn.envoyerTexte(JSON.stringify({ debut: { largeur: 1280, hauteur: 720, ips: 60, debit: 15000 } }));
+    await attendre(() => w.recu.some(m => m.includes('"pret"')), 8000);
+    const pret = JSON.parse(w.recu.find(m => m.includes('"pret"'))).pret;
+    assert.deepEqual(pret, { codec: 'h264', largeur: 1280, hauteur: 720, ips: 60, chiffre: true });
+    assert.equal(sun.lancement.mode, '1280x720x60'); assert.equal(sun.lancement.corever, '1');
+    assert.equal(sun.donneesConnexion, 4660, 'X-SS-Connect-Data portée par la connexion ENet');
+    assert.equal(sun.chiffre & 3, 3, 'contrôle et vidéo chiffrés');
+    await attendre(() => sun.clientVideo && sun.pings.audio > 0);
+    const images = () => w.bruts.filter(b => !b.texte && b.m[0] === 1).map(b => b.m);
+    // Une image clé, deux paquets perdus et retrouvés par la parité.
+    const sps = Buffer.from('0000000167640028acd940780227e5c044000003000400000300f03c60c658', 'hex'), pps = Buffer.from('0000000168ebe3cb22c0', 'hex');
+    const idr = Buffer.concat([sps, pps, Buffer.from('0000000165', 'hex'), crypto.randomBytes(4000)]);
+    sun.envoyerImage(idr, { cle: true, perdre: [1, 3] });
+    await attendre(() => images().length === 1);
+    assert.equal(images()[0][1] & 1, 1, 'image clé');
+    assert.deepEqual(images()[0].subarray(6), idr);
+    // Une image perdue (trop de paquets manquants) : la suivante attend une image clé, demandée à Sunshine.
+    const demandes = sun.imagesClesDemandees || 0;
+    sun.envoyerImage(crypto.randomBytes(3000), { perdre: [0, 1, 2, 3] });
+    sun.envoyerImage(Buffer.concat([Buffer.from('0000000141', 'hex'), crypto.randomBytes(500)]));
+    await attendre(() => (sun.imagesClesDemandees || 0) > demandes);
+    await new Promise(r => setTimeout(r, 100));
+    assert.equal(images().length, 1, 'rien ne sort après une perte');
+    sun.envoyerImage(idr, { cle: true });
+    await attendre(() => images().length === 2);
+    // Entrées : touche, position, clic, molette → paquets GameStream sur les bons canaux.
+    w.conn.envoyerBinaire(Buffer.from([0x10, 1, 0x41, 0, 0]));
+    w.conn.envoyerBinaire(Buffer.from([0x10, 0, 0x41, 0, 0]));
+    w.conn.envoyerBinaire(Buffer.from([0x11, 0, 100, 0, 50]));
+    w.conn.envoyerBinaire(Buffer.from([0x12, 1, 1]));
+    w.conn.envoyerBinaire(Buffer.from([0x13, 0, 120, 0, 0]));
+    await attendre(() => sun.entrees.length >= 5);
+    const [bas, haut, pos, clic, molette] = sun.entrees.slice(-5);
+    assert.deepEqual([bas.canal, haut.canal, pos.canal, clic.canal, molette.canal], [2, 2, 3, 3, 3]);
+    assert.equal(bas.paquet.readUInt32LE(4), 3); assert.equal(bas.paquet.readUInt16LE(9), 0x41); assert.equal(haut.paquet.readUInt32LE(4), 4);
+    assert.equal(pos.paquet.readInt16BE(8), 100); assert.equal(pos.paquet.readInt16BE(10), 50); assert.equal(pos.paquet.readInt16BE(14), 1279);
+    assert.equal(clic.paquet.readUInt32LE(4), 8); assert.equal(clic.paquet[8], 1);
+    assert.equal(molette.paquet.readInt16BE(8), 120);
+    assert.ok(!sun.controleFalsifie, 'chaque message de contrôle s\'ouvre avec la clé de la session');
+    // Sunshine ferme : le navigateur le sait.
+    sun.terminer();
+    await attendre(() => w.recu.some(m => m.includes('fermée par Sunshine')));
+    await attendre(() => w.conn.ferme);
+    const j = s.db.prepare("SELECT action FROM socle_journal WHERE action IN ('machine.fluide.session', 'machine.fluide.fin', 'console.ouverte')").all().map(l => l.action);
+    assert.ok(j.includes('machine.fluide.session') && j.includes('machine.fluide.fin'));
+    // Un message d'entrée invalide ferme la session.
+    const p2 = (await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '101', mode: 'fluide' })).json.passe;
+    const w2 = await ouvrirWs(membre, p2);
+    w2.conn.envoyerTexte(JSON.stringify({ debut: { largeur: 1280, hauteur: 720, ips: 60, debit: 15000 } }));
+    await attendre(() => w2.recu.some(m => m.includes('"pret"')), 8000);
+    assert.equal(sun.reprises, 1, 'le bureau lancé par la session d\'avant est repris, pas relancé');
+    assert.equal(sun.annule || 0, 0, 'fermer l\'écran n\'arrête pas le bureau dans Sunshine');
+    w2.conn.envoyerBinaire(Buffer.from([0x10, 1, 0xff, 0x7f, 0]));
+    await attendre(() => w2.recu.some(m => m.includes('message refusé')));
+    await attendre(() => w2.conn.ferme);
+  } finally { await sun.fermer(); }
+});
+
 test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont rescellés, Proxmox reste joignable', async () => {
   await s.arreter();
   const neuve = crypto.randomBytes(32).toString('base64');
@@ -1202,6 +1414,9 @@ test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont resc
   assert.equal(l.secret, JETON.secret);
   assert.equal(s.reglages.alertes().cle, 'cle-du-recepteur-essai');
   assert.equal((await s.client().get('/api/health')).status, 200);
+  // L'identité de l'écran fluide (créée par les essais qui précèdent) : rescellée, toujours la même.
+  const f = s.reglages.lire('fluide-identite');
+  assert.match(s.reglages.ouvrir('fluideCle', f.cle_scellee), /BEGIN PRIVATE KEY/);
   assert.ok((await s.proxmox.get('/version')).version);
   await s.arreter();
   s = await lancer(base, { SOCLE_CLE: neuve });
@@ -1248,3 +1463,4 @@ test('WebSocket : trames bornées selon le sens — 4 Mio du navigateur, une ima
   geant._recevoir(tete(65 * 1024 * 1024, false));
   assert.equal(geant.ferme, true, 'au-delà de 64 Mio : fermée');
 });
+
