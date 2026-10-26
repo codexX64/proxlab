@@ -13,6 +13,7 @@ import {
 import { courbe, anneau, jauge, calendrier, capacite, tuiles } from './socle/graphes.js';
 import { Terminal } from './terminal.js';
 import { Ecran, DISPOSITIONS, intapables, estMac } from './ecran.js';
+import { EcranFluide } from './fluide.js';
 
 // Le plus long texte que ProxLab tape d'une traite (src/frappe.js).
 const FRAPPE_MAX = 100000;
@@ -452,7 +453,7 @@ function ligneMachine(m) {
 async function pageFiche(noeud, type, vmid) {
   const base = `/api/machines/${encodeURIComponent(noeud)}/${type}/${vmid}`;
   let f = await api.get(base);
-  const onglets = [['resume', 'Résumé'], ['instantanes', 'Instantanés'], ['sauvegardes', 'Sauvegardes'], ['configuration', 'Configuration'], ...(membre && type === 'qemu' ? [['ecran', 'Écran']] : []), ...(membre ? [['console', 'Console']] : [])];
+  const onglets = [['resume', 'Résumé'], ['instantanes', 'Instantanés'], ['sauvegardes', 'Sauvegardes'], ['configuration', 'Configuration'], ...(membre && type === 'qemu' ? [['ecran', 'Écran'], ['fluide', 'Écran fluide']] : []), ...(membre ? [['console', 'Console']] : [])];
   let onglet = 'resume';
   // L'écran et la console restent ouverts quand on change d'onglet : ils sont
   // cachés, pas fermés. Ils ne se ferment qu'en quittant la fiche.
@@ -483,7 +484,7 @@ async function pageFiche(noeud, type, vmid) {
   const corps = h('div', { class: 'dtpane' }, statique);
   const tabs = h('div', { class: 'views', role: 'tablist' });
   const tete = h('div', { class: 'detailhead' });
-  const relire = async () => { f = await api.get(base); peindreTete(); if (onglet !== 'console' && onglet !== 'ecran') montrer(onglet); };
+  const relire = async () => { f = await api.get(base); peindreTete(); if (onglet !== 'console' && onglet !== 'ecran' && onglet !== 'fluide') montrer(onglet); };
   // Après un changement (port série, presse-papiers, agent) : l'onglet refait avec la nouvelle configuration.
   const refaire = k => relire().then(() => { fermerVivant(k); montrer(k); });
   const action = (act, libelle, { danger = false, question = null } = {}) => sur(async () => {
@@ -522,6 +523,7 @@ async function pageFiche(noeud, type, vmid) {
       let el = null;
       if (k === 'console') el = vivant('console', garder => consoleMachine(cible, garder, { f, relire: () => refaire('console'), auto: true }));
       else if (k === 'ecran') el = vivant('ecran', garder => ecranMachine(f, garder, () => refaire('ecran'), { auto: true }));
+      else if (k === 'fluide') el = vivant('fluide', garder => ecranFluide(f, garder, () => refaire('fluide'), { auto: true }));
       for (const v of Object.values(vivants)) v.el.hidden = v.el !== el;
       statique.hidden = !!el;
       if (el) { el.dispatchEvent(new CustomEvent('montre')); return; }
@@ -1441,6 +1443,153 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
 }
 
 // La console d'une VM sans port série : ce qu'il faut, et le bouton pour l'ajouter.
+// L'écran fluide : Sunshine encode l'écran de la VM sur sa carte graphique,
+// ProxLab relaie, le navigateur décode (web/fluide.js). Réglé une fois par un
+// administrateur : l'adresse de Sunshine, puis l'appairage par un PIN.
+const QUALITES_FLUIDE = [
+  { k: 'tres-haute', nom: 'Très haute · 1440p 60 i/s', largeur: 2560, hauteur: 1440, ips: 60, debit: 40000 },
+  { k: 'haute', nom: 'Haute · 1080p 60 i/s', largeur: 1920, hauteur: 1080, ips: 60, debit: 20000 },
+  { k: 'equilibree', nom: 'Équilibrée · 1080p 30 i/s', largeur: 1920, hauteur: 1080, ips: 30, debit: 10000 },
+  { k: 'legere', nom: 'Légère · 720p 30 i/s', largeur: 1280, hauteur: 720, ips: 30, debit: 4000 },
+];
+function ecranFluide(f, garder, relire, { auto = false } = {}) {
+  const url = `/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/fluide`;
+  const enMarche = f.status === 'running';
+  const carte = h('div', { class: 'card' });
+  let suivi = null, fermerVue = () => {};
+  const peindre = async () => {
+    clearTimeout(suivi);
+    let c;
+    try { c = await api.get(url); } catch (e) { carte.replaceChildren(h('header', {}, h('h2', { text: 'Écran fluide' })), h('p', { class: 'vide', text: e.message })); return; }
+    fermerVue();
+    if (c.configure && c.appaire) visionneuse(c); else reglage(c);
+  };
+  carte.nettoyer = () => { clearTimeout(suivi); fermerVue(); };
+
+  function reglage(c) {
+    const titre = h('header', {}, h('h2', { text: 'Écran fluide' }), h('span', { class: 'note', text: c.configure ? 'à appairer' : 'à régler' }));
+    const intro = h('p', { text: 'L\'écran de la VM encodé en vidéo par sa carte graphique (Sunshine), décodé par ton navigateur : bien plus fluide que l\'écran VNC, même plein écran et animé. Le flux passe par ProxLab, chiffré, comme le reste.' });
+    if (!admin) return carte.replaceChildren(titre, h('div', { class: 'pad' }, intro, h('p', { class: 'hint', text: c.configure ? 'Un administrateur doit encore appairer Sunshine à ProxLab.' : 'Un administrateur le règle ici, une fois : Sunshine dans la VM, puis son adresse et un appairage.' })));
+    const cmd = 'lan_encryption_mode = 2';
+    const copier = texte => async () => { try { await navigator.clipboard.writeText(texte); toast('Copié.'); } catch { toast(texte); } };
+    const champ = h('input', { class: 'field', maxlength: 253, value: c.hote || '', placeholder: 'adresse de la VM', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Adresse de Sunshine dans la VM' });
+    const propositions = h('div', { class: 'puces' });
+    api.get(url + '/adresses').then(r => {
+      if (r.adresses?.length) propositions.replaceChildren(h('small', { class: 'dim', text: 'Adresses de la VM (agent QEMU) : ' }), ...r.adresses.map(a => h('button', { class: 'btn sm flat', type: 'button', onclick: () => { champ.value = a.adresse; champ.focus(); } }, `${a.adresse} (${a.interface})`)));
+      else if (r.raison) propositions.replaceChildren(h('small', { class: 'dim', text: r.raison }));
+    }).catch(() => {});
+    const verifier = h('button', { class: 'btn sm solid', type: 'button', onclick: sur(async () => {
+      const hote = champ.value.trim();
+      if (!hote) return toast('Adresse requise.', true);
+      await api.post(url, { hote });
+      toast('Sunshine répond.');
+      peindre();
+    }) }, icone('verifie', 14), c.configure ? 'Changer' : 'Vérifier');
+    const a = c.appairage;
+    let etapeAppairage;
+    if (a?.etat === 'attente') {
+      etapeAppairage = h('div', { class: 'pin-fluide' },
+        h('p', {}, 'Dans la VM, ouvre ', h('code', { text: 'https://localhost:47990' }), ' (Sunshine, onglet PIN), choisis la demande « ProxLab » et saisis :'),
+        h('div', { class: 'pin', text: a.pin || '····' }),
+        h('small', { class: 'dim', text: 'En attente de Sunshine… (trois minutes au plus)' }));
+      suivi = setTimeout(peindre, 2000);
+    } else {
+      etapeAppairage = h('div', {},
+        a?.etat === 'echec' ? h('p', { class: 'erreur', text: `Appairage échoué : ${a.message}` }) : null,
+        h('button', { class: 'btn sm solid', type: 'button', disabled: !c.configure, onclick: sur(async () => { await api.post(url + '/appairage'); peindre(); }) }, icone('lien', 14), 'Appairer'));
+    }
+    carte.replaceChildren(titre, h('div', { class: 'pad sans-serie' }, intro,
+      h('ol', { class: 'etapes' },
+        h('li', {}, 'Dans la VM, installer et lancer Sunshine (github.com/LizardByte/Sunshine ; Arch : paquet « sunshine »). Pour que l\'image ne circule jamais en clair, ajouter à sa configuration : ',
+          h('span', { class: 'cmd' }, h('code', { text: cmd }), h('button', { class: 'btn flat sm', type: 'button', 'aria-label': 'Copier', onclick: copier(cmd) }, icone('copie', 12)))),
+        h('li', { class: c.configure ? 'fait' : '' }, h('span', {}, 'Son adresse, joignable par ProxLab sur le réseau interne : '), h('div', { class: 'ligne-fluide' }, champ, verifier), propositions,
+          c.configure ? h('small', { class: 'dim', text: `${c.nom || 'Sunshine'} · version ${c.version}` }) : null),
+        h('li', { class: c.appaire ? 'fait' : '' }, h('span', { text: 'L\'appairer à ProxLab, une fois : ' }), etapeAppairage)),
+      c.configure ? h('p', {}, h('button', { class: 'btn sm flat', type: 'button', onclick: sur(async () => {
+        if (!await confirmer('Oublier l\'écran fluide de cette VM ?', 'L\'adresse et l\'appairage sont effacés de ProxLab. Dans Sunshine, l\'appareil « ProxLab » peut être retiré aussi.', { oui: 'Oublier', danger: true })) return;
+        await api.del(url); peindre();
+      }) }, 'Oublier ce réglage')) : null));
+  }
+
+  function visionneuse(c) {
+    const etat = h('span', { class: 'note', text: 'fermé' });
+    const hote = h('div', { class: 'ecran-hote fluide' });
+    let ecran = null, ws = null, choisie = lireLocal('proxlab-fluide-qualite', 'haute');
+    const qualite = () => QUALITES_FLUIDE.find(q => q.k === choisie) || QUALITES_FLUIDE[1];
+    // Le clavier de la VM : le même réglage que l'écran VNC de cette VM.
+    const cleDispo = `proxlab-disposition:${f.node}/${f.vmid}`;
+    const disposition = () => (lireLocal('proxlab-frappe', '') === 'physique' ? null : (DISPOSITIONS[lireLocal(cleDispo, '')] ? lireLocal(cleDispo, '') : lireLocal('proxlab-disposition', /^fr/i.test(navigator.language || '') ? 'fr' : 'us')));
+    const boutonDispo = h('button', { class: 'btn sm dispo-vm', type: 'button', onclick: () => {
+      const ks = Object.keys(DISPOSITIONS), k = ks[(ks.indexOf(disposition() || 'fr') + 1) % ks.length];
+      poserLocal(cleDispo, k); poserLocal('proxlab-disposition', k); peindreDispo(); ecran?.toile.focus();
+    } });
+    const peindreDispo = () => { const d = disposition(); boutonDispo.replaceChildren(icone('clavier', 14), h('span', { text: d ? DISPOSITIONS[d].nom.split(' ')[0] : 'Touches physiques' })); boutonDispo.title = d ? `Clavier de la VM : ${DISPOSITIONS[d].nom}. Clic : l'autre.` : 'Chaque touche part telle quelle.'; };
+    peindreDispo();
+    const urlFrappe = `/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/frappe`;
+    const taper = async texte => {
+      texte = String(texte ?? '');
+      if (!texte) return;
+      const d = disposition() || 'fr';
+      if ([...texte].length > FRAPPE_MAX) return toast(`Au plus ${FRAPPE_MAX.toLocaleString('fr-FR')} caractères par frappe.`, true);
+      try { const fr = await api.post(urlFrappe, { texte, disposition: d }); if (fr.total > 150) toast(`ProxLab tape ${fr.total.toLocaleString('fr-FR')} caractères dans la VM : tu peux quitter la page, la frappe continue.`); } catch (e) { toast(e.message, true); }
+    };
+    const collerIci = async texte => {
+      if (texte === null) { try { texte = await navigator.clipboard.readText(); } catch { return toast('Le navigateur refuse la lecture du presse-papiers.', true); } }
+      taper(texte);
+    };
+    const choixQualite = h('select', { class: 'presse-dispo', 'aria-label': 'Qualité de l\'écran fluide', onchange: e => { choisie = e.target.value; poserLocal('proxlab-fluide-qualite', choisie); if (ecran) ouvrir(); } },
+      QUALITES_FLUIDE.map(q => h('option', { value: q.k, text: q.nom, selected: q.k === choisie })));
+    const plein = () => { if (document.fullscreenElement) document.exitFullscreen?.(); else hote.requestFullscreen?.().then(() => ecran?.toile.focus()).catch(() => {}); };
+    const actions = menuActions(() => [{ items: [
+      { texte: 'Ctrl+Alt+Suppr', ic: 'clavier', inactif: !ecran?.actif, agir: () => ecran?.ctrlAltSuppr() },
+      { texte: 'Coller (tapé par ProxLab)', ic: 'presse', touche: `${MOD}V`, agir: () => collerIci(null) },
+      { texte: 'Image complète', ic: 'relance', inactif: !ecran?.actif, agir: () => ecran?.demanderCle() },
+    ] }, ...(admin ? [{ titre: 'Réglage', items: [
+      { texte: 'Réappairer', ic: 'lien', agir: sur(async () => { await api.post(url + '/appairage'); fermer(); peindre(); }) },
+      { texte: 'Oublier ce réglage', ic: 'corbeille', agir: sur(async () => { if (!await confirmer('Oublier l\'écran fluide de cette VM ?', 'L\'adresse et l\'appairage sont effacés de ProxLab.', { oui: 'Oublier', danger: true })) return; await api.del(url); fermer(); peindre(); }) },
+    ] }] : [])]);
+    const bouton = h('button', { class: 'btn sm solid', type: 'button', disabled: !enMarche, onclick: () => (ecran ? fermer() : ouvrir()) }, icone('ecran', 14), 'Ouvrir');
+    function fermer() {
+      try { ecran?.fermer(); } catch { /* fermé */ }
+      ecran = null; ws = null;
+      etat.textContent = 'fermé';
+      // La dernière image reste affichée : « Rouvrir » reprend là.
+      bouton.replaceChildren(icone('ecran', 14), hote.querySelector('canvas') ? 'Rouvrir' : 'Ouvrir');
+    }
+    fermerVue = fermer;
+    async function ouvrir() {
+      fermer();
+      if (!window.VideoDecoder) { hote.replaceChildren(h('p', { class: 'vide', text: 'Ce navigateur ne décode pas la vidéo lui-même (WebCodecs) : Safari 16.4, Chrome ou Firefox récents le font.' })); return; }
+      etat.textContent = 'connexion…';
+      const { passe } = await api.post('/api/console', { noeud: f.node, type: 'qemu', vmid: String(f.vmid), mode: 'fluide' });
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws/console?passe=${encodeURIComponent(passe)}`);
+      const e = new EcranFluide(hote, ws, { disposition, surIntapable: ch => toast(`« ${ch} » n'existe pas sur le clavier de la VM.`, true), surColler: collerIci, mac: estMac() });
+      ecran = e;
+      garder(e, ws);
+      bouton.replaceChildren(icone('croix', 14), 'Fermer');
+      ws.addEventListener('open', () => { const q = qualite(); e.commencer(q); etat.textContent = 'lancement de Sunshine…'; });
+      ws.addEventListener('message', ev => {
+        if (typeof ev.data !== 'string') return;
+        let m; try { m = JSON.parse(ev.data); } catch { return; }
+        if (m.pret) { e.pret(m.pret); etat.textContent = `ouvert · ${m.pret.largeur} × ${m.pret.hauteur} · ${m.pret.ips} i/s${m.pret.chiffre ? ' · chiffré' : ' · vidéo en clair (lan_encryption_mode)'}`; e.toile.focus({ preventScroll: true }); }
+        if (m.fin) { etat.textContent = 'fermé'; hote.append(h('p', { class: 'vide', text: m.fin })); }
+      });
+      ws.addEventListener('close', () => { if (ecran === e) { ecran = null; bouton.replaceChildren(icone('ecran', 14), 'Rouvrir'); if (!/fermé|Sunshine|indisponible/.test(etat.textContent)) etat.textContent = 'fermé'; } });
+    }
+    const outils = h('div', { class: 'ecran-outils' }, choixQualite, boutonDispo, actions.ancre,
+      h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Plein écran', title: 'Plein écran', onclick: plein }, icone('agrandir', 14)));
+    hote.append(h('p', { class: 'vide', text: enMarche ? 'L\'écran de la VM en vidéo, fluide. Clique dans l\'image pour lui donner le clavier ; ' + MOD + 'V colle (tapé par ProxLab).' : 'La machine est arrêtée : démarre-la pour voir son écran.' }));
+    carte.replaceChildren(h('header', {}, h('h2', { text: 'Écran fluide' }), etat, outils, bouton), hote);
+    hote.addEventListener('dblclick', e => { if (e.target === hote) plein(); });
+    if (auto && enMarche) setTimeout(() => ouvrir().catch(x => { etat.textContent = 'fermé'; toast(x.message, true); }), 0);
+  }
+
+  peindre();
+  carte.addEventListener('montre', () => { /* rien à rafraîchir : la vidéo continue */ });
+  return carte;
+}
+
 function sansPortSerie(f, relire) {
   const prevu = (f.enAttente || []).includes('serial0');
   const cmd = 'sudo systemctl enable --now serial-getty@ttyS0.service';

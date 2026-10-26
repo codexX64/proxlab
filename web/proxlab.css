@@ -172,6 +172,12 @@ canvas.ecran:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .sans-serie .etapes{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:10px;font-size:13px}
 .sans-serie .cmd{display:inline-flex;align-items:center;gap:4px;margin-top:4px;max-width:100%}
 .sans-serie li.fait{color:var(--muted)}
+.ligne-fluide{display:flex;gap:8px;align-items:center;margin-top:6px;max-width:460px}
+.ligne-fluide .field{flex:1 1 auto;min-width:0}
+.puces{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.pin-fluide{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.pin-fluide .pin{font-family:var(--mono);font-size:30px;font-weight:600;letter-spacing:.3em;color:var(--ink)}
+.sans-serie li.fait .pin-fluide,.sans-serie li.fait .ligne-fluide{color:var(--ink)}
 .presse-mode{margin-left:0}
 .sans-serie code{font-family:var(--mono);font-size:12px;background:var(--well);padding:3px 7px;border-radius:6px;overflow-wrap:anywhere}
 .terminal{height:min(62vh,560px);min-height:260px;overflow:hidden;user-select:text;-webkit-user-select:text;cursor:text;background:#0D1014;color:#D7DCE3;border-radius:var(--r-ctl);padding:10px;font-family:var(--mono);font-size:13px;line-height:1.3;white-space:pre;outline:none}
