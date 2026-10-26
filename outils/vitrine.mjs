@@ -8,6 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { demarrer } from '../src/main.js';
 import { fauxProxmox, JETON, UTILISATEUR } from '../test/faux-pve.js';
+import { fauxSunshine } from '../test/faux-sunshine.js';
 
 const [port = '8191', gamme = 'soma'] = process.argv.slice(2);
 const pve = await fauxProxmox({ ecran: [1024, 640] });
@@ -27,7 +28,29 @@ for (const [il_y_a, genre, niveau, titre, cible, noeud] of [
   [30, 'vm.created', 'info', 'qemu/130 créée sur pve-b', 'qemu/130', 'pve-b'], [5, 'snapshot.created', 'info', 'Instantané « avant-maj » de qemu/101', 'qemu/101', 'pve-a'],
 ]) ins.run(crypto.randomBytes(9).toString('base64url'), genre, niveau, titre, '', cible, noeud, null, t - il_y_a * h);
 
+// Un faux Sunshine pour l'écran fluide, sur une autre adresse de bouclage et
+// aux ports habituels : l'interface n'y demande que l'adresse. Le PIN est
+// « saisi dans Sunshine » une seconde après son affichage, et des images
+// (synthétiques : le parcours remplace le décodeur du navigateur) partent à
+// 30 i/s dès qu'une session est ouverte, une image clé toutes les deux secondes
+// ou à la demande.
+let sun = null;
+try { sun = await fauxSunshine({ hote: '127.0.0.2', portHttp: 47989, portHttps: 47984 }); } catch (e) { console.log(`(écran fluide sans faux Sunshine : ${e.code || e.message})`); }
+if (sun) {
+  setInterval(() => {
+    for (const a of s.api.fluide.appairages.values()) if (a.etat === 'attente' && !a.vu && Date.now() - a.debut > 1000) { a.vu = true; sun.saisirPin(a.pin); }
+  }, 200).unref();
+  let n = 0, cles = 0;
+  const sps = Buffer.from('0000000167640028acd940780227e5c044000003000400000300f03c60c658', 'hex'), pps = Buffer.from('0000000168ebe3cb22c0', 'hex');
+  setInterval(() => {
+    if (!sun.clientVideo || !sun.taillePaquet) return;
+    const demande = (sun.imagesClesDemandees || 0) !== cles;
+    cles = sun.imagesClesDemandees || 0;
+    const cle = n++ % 60 === 0 || demande;
+    sun.envoyerImage(cle ? Buffer.concat([sps, pps, Buffer.from('0000000165', 'hex'), crypto.randomBytes(6000)]) : Buffer.concat([Buffer.from('0000000141', 'hex'), crypto.randomBytes(900)]), { cle });
+  }, 33).unref();
+}
 console.log(`ProxLab ${gamme} : http://localhost:${port}`);
 console.log(`JETON=${JETON_INSTALLATION}`);
 console.log(`PVE=${pve.hote}:${pve.port} JETON_ID=${JETON.id} SECRET=${JETON.secret} UTILISATEUR=${UTILISATEUR.nom} MDP=${UTILISATEUR.motDePasse}`);
-for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, async () => { await s.arreter(); await pve.fermer(); fs.rmSync(dossier, { recursive: true, force: true }); process.exit(0); });
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, async () => { await s.arreter(); await pve.fermer(); await sun?.fermer(); fs.rmSync(dossier, { recursive: true, force: true }); process.exit(0); });

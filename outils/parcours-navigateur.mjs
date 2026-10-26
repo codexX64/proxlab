@@ -14,6 +14,24 @@ fs.mkdirSync(sortie, { recursive: true });
 const MDP = 'phrase de passe pour proxlab en local';
 const navigateur = await chromium.launch();
 const contexte = await navigateur.newContext({ viewport: { width: 1280, height: 860 } });
+// Le Chromium du parcours ne décode pas le H.264 (codec propriétaire) : un
+// décodeur de remplacement reçoit les images de l'écran fluide et en peint une
+// mire, pour éprouver tout le reste (relais, configuration, entrées).
+await contexte.addInitScript(() => {
+  window.__fluide = { configure: [], images: 0, cles: 0 };
+  window.VideoDecoder = class {
+    constructor({ output, error }) { this.output = output; this.error = error; this.state = 'unconfigured'; this.decodeQueueSize = 0; }
+    configure(c) { this.state = 'configured'; window.__fluide.configure.push({ codec: c.codec, description: c.description?.byteLength || 0 }); }
+    decode(chunk) {
+      window.__fluide.images++; if (chunk.type === 'key') window.__fluide.cles++;
+      const t = new OffscreenCanvas(1920, 1080), g = t.getContext('2d'), n = window.__fluide.images;
+      const d = g.createLinearGradient(0, 0, 1920, 1080); d.addColorStop(0, '#1d3557'); d.addColorStop(1, '#457b9d'); g.fillStyle = d; g.fillRect(0, 0, 1920, 1080);
+      g.fillStyle = '#f1faee'; g.fillRect((n * 12) % 1800, 500, 120, 80);
+      this.output(new VideoFrame(t, { timestamp: chunk.timestamp }));
+    }
+    close() { this.state = 'closed'; }
+  };
+});
 const page = await contexte.newPage();
 contexte.setDefaultTimeout(12000);
 const erreurs = [];
@@ -103,7 +121,7 @@ await page.getByRole('dialog').waitFor();
 await controle('instantane-dialogue');
 await page.getByRole('dialog').getByRole('button', { name: 'Annuler' }).click();
 // L'écran d'une VM en marche s'ouvre lui aussi avec l'onglet.
-await page.getByRole('tab', { name: 'Écran' }).click();
+await page.getByRole('tab', { name: 'Écran', exact: true }).click();
 await page.getByText('ouvert · 1024 × 640').waitFor();
 await page.locator('canvas.ecran').click({ position: { x: 40, y: 40 } });
 await page.keyboard.type('ana');
@@ -149,6 +167,8 @@ await page.getByText('Frappe arrêtée.').waitFor();
 await page.getByRole('button', { name: 'Actions', exact: true }).click();
 await page.getByRole('menuitem', { name: 'Masquer le presse-papiers' }).click();
 // Écran dans une fenêtre à part : le menu Actions de la fiche la pilote.
+// Les avis passés d'abord : posés en bas à droite, ils couvraient le menu.
+await page.waitForFunction(() => !document.querySelector('.toast'), null, { timeout: 15000 });
 const [aPart] = await Promise.all([page.waitForEvent('popup'), (async () => {
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Ouvrir dans une fenêtre à part' }).click();
@@ -160,6 +180,41 @@ await page.getByRole('button', { name: 'Actions', exact: true }).click();
 if (await page.getByRole('menuitem', { name: 'Échap' }).isDisabled()) throw new Error('Actions de la fiche grisées avec la fenêtre à part');
 await page.getByRole('menuitem', { name: 'Échap' }).click();
 await aPart.close();
+await page.locator('span.note', { hasText: /^ouvert · / }).first().waitFor();
+// Écran fluide : réglé et appairé depuis l'interface, contre le faux Sunshine
+// de la vitrine (127.0.0.2), puis ouvert ; les touches partent en codes VK
+// selon le clavier de la VM (AZERTY : « a » sur la touche Q).
+await page.getByRole('tab', { name: 'Écran fluide' }).click();
+await page.getByLabel('Adresse de Sunshine dans la VM').waitFor();
+await controle('fluide-reglage');
+await page.getByLabel('Adresse de Sunshine dans la VM').fill('127.0.0.2');
+await page.getByRole('button', { name: 'Vérifier' }).click();
+await page.getByText(/version 7\.1\.431/).waitFor();
+await page.getByRole('button', { name: 'Appairer' }).click();
+await page.locator('.pin-fluide .pin').waitFor();
+await controle('fluide-pin');
+await page.locator('span.note', { hasText: /ouvert · 1920 × 1080 · 60 i\/s · chiffré/ }).waitFor({ timeout: 20000 });
+await page.waitForFunction(() => window.__fluide.images > 10 && window.__fluide.cles >= 1);
+const conf = await page.evaluate(() => window.__fluide.configure[0]);
+if (!/^avc1\.640028$/.test(conf.codec) || !conf.description) erreurs.push(`écran fluide : décodeur configuré ${JSON.stringify(conf)}`);
+await controle('ecran-fluide');
+await page.evaluate(() => {
+  window.__fluideEnvois = [];
+  const envoyer = WebSocket.prototype.send;
+  WebSocket.prototype.send = function (d) { if (d instanceof Uint8Array && d[0] === 0x10 && d[1] === 1) window.__fluideEnvois.push(d[2] | d[3] << 8); return envoyer.call(this, d); };
+});
+await page.locator('canvas.fluide').click({ position: { x: 60, y: 60 } });
+await page.keyboard.type('aQ1');
+await page.waitForTimeout(200);
+const vks = await page.evaluate(() => window.__fluideEnvois.map(x => x.toString(16)).join(' '));
+if (vks !== '51 a0 41 a0 31') erreurs.push(`écran fluide, touches : ${vks} au lieu de 51 a0 41 a0 31`);
+await page.getByLabel('Qualité de l\'écran fluide').selectOption('legere');
+await page.getByLabel('Qualité de l\'écran fluide').selectOption('legere');
+await page.locator('span.note', { hasText: /ouvert · 1280 × 720 · 30 i\/s/ }).waitFor({ timeout: 20000 });
+await page.locator('.card', { hasText: 'Écran fluide' }).getByRole('button', { name: 'Fermer', exact: true }).click();
+await page.locator('.card', { hasText: 'Écran fluide' }).getByRole('button', { name: 'Rouvrir', exact: true }).waitFor();
+await page.getByLabel('Qualité de l\'écran fluide').selectOption('haute');
+await page.getByRole('tab', { name: 'Écran', exact: true }).click();
 await page.locator('span.note', { hasText: /^ouvert · / }).first().waitFor();
 // La console d'une VM en marche s'ouvre d'elle-même avec l'onglet.
 await page.getByRole('tab', { name: 'Console' }).click();
