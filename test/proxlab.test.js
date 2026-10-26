@@ -14,11 +14,14 @@ import { adminComplet, membreInvite } from '../socle/essai/inscription.js';
 import { fauxProxmox, JETON, UTILISATEUR } from './faux-pve.js';
 import { chemin } from '../src/pve.js';
 import { connecter as connecterTls, empreinte } from '../src/tls.js';
+import { registerHooks } from 'node:module';
+// Le navigateur charge le socle sous /socle/ (web/socle/… vu de web/) ; ici, depuis socle/web/.
+registerHooks({ resolve: (spec, ctx, suite) => (/\/web\/[^/]+\.js$/.test(ctx.parentURL || '') && spec.startsWith('./socle/') ? suite(new URL(`../socle/web/${spec.slice(8)}`, import.meta.url).href, ctx) : suite(spec, ctx)) });
+const { Inflate, encodages } = await import('../web/ecran.js');
 import { Connexion } from '../src/websocket.js';
 import { corpsTicket, urgence } from '../src/alerte.js';
 import { desChiffrer, reponseVnc } from '../src/des.js';
 import { longueurMessageClient, relayerEcran } from '../src/ecran.js';
-import { Inflate, encodages } from '../web/ecran.js';
 import { relayer } from '../src/console.js';
 import { dispositionDe, lireSortie, detecterClavier } from '../src/clavier.js';
 

@@ -128,6 +128,11 @@ canvas.ecran:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .ecran-hote.fenetre canvas.ecran,.ecran-hote:fullscreen canvas.ecran{flex:1 1 auto;width:100%;height:100%;min-height:0;max-width:none;max-height:none;object-fit:contain;border-radius:0}
 .ecran-hote.remplir.fenetre canvas.ecran,.ecran-hote.remplir:fullscreen canvas.ecran{object-fit:fill}
 .ecran-outils{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+/* La frappe que ProxLab mène dans la VM : où elle en est, et de quoi l'arrêter. */
+.frappe-chip{display:inline-flex;align-items:center;gap:8px;padding:2px 4px 2px 10px;border-radius:999px;background:var(--wash);color:var(--ink-soft);font-size:12px;min-width:0}
+.frappe-chip[hidden]{display:none}
+.frappe-chip>span{white-space:nowrap;font-variant-numeric:tabular-nums}
+.frappe-chip svg{color:var(--accent);flex:none}
 .menu-ancre{position:relative;display:inline-flex}
 .menu-ancre[hidden]{display:none}
 .menu-actions{position:fixed;z-index:60;min-width:250px;max-width:calc(100vw - 16px);overflow:auto;overscroll-behavior:contain;padding:6px;background:var(--surface);border:1px solid var(--hair);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.28)}
@@ -190,6 +195,10 @@ canvas.ecran:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .console-hote,.ecran-hote{margin:0 14px 14px}
   .presse{grid-template-columns:minmax(0,1fr);margin:0 14px 12px}
   .presse-label{margin-left:0}
+  /* Étroit : chaque bouton sur sa ligne, le libellé au-dessus de son choix. */
+  .presse-actions>.btn{flex:1 1 100%}
+  .presse-label{flex-wrap:wrap}
+  .presse-label>span{white-space:nowrap}
   .cardbody{padding:2px 14px 12px}
   .journal{padding:0 14px 6px}
   .ev-liste{padding:2px 14px 6px}

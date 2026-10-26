@@ -1,37 +1,24 @@
 // Écran d'une machine virtuelle : un client RFB (VNC) minimal, dessiné dans un
 // <canvas>. ProxLab a déjà fait la poignée avec Proxmox ; ce client reprend à
 // ClientInit. Pixels en 32 bits (rouge, vert, bleu, rien), encodages Raw et
-// CopyRect, changement de taille, et la touche étendue de QEMU : le code
-// physique de chaque touche part avec elle, si bien que la disposition du
-// clavier est celle de la machine invitée (AZERTY reste AZERTY).
+// CopyRect, changement de taille, et la touche étendue de QEMU.
+//
+// Clavier : le caractère tapé ici arrive tel quel dans l'invité, quelle que
+// soit la disposition de chacun — un « a » d'un Mac AZERTY reste un « a » dans
+// une VM QWERTY : il part sur la touche qui le donne dans la disposition de la
+// VM (/socle/clavier.js). Les touches sans caractère (flèches, Entrée,
+// fonctions) et les raccourcis partent par leur touche physique ; Maj, Ctrl et
+// Alt ne partent qu'avec une telle touche, ou une lettre de raccourci.
+// Sans disposition connue, chaque touche part par son code physique.
 //
 // Presse-papiers dans les deux sens : le protocole étendu de VNC (celui de
 // QEMU avec « clipboard=vnc », relayé dans l'invité par spice-vdagent), en
-// UTF-8 et compressé en zlib ; sans agent, « taper » le texte touche par
-// touche selon la disposition du clavier de l'invité.
+// UTF-8 et compressé en zlib ; sans agent, le texte collé est tapé par
+// ProxLab lui-même (POST /api/machines/…/frappe).
+import { XT, KEYSYMS, codeQemu, DISPOSITIONS, intapables, appuis, evenementsCaractere } from './socle/clavier.js';
 
-// event.code → code XT (préfixe E0 noté 0xE0xx).
-const XT = {
-  Escape: 0x01, Digit1: 0x02, Digit2: 0x03, Digit3: 0x04, Digit4: 0x05, Digit5: 0x06, Digit6: 0x07, Digit7: 0x08, Digit8: 0x09, Digit9: 0x0a, Digit0: 0x0b,
-  Minus: 0x0c, Equal: 0x0d, Backspace: 0x0e, Tab: 0x0f, KeyQ: 0x10, KeyW: 0x11, KeyE: 0x12, KeyR: 0x13, KeyT: 0x14, KeyY: 0x15, KeyU: 0x16, KeyI: 0x17,
-  KeyO: 0x18, KeyP: 0x19, BracketLeft: 0x1a, BracketRight: 0x1b, Enter: 0x1c, ControlLeft: 0x1d, KeyA: 0x1e, KeyS: 0x1f, KeyD: 0x20, KeyF: 0x21,
-  KeyG: 0x22, KeyH: 0x23, KeyJ: 0x24, KeyK: 0x25, KeyL: 0x26, Semicolon: 0x27, Quote: 0x28, Backquote: 0x29, ShiftLeft: 0x2a, Backslash: 0x2b,
-  KeyZ: 0x2c, KeyX: 0x2d, KeyC: 0x2e, KeyV: 0x2f, KeyB: 0x30, KeyN: 0x31, KeyM: 0x32, Comma: 0x33, Period: 0x34, Slash: 0x35, ShiftRight: 0x36,
-  NumpadMultiply: 0x37, AltLeft: 0x38, Space: 0x39, CapsLock: 0x3a, F1: 0x3b, F2: 0x3c, F3: 0x3d, F4: 0x3e, F5: 0x3f, F6: 0x40, F7: 0x41, F8: 0x42,
-  F9: 0x43, F10: 0x44, NumLock: 0x45, ScrollLock: 0x46, Numpad7: 0x47, Numpad8: 0x48, Numpad9: 0x49, NumpadSubtract: 0x4a, Numpad4: 0x4b,
-  Numpad5: 0x4c, Numpad6: 0x4d, NumpadAdd: 0x4e, Numpad1: 0x4f, Numpad2: 0x50, Numpad3: 0x51, Numpad0: 0x52, NumpadDecimal: 0x53,
-  IntlBackslash: 0x56, F11: 0x57, F12: 0x58, NumpadEnter: 0xe01c, ControlRight: 0xe01d, NumpadDivide: 0xe035, PrintScreen: 0xe037,
-  AltRight: 0xe038, Home: 0xe047, ArrowUp: 0xe048, PageUp: 0xe049, ArrowLeft: 0xe04b, ArrowRight: 0xe04d, End: 0xe04f, ArrowDown: 0xe050,
-  PageDown: 0xe051, Insert: 0xe052, Delete: 0xe053, MetaLeft: 0xe05b, MetaRight: 0xe05c, ContextMenu: 0xe05d,
-};
-// Les touches sans caractère : leur keysym X11.
-const KEYSYMS = {
-  Backspace: 0xff08, Tab: 0xff09, Enter: 0xff0d, Escape: 0xff1b, Delete: 0xffff, Home: 0xff50, ArrowLeft: 0xff51, ArrowUp: 0xff52,
-  ArrowRight: 0xff53, ArrowDown: 0xff54, PageUp: 0xff55, PageDown: 0xff56, End: 0xff57, Insert: 0xff63, ContextMenu: 0xff67, NumLock: 0xff7f,
-  CapsLock: 0xffe5, ShiftLeft: 0xffe1, ShiftRight: 0xffe2, ControlLeft: 0xffe3, ControlRight: 0xffe4, MetaLeft: 0xffeb, MetaRight: 0xffec,
-  AltLeft: 0xffe9, AltRight: 0xfe03, PrintScreen: 0xff61, ScrollLock: 0xff14,
-  ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`F${i + 1}`, 0xffbe + i])),
-};
+export { DISPOSITIONS, intapables, codeQemu };
+
 export function keysym(e) {
   if (KEYSYMS[e.code] && (e.key.length !== 1 || /^(Shift|Control|Alt|Meta)/.test(e.code))) return KEYSYMS[e.code];
   if (KEYSYMS[e.key]) return KEYSYMS[e.key];
@@ -39,8 +26,6 @@ export function keysym(e) {
   if (cps.length === 1) { const cp = cps[0].codePointAt(0); return cp < 0x100 ? cp : 0x01000000 | cp; }
   return 0;
 }
-// Code envoyé à QEMU : un code étendu E0xx devient xx | 0x80.
-export const codeQemu = xt => ((xt >> 8) === 0xe0 && (xt & 0xff) < 0x7f ? (xt & 0xff) | 0x80 : xt);
 
 const PRESSE_EXT = 0xC0A1E5CE | 0;       // pseudo-encodage du presse-papiers étendu
 // Tight d'abord : l'image arrive compressée (zlib, et JPEG pour les zones
@@ -158,7 +143,6 @@ export class Inflate {
 }
 const PP = { TEXTE: 1, CAPS: 1 << 24, REQUEST: 1 << 25, PEEK: 1 << 26, NOTIFY: 1 << 27, PROVIDE: 1 << 28 };
 const PRESSE_MAX = 64 * 1024 - 64;      // ProxLab refuse au-delà de 64 Kio
-export const FRAPPE_MAX = 4000;
 export const PLAFOND = Object.freeze({ l: 3840, h: 2400, pixels: 3840 * 2160 });
 
 async function deflate(octets) {
@@ -182,39 +166,17 @@ async function inflate(octets, max) {
   return sortie;
 }
 
-// Caractère → touches physiques, par disposition. [code, maj, altgr] ; une
-// suite pour les touches mortes (^ puis e → ê).
-const T = (code, maj = false, altgr = false) => [code, maj, altgr];
-function carteUs() {
-  const c = {};
-  for (let i = 0; i < 26; i++) { const l = String.fromCharCode(97 + i), code = `Key${l.toUpperCase()}`; c[l] = [T(code)]; c[l.toUpperCase()] = [T(code, true)]; }
-  '0123456789'.split('').forEach(d => { c[d] = [T(`Digit${d}`)]; });
-  ')!@#$%^&*('.split('').forEach((x, i) => { c[x] = [T(`Digit${i}`, true)]; });
-  for (const [code, bas, haut] of [['Minus', '-', '_'], ['Equal', '=', '+'], ['BracketLeft', '[', '{'], ['BracketRight', ']', '}'], ['Backslash', '\\', '|'], ['Semicolon', ';', ':'], ['Quote', "'", '"'], ['Comma', ',', '<'], ['Period', '.', '>'], ['Slash', '/', '?'], ['Backquote', '`', '~']]) { c[bas] = [T(code)]; c[haut] = [T(code, true)]; }
-  return c;
-}
-function carteFr() {
-  const c = {};
-  const lettres = { a: 'KeyQ', z: 'KeyW', q: 'KeyA', w: 'KeyZ', m: 'Semicolon' };
-  for (let i = 0; i < 26; i++) { const l = String.fromCharCode(97 + i), code = lettres[l] || `Key${l.toUpperCase()}`; c[l] = [T(code)]; c[l.toUpperCase()] = [T(code, true)]; }
-  const rang = ['&', 'é', '"', "'", '(', '-', 'è', '_', 'ç', 'à'];
-  rang.forEach((x, i) => { const code = `Digit${(i + 1) % 10}`; c[x] = [T(code)]; c[String((i + 1) % 10)] = [T(code, true)]; });
-  for (const [code, bas, haut] of [['Minus', ')', '°'], ['Equal', '=', '+'], ['BracketRight', '$', '£'], ['Quote', 'ù', '%'], ['Backslash', '*', 'µ'], ['KeyM', ',', '?'], ['Comma', ';', '.'], ['Period', ':', '/'], ['Slash', '!', '§'], ['IntlBackslash', '<', '>']]) { c[bas] = [T(code)]; c[haut] = [T(code, true)]; }
-  c['²'] = [T('Backquote')];
-  for (const [code, x] of [['Digit2', '~'], ['Digit3', '#'], ['Digit4', '{'], ['Digit5', '['], ['Digit6', '|'], ['Digit7', '`'], ['Digit8', '\\'], ['Digit9', '^'], ['Digit0', '@'], ['Minus', ']'], ['Equal', '}'], ['KeyE', '€']]) c[x] = [T(code, false, true)];
-  for (const [b, v] of [['a', 'â'], ['e', 'ê'], ['i', 'î'], ['o', 'ô'], ['u', 'û']]) c[v] = [T('BracketLeft'), ...c[b]];
-  for (const [b, v] of [['a', 'ä'], ['e', 'ë'], ['i', 'ï'], ['o', 'ö'], ['u', 'ü'], ['y', 'ÿ']]) c[v] = [T('BracketLeft', true), ...c[b]];
-  return c;
-}
-const COMMUNES = { ' ': [T('Space')], '\n': [T('Enter')], '\t': [T('Tab')] };
-export const DISPOSITIONS = { fr: { nom: 'AZERTY (français)', carte: { ...carteFr(), ...COMMUNES } }, us: { nom: 'QWERTY (US)', carte: { ...carteUs(), ...COMMUNES } } };
-// Les caractères qu'une disposition ne sait pas taper.
-export const intapables = (texte, d) => [...new Set([...texte.replace(/\r\n?/g, '\n')].filter(ch => !DISPOSITIONS[d]?.carte[ch]))];
 export const estMac = () => /mac|iphone|ipad/i.test(navigator.userAgentData?.platform || navigator.platform || '');
 
 export class Ecran {
-  constructor(hote, ws, { surEtat = () => {}, surPresse = () => {}, surColler = null, remplir = false, garderImage = false, nette = false } = {}) {
+  // disposition() : la disposition du clavier de l'invité (« fr », « us »), ou
+  // null pour tout envoyer par touche physique. surIntapable(ch) : un caractère
+  // tapé ici que cette disposition ne sait pas donner.
+  constructor(hote, ws, { surEtat = () => {}, surPresse = () => {}, surColler = null, remplir = false, garderImage = false, nette = false, disposition = () => null, surIntapable = () => {} } = {}) {
     this.nette = !!nette;
+    this.disposition = disposition; this.surIntapable = surIntapable;
+    // Maj, Ctrl, Alt tenus ici et pas encore envoyés (mode caractère), et ceux envoyés.
+    this.modsTenus = new Map(); this.modsEnvoyes = new Set(); this.modUtilise = false;
     this.ws = ws; this.surEtat = surEtat; this.surPresse = surPresse; this.surColler = surColler; this.remplir = remplir;
     this.actif = false; this.capsPresse = 0; this.aFournir = null; this.dernierPresse = ''; this.copie = null;
     this.mac = estMac(); this.metaSeul = null;
@@ -621,51 +583,6 @@ export class Ecran {
       navigator.clipboard.write([new ClipboardItem({ 'text/plain': promesse.then(t => new Blob([t], { type: 'text/plain' })) })]).catch(() => {});
     } else promesse.then(t => navigator.clipboard.writeText(t)).catch(() => {});
   }
-  // Taper le texte, touche par touche, selon la disposition de l'invité.
-  async taper(texte, disposition = 'fr', { surAvance = () => {} } = {}) {
-    const carte = DISPOSITIONS[disposition]?.carte || DISPOSITIONS.fr.carte;
-    const caracteres = [...String(texte).replace(/\r\n?/g, '\n')].slice(0, FRAPPE_MAX);
-    // Verr. Maj allumé dans l'invité inverserait la casse du texte tapé.
-    if (this.verrous?.caps) this.basculerCaps();
-    // Au rythme d'une frappe rapide, pas d'une rafale : la file du clavier de
-    // la VM (PS/2 dans QEMU) débordait, des relâchements se perdaient, et la
-    // touche restait enfoncée dans l'invité (« xxxxxxxx… »). Chaque touche est
-    // tenue quelques millisecondes, puis une pause avant la suivante.
-    const attendre = ms => new Promise(r => setTimeout(r, ms));
-    const touchees = new Map();
-    let sautes = 0;
-    try {
-      for (let i = 0; i < caracteres.length; i++) {
-        if (!this.actif || this.ws.readyState !== 1) break;
-        const suite = carte[caracteres[i]];
-        if (!suite) { sautes++; continue; }
-        for (const [j, [code, maj, altgr]] of suite.entries()) {
-          if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, true);
-          if (altgr) this.touche({ code: 'AltRight', key: 'AltGraph' }, true);
-          // La casse du keysym doit suivre Maj : QEMU (lock_key_sync) prend une
-          // lettre minuscule avec Maj enfoncée pour un Verr. Maj à corriger, et
-          // ajoute un appui sur Verr. Maj — le texte sortait en minuscules.
-          const ch = caracteres[i];
-          const key = j === suite.length - 1 && [...ch].length === 1 && ch > ' ' ? ch
-            : code.startsWith('Key') ? (maj ? code.slice(3) : code.slice(3).toLowerCase()) : code.startsWith('Digit') ? code.slice(5) : code === 'Space' ? ' ' : code;
-          touchees.set(code, key);
-          this.touche({ code, key }, true);
-          await attendre(8);
-          this.touche({ code, key }, false);
-          if (altgr) this.touche({ code: 'AltRight', key: 'AltGraph' }, false);
-          if (maj) this.touche({ code: 'ShiftLeft', key: 'Shift' }, false);
-          await attendre(22);
-        }
-        if (i % 8 === 7) surAvance(i + 1, caracteres.length);
-      }
-    } finally {
-      // Rien ne reste enfoncé, même si la frappe a été coupée en route.
-      for (const [code, key] of touchees) this.touche({ code, key }, false);
-      this.touche({ code: 'ShiftLeft', key: 'Shift' }, false); this.touche({ code: 'AltRight', key: 'AltGraph' }, false);
-    }
-    surAvance(caracteres.length, caracteres.length);
-    return { tapes: caracteres.length - sautes, sautes };
-  }
   pieger(maj) {
     this.piege.value = '';
     // Sans collage natif (navigateur qui ne le fait pas) : la lecture du presse-papiers, par l'appelant.
@@ -684,6 +601,41 @@ export class Ecran {
     this.touche({ code, key: k }, true); this.touche({ code, key: k }, false);
     if (shift) this.touche({ code: 'ShiftLeft', key: 'Shift' }, false);
     if (ctrl) this.touche({ code: 'ControlLeft', key: 'Control' }, false);
+  }
+
+  // Un événement tout fait (/socle/clavier.js) : code QEMU et keysym.
+  evenement({ xt, keysym: ks, bas }) {
+    if (!this.actif || (!xt && !ks)) return;
+    if (this.qemu && xt) {
+      const b = new DataView(new ArrayBuffer(12));
+      b.setUint8(0, 255); b.setUint8(1, 0); b.setUint16(2, bas ? 1 : 0); b.setUint32(4, ks); b.setUint32(8, xt);
+      this.envoyer(b.buffer);
+    } else if (ks) {
+      const b = new DataView(new ArrayBuffer(8));
+      b.setUint8(0, 4); b.setUint8(1, bas ? 1 : 0); b.setUint32(4, ks);
+      this.envoyer(b.buffer);
+    }
+  }
+  // Un caractère tapé ici, sur les touches qui le donnent dans la disposition
+  // de l'invité. Ce que l'invité tient de Maj/Alt/Ctrl est relâché d'abord :
+  // le caractère porte déjà sa casse et son Alt Gr.
+  caractere(ch, d) {
+    const ev = evenementsCaractere(ch, d, { mode: this.qemu ? 'qemu' : 'us' });
+    if (!ev) { this.surIntapable(ch); return; }
+    this.relacherMods();
+    // Verr. Maj de l'invité éteint : le caractère est déjà dans sa casse.
+    if (this.verrous?.caps) this.basculerCaps();
+    for (const x of ev) this.evenement(x);
+    this.modUtilise = true;
+  }
+  // Mode caractère : Maj, Ctrl et Alt tenus ici partent avant une touche sans caractère.
+  envoyerMods() {
+    for (const [code, key] of this.modsTenus) if (!this.modsEnvoyes.has(code)) { this.modsEnvoyes.add(code); this.touche({ code, key }, true); }
+    this.modUtilise = true;
+  }
+  relacherMods() {
+    for (const code of this.modsEnvoyes) this.touche({ code, key: this.modsTenus.get(code) || code }, false);
+    this.modsEnvoyes.clear();
   }
 
   touche(e, bas) {
@@ -725,7 +677,7 @@ export class Ecran {
   }
   // Ctrl(+Maj)+lettre sur la touche qui porte cette lettre dans la disposition de l'invité.
   raccourci(lettre, { maj = false, disposition = 'fr' } = {}) {
-    const code = DISPOSITIONS[disposition]?.carte[lettre]?.[0]?.[0] || `Key${lettre.toUpperCase()}`;
+    const code = appuis(lettre, disposition)?.[0]?.[0] || `Key${lettre.toUpperCase()}`;
     this.combinaison(lettre, maj, code);
   }
   // Ctrl+Alt+Suppr : la combinaison que le navigateur garde pour lui.
@@ -747,7 +699,7 @@ export class Ecran {
     if (!this.verrous || e.code === 'CapsLock' || typeof e.getModifierState !== 'function') return;
     if (e.getModifierState('CapsLock') !== this.verrous.caps) this.basculerCaps();
   }
-  relacher() { for (const [code, key] of this.enfoncees) this.touche({ code, key }, false); this.enfoncees.clear(); this.metaSeul = null; }
+  relacher() { for (const [code, key] of this.enfoncees) this.touche({ code, key }, false); this.enfoncees.clear(); this.relacherMods(); this.modsTenus.clear(); this.metaSeul = null; }
 
   brancher() {
     const t = this.toile;
@@ -775,7 +727,17 @@ export class Ecran {
         if (this.verrous) return;
         if (this.mac) { this.basculerCaps(); return; }
       }
-      this.synchroniserCaps(e);
+      const d = this.disposition();
+      // Mode caractère (disposition de l'invité connue) : Verr. Maj ne part pas
+      // (le caractère porte sa casse), Maj, Ctrl et Alt attendent de servir.
+      if (d) {
+        if (e.code === 'CapsLock') return;
+        if (/^(Shift|Control|Alt)/.test(e.code)) { if (!this.modsTenus.has(e.code)) { this.modsTenus.set(e.code, e.key); this.modUtilise = false; } return; }
+        if (e.key === 'Dead') return;    // touche morte d'ici : le caractère composé arrive à la touche suivante
+        const altgr = typeof e.getModifierState === 'function' && e.getModifierState('AltGraph');
+        const ch = [...e.key].length === 1 && !e.metaKey && (!e.ctrlKey || altgr) && (!e.altKey || altgr || this.mac) ? e.key : null;
+        if (ch !== null) { this.metaSeul = null; this.caractere(ch, d); return; }
+      } else this.synchroniserCaps(e);
       if (this.mac && /^Meta/.test(e.code)) { this.metaSeul = e.code; return; }
       // Sur Mac, ⌘ + une touche devient Ctrl + la même touche dans l'invité
       // (⌘S, ⌘F, ⌘T, ⌘←…), comme ⌘C et ⌘V ; ⌘Espace ouvre la recherche de
@@ -787,16 +749,32 @@ export class Ecran {
         if (e.code === 'Space') { if (!e.repeat) this.combo('MetaLeft'); return; }
         if (e.code === 'Tab') { if (!e.repeat) this.combo('AltLeft', 'Tab'); return; }
         if (lettre === 'c' || lettre === 'x') { if (e.repeat) return; this.armerCopie(); }
-        this.combinaison(lettre || e.key, e.shiftKey, e.code);
+        // La lettre du raccourci, sur sa touche dans la disposition de l'invité (⌘A → Ctrl+A partout).
+        this.combinaison(lettre || e.key, e.shiftKey, (d && lettre && appuis(lettre, d)?.[0]?.[0]) || e.code);
         return;
       }
       if (!this.mac && mod(e) && (lettre === 'c' || lettre === 'x') && !e.repeat) this.armerCopie();
+      if (d && e.ctrlKey && !e.altKey && lettre && appuis(lettre, d)) {
+        // Ctrl + lettre : la lettre sur sa touche dans l'invité (Ctrl est tenu ici, pas encore là-bas).
+        this.modUtilise = true;
+        this.combinaison(lettre, e.shiftKey, appuis(lettre, d)[0][0]);
+        return;
+      }
+      if (d) this.envoyerMods();
       if (e.repeat && !this.enfoncees.has(e.code)) return;
       this.enfoncees.set(e.code, e.key);
       this.touche(e, true);
     });
     t.addEventListener('keyup', e => {
       e.preventDefault();
+      if (this.modsTenus.has(e.code)) {
+        const envoye = this.modsEnvoyes.delete(e.code);
+        if (envoye) this.touche({ code: e.code, key: this.modsTenus.get(e.code) }, false);
+        // Alt seul, appuyé puis lâché (menus de Windows) : l'appui part entier.
+        else if (/^Alt/.test(e.code) && !this.modUtilise && !this.mac) this.combo(e.code);
+        this.modsTenus.delete(e.code);
+        return;
+      }
       if (e.code === 'CapsLock' && this.mac && !this.verrous) { this.basculerCaps(); return; }
       if (this.mac && /^Meta/.test(e.code) && this.metaSeul === e.code) { this.metaSeul = null; this.touche({ code: e.code, key: 'Meta' }, true); this.touche({ code: e.code, key: 'Meta' }, false); return; }
       if (!this.enfoncees.has(e.code)) return;
@@ -815,7 +793,7 @@ export class Ecran {
     });
     this.piege.addEventListener('keydown', e => { if (!/^(Meta|Control|Shift)/.test(e.key) && !(e.metaKey || e.ctrlKey)) { e.preventDefault(); this.toile.focus({ preventScroll: true }); } });
     const masque = e => (e.buttons & 1 ? 1 : 0) | (e.buttons & 4 ? 2 : 0) | (e.buttons & 2 ? 4 : 0);
-    t.addEventListener('pointerdown', e => { t.focus(); t.setPointerCapture?.(e.pointerId); this.boutons = masque(e); this.pointeur(...this.position(e), this.boutons); e.preventDefault(); });
+    t.addEventListener('pointerdown', e => { if (this.modsTenus.size) this.envoyerMods(); t.focus(); t.setPointerCapture?.(e.pointerId); this.boutons = masque(e); this.pointeur(...this.position(e), this.boutons); e.preventDefault(); });
     t.addEventListener('pointerup', e => { this.boutons = masque(e); this.pointeur(...this.position(e), this.boutons); });
     t.addEventListener('pointermove', e => { this.boutons = masque(e); this.pointeur(...this.position(e), this.boutons); });
     t.addEventListener('wheel', e => {

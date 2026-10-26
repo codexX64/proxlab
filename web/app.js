@@ -12,7 +12,10 @@ import {
 } from './socle/compte.js';
 import { courbe, anneau, jauge, calendrier, capacite, tuiles } from './socle/graphes.js';
 import { Terminal } from './terminal.js';
-import { Ecran, DISPOSITIONS, FRAPPE_MAX, intapables, estMac } from './ecran.js';
+import { Ecran, DISPOSITIONS, intapables, estMac } from './ecran.js';
+
+// Le plus long texte que ProxLab tape d'une traite (src/frappe.js).
+const FRAPPE_MAX = 100000;
 
 appliquerTheme();
 const SERVICE = 'ProxLab';
@@ -941,6 +944,9 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const choisie = lireLocal(cleDispo, '');
   let disposition = DISPOSITIONS[choisie] ? choisie : lireLocal('proxlab-disposition', /^fr/i.test(navigator.language || '') ? 'fr' : 'us');
   let detection = null;   // { disposition, brut, source } ou { disposition: null, raison, message }
+  // Frappe au caractère (par défaut) : ce qui est tapé ici arrive tel quel ; ou
+  // par touche physique (jeux, raccourcis exotiques), la disposition de la VM s'appliquant.
+  let frappePhysique = lireLocal('proxlab-frappe', '') === 'physique', intapableVu = '';
   const agentPrevuClavier = (f.enAttente || []).includes('agent');
   const urlClavier = `/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/clavier`;
   const poserDispo = (k, { main = false } = {}) => {
@@ -962,18 +968,50 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   const choixDispo = h('select', { class: 'presse-dispo', 'aria-label': 'Disposition du clavier de la VM', onchange: e => poserDispo(e.target.value, { main: true }) },
     Object.entries(DISPOSITIONS).map(([k, d]) => h('option', { value: k, text: d.nom, selected: k === disposition })));
   const avance = h('span', { class: 'note' });
-  const taper = async texte => {
-    if (!ecran?.actif && distantVivant()) return versApart({ agir: 'taper', texte });
-    if (!ecran?.actif) return toast('Ouvre l\'écran d\'abord.', true);
-    const manque = intapables(texte, disposition);
-    if ([...texte].length > FRAPPE_MAX) toast(`Seuls les ${FRAPPE_MAX} premiers caractères sont tapés.`);
-    if (ecran.enFrappe) return toast('Une frappe est déjà en cours : attends qu’elle finisse.', true);
-    ecran.toile.focus();
-    ecran.enFrappe = true;
-    let r;
-    try { r = await ecran.taper(texte, disposition, { surAvance: (i, n) => { avance.textContent = i < n ? `frappe ${i}/${n}…` : ''; } }); } finally { if (ecran) ecran.enFrappe = false; avance.textContent = ''; }
-    if (r.sautes) toast(`Tapé, sauf ${r.sautes} caractère${r.sautes > 1 ? 's' : ''} absent${r.sautes > 1 ? 's' : ''} de la disposition ${DISPOSITIONS[disposition].nom} : ${manque.slice(0, 8).join(' ')}`, true);
+  // Taper : ProxLab tape le texte lui-même dans la VM, par sa propre connexion
+  // à l'écran. On peut quitter la page ou fermer l'écran : la frappe continue,
+  // et se retrouve ici (barre de l'écran) en revenant.
+  const urlFrappe = `/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/frappe`;
+  let suiviFrappe = null, frappeVue = null;
+  const frappeChip = h('span', { class: 'frappe-chip', hidden: true });
+  const duree = (n, ms) => { const s = Math.ceil(n * ms / 1000); return s < 60 ? `${s} s` : `${Math.round(s / 60)} min`; };
+  const peindreFrappe = fr => {
+    const enCours = fr?.etat === 'en cours';
+    frappeChip.hidden = !enCours;
+    avance.textContent = enCours ? `frappe ${fr.tapes}/${fr.total}…` : '';
+    if (enCours) frappeChip.replaceChildren(icone('clavier', 13), h('span', { text: `Frappe ${fr.tapes}/${fr.total} · reste ${duree(fr.total - fr.tapes, fr.msParCaractere)}` }),
+      h('button', { class: 'btn sm flat', type: 'button', onclick: sur(async () => { peindreFrappe(await api.del(urlFrappe)); toast('Frappe arrêtée.'); }) }, 'Arrêter'));
   };
+  const suivreFrappe = async () => {
+    clearTimeout(suiviFrappe);
+    if (!membre) return;
+    let fr;
+    try { fr = await api.get(urlFrappe); } catch { return; }
+    peindreFrappe(fr);
+    if (fr.etat === 'en cours') { frappeVue = fr.debut; suiviFrappe = setTimeout(suivreFrappe, 700); return; }
+    // La fin d'une frappe suivie ici : dite une fois.
+    if (frappeVue && frappeVue === fr.debut) {
+      frappeVue = null;
+      if (fr.etat === 'terminée') toast(fr.sautes ? `Tapé, sauf ${fr.sautes} caractère${fr.sautes > 1 ? 's' : ''} absent${fr.sautes > 1 ? 's' : ''} de la disposition de la VM.` : `Frappe terminée : ${fr.tapes} caractère${fr.tapes > 1 ? 's' : ''}.`, !!fr.sautes);
+      else if (fr.etat === 'échec') toast(`Frappe interrompue (${fr.tapes}/${fr.total}) : ${fr.message}`, true);
+    }
+  };
+  const taper = async texte => {
+    texte = String(texte ?? '');
+    if (!texte) return toast('Rien à taper.');
+    const n = [...texte].length;
+    if (n > FRAPPE_MAX) return toast(`Au plus ${FRAPPE_MAX.toLocaleString('fr-FR')} caractères par frappe (ici ${n.toLocaleString('fr-FR')}).`, true);
+    const manque = intapables(texte, disposition);
+    let fr;
+    try { fr = await api.post(urlFrappe, { texte, disposition }); } catch (e) { return toast(e.message, true); }
+    frappeVue = fr.debut;
+    peindreFrappe(fr);
+    if (manque.length) toast(`Absent${manque.length > 1 ? 's' : ''} de la disposition ${DISPOSITIONS[disposition].nom}, sauté${manque.length > 1 ? 's' : ''} : ${manque.slice(0, 8).join(' ')}`, true);
+    else if (fr.total > 150) toast(`ProxLab tape ${fr.total.toLocaleString('fr-FR')} caractères dans la VM (environ ${duree(fr.total, fr.msParCaractere)}) : tu peux quitter la page, la frappe continue.`);
+    ecran?.toile.focus();
+    suiviFrappe = setTimeout(suivreFrappe, 500);
+  };
+  suivreFrappe();
   const coller = texte => {
     if (!ecran?.actif) return toast('Ouvre l\'écran d\'abord.', true);
     ecran.envoyerPresse(texte);
@@ -1015,7 +1053,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
       agent ? h('label', { class: 'presse-label presse-mode' }, h('span', { text: `${MOD}V dans l'écran` }),
         h('select', { class: 'presse-dispo', onchange: e => { modeColler = e.target.value; poserLocal('proxlab-coller', modeColler); } },
           h('option', { value: 'taper', text: 'tape le texte', selected: modeColler !== 'agent' }), h('option', { value: 'agent', text: 'colle par le presse-papiers de la VM', selected: modeColler === 'agent' }))) : null,
-      h('p', { class: 'hint', text: `${MOD}V dans l'écran tape ton presse-papiers touche par touche, au clavier choisi : ça marche partout, même pour un mot de passe à l'écran de connexion.${agent ? ' Le presse-papiers de la VM demande spice-vdagent, qui ne relaie rien sous GNOME Wayland (Fedora par défaut).' : ''}` })));
+      h('p', { class: 'hint', text: `${MOD}V dans l'écran : ProxLab tape ton presse-papiers lui-même, au clavier de la VM — ça marche partout, même à l'écran de connexion, et ça continue si tu quittes la page.${agent ? ' Le presse-papiers de la VM demande spice-vdagent, qui ne relaie rien sous GNOME Wayland (Fedora par défaut).' : ''}` })));
   const montrerPanneau = (ouvert = panneau.hidden) => { panneau.hidden = !ouvert; if (ouvert) actions.bouton.classList.remove('signal'); };
   // Coller : le texte d'ici, tapé ou passé par le presse-papiers de la VM.
   const collerTexte = (t, maj = false) => {
@@ -1081,7 +1119,6 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     if (!seul) { if (m.etat && typeof m.etat === 'object') distant = { ...m.etat, t: Date.now() }; return; }
     if (m.qui) return annoncer();
     if (typeof m.agir !== 'string' || !ecran?.actif) return;
-    if (m.agir === 'taper') return taper(String(m.texte ?? ''));
     if (m.agir === 'coller') return collerTexte(String(m.texte ?? ''), !!m.maj);
     const it = groupesActions().flatMap(g => g.items).find(x => x.id === m.agir);
     if (it && !it.inactif) { it.agir(); setTimeout(annoncer, 300); }
@@ -1152,8 +1189,13 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
       { titre: 'Clavier de la VM', items: [
         ...Object.entries(DISPOSITIONS).map(([k, d]) => ({
           texte: d.nom + (detection?.disposition === k ? ' · détecté' : ''), ic: k === disposition ? 'verifie' : null,
-          agir: () => { poserDispo(k, { main: true }); toast(`Clavier de la VM : ${d.nom}. Coller tapera avec cette disposition.`); ecran?.toile.focus(); },
+          agir: () => { poserDispo(k, { main: true }); toast(`Clavier de la VM : ${d.nom}. Ce que tu tapes et colles arrive tel quel.`); ecran?.toile.focus(); },
         })),
+        { texte: 'Touches physiques (sans traduction)', ic: frappePhysique ? 'verifie' : null, agir: () => {
+          frappePhysique = !frappePhysique; poserLocal('proxlab-frappe', frappePhysique ? 'physique' : '');
+          toast(frappePhysique ? 'Chaque touche part telle quelle : la disposition de la VM s’applique (jeux, raccourcis).' : 'Ce que tu tapes arrive tel quel dans la VM, quelle que soit la disposition de ton clavier.');
+          ecran?.relacher(); ecran?.toile.focus();
+        } },
         { texte: detection?.disposition ? 'Détecter à nouveau' : 'Détecter le clavier de la VM', ic: 'relance', inactif: off, agir: () => { try { localStorage.removeItem(cleDispo); } catch { /* stockage du navigateur indisponible : rien à oublier */ } detecter(true); } },
         ...(detection?.raison === 'agent' && !agentPrevuClavier && admin ? [{ texte: 'Activer l\'agent QEMU…', ic: 'clavier', agir: activerAgent }] : []),
       ] },
@@ -1253,6 +1295,9 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     ws.binaryType = 'arraybuffer';
     ecran = new Ecran(hote, ws, {
       remplir, nette: true,
+      // Le caractère tapé ici, sur la bonne touche de la VM ; ou la touche physique, au choix.
+      disposition: () => (frappePhysique ? null : disposition),
+      surIntapable: ch => { if (intapableVu !== ch) { intapableVu = ch; toast(`« ${ch} » n'existe pas sur le clavier ${DISPOSITIONS[disposition].nom} de la VM.`, true); } },
       surEtat: (q, d) => {
         if (q === 'pret') { vivante = true; essaisOuverture = 0; clearTimeout(chien); }
         if (q === 'ajustable') {
@@ -1350,8 +1395,8 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     try { wsCourant.close(); } catch { /* déjà fermé */ }
     ouvrir();
   }
-  const surRetour = () => { if (document.visibilityState === 'visible') { ecran?.repeindre(); revenir(); } };
-  const nettoyer = () => { clearInterval(veille); document.removeEventListener('visibilitychange', surRetour); window.removeEventListener('focus', surRetour); };
+  const surRetour = () => { if (document.visibilityState === 'visible') { ecran?.repeindre(); revenir(); if (hote.isConnected) suivreFrappe(); } };
+  const nettoyer = () => { clearInterval(veille); clearTimeout(suiviFrappe); document.removeEventListener('visibilitychange', surRetour); window.removeEventListener('focus', surRetour); };
   const veille = setInterval(() => {
     if (hote.isConnected) { monte = true; if (morte()) revenir(); return; }
     // Gardé en continu hors de la fiche : il reste en vie, sans rien demander.
@@ -1365,7 +1410,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   hote.append(h('p', { class: 'vide', text: enMarche ? `L'écran de la machine, avec le clavier et la souris. Clique dans l'image pour lui donner le clavier ; ${MOD}C et ${MOD}V copient et collent. Chaque ouverture est journalisée.` : 'La machine est arrêtée : démarre-la pour voir son écran.' }));
   if (!enMarche) bouton.disabled = true;
   if (seul) sortieFenetre.append(outils, h('button', { class: 'btn sm', type: 'button', title: 'Fermer cette fenêtre', onclick: () => window.close() }, icone('croix', 14), 'Fermer'));
-  const carteEcran = h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Écran' }), etat, seul ? null : outils, bouton), panneau, hote);
+  const carteEcran = h('div', { class: 'card' }, h('header', {}, h('h2', { text: 'Écran' }), etat, frappeChip, seul ? null : outils, bouton), panneau, hote);
   if (seul) fenetre(true);
   carteEcran.nettoyer = nettoyer;
   carteEcran.addEventListener('montre', () => { ecran?.repeindre(); if (ecran?.actif) ecran.toile.focus({ preventScroll: true }); revenir(); });
