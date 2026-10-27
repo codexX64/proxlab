@@ -132,7 +132,9 @@ il ouvre sa propre connexion à l'écran de la VM (partagée avec celui qui est
 ouvert) et tape chaque caractère sur sa touche dans la disposition de la VM
 (AZERTY ou QWERTY), jusqu'à 100 000 caractères. On peut fermer l'écran ou
 quitter la page : la frappe continue, et la barre de l'écran la montre en
-revenant, avec de quoi l'arrêter. Le rythme suit la longueur : un texte court
+revenant, avec de quoi l'arrêter ; un collage parti par mégarde s'arrête aussi
+d'une touche : Suppr, ⌫ ou Échap dans l'écran (ou l'écran fluide) pendant la
+frappe l'arrêtent, sans que la touche parte dans la VM. Le rythme suit la longueur : un texte court
 au pas d'une frappe rapide (25 ms par caractère), un long plus vite, jamais
 sous 8 ms (la file du clavier PS/2 de QEMU ne tient que quelques touches) —
 environ 13 s pour 1 000 caractères, 32 s pour 4 000. Ça marche partout, même
