@@ -162,8 +162,13 @@ await page.locator('textarea.presse-envoi').fill('Bonjour depuis ProxLab, texte 
 await page.getByRole('button', { name: 'Taper dans la VM' }).click();
 await page.locator('.frappe-chip', { hasText: /Frappe \d+\/\d+/ }).waitFor();
 await controle('ecran-frappe');
-await page.locator('.frappe-chip').getByRole('button', { name: 'Arrêter' }).click();
+// Un collage de trop : Suppr dans l'écran arrête la frappe, et ne part pas dans la VM.
+await page.evaluate(() => { window.__suppr = 0; const envoyer = WebSocket.prototype.send; WebSocket.prototype.send = function (d) { const b = d instanceof ArrayBuffer ? new Uint8Array(d) : d instanceof Uint8Array ? d : null; if (b && b[0] === 255 && b.length === 12 && b[3] === 1 && new DataView(b.buffer, b.byteOffset).getUint32(4) === 0xffff) window.__suppr++; return envoyer.call(this, d); }; });
+await page.locator('canvas.ecran').first().focus();
+await page.keyboard.press('Delete');
 await page.getByText('Frappe arrêtée.').waitFor();
+await page.locator('.frappe-chip').first().waitFor({ state: 'hidden' });
+if (await page.evaluate(() => window.__suppr)) erreurs.push('Suppr parti dans la VM pendant la frappe');
 await page.getByRole('button', { name: 'Actions', exact: true }).click();
 await page.getByRole('menuitem', { name: 'Masquer le presse-papiers' }).click();
 // Écran dans une fenêtre à part : le menu Actions de la fiche la pilote.
