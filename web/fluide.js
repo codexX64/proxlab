@@ -70,7 +70,9 @@ export function versAvcc(annexB) {
 }
 
 export class EcranFluide {
-  constructor(hote, ws, { disposition = () => null, surEtat = () => {}, surIntapable = () => {}, surColler = null, mac = /mac|iphone|ipad/i.test(navigator.platform || '') } = {}) {
+  constructor(hote, ws, { disposition = () => null, surEtat = () => {}, surIntapable = () => {}, surColler = null, surTouche = () => false, mac = /mac|iphone|ipad/i.test(navigator.platform || '') } = {}) {
+    // surTouche : une touche que la page garde pour elle (Suppr pendant une frappe) ; ni elle ni son relâché ne partent.
+    this.surTouche = surTouche; this.avalees = new Set();
     this.hote = hote; this.ws = ws; this.disposition = disposition; this.surEtat = surEtat; this.surIntapable = surIntapable; this.surColler = surColler; this.mac = mac;
     this.toile = document.createElement('canvas');
     this.toile.className = 'ecran fluide';
@@ -247,6 +249,7 @@ export class EcranFluide {
     const modColler = e => (this.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey;
     t.addEventListener('keydown', e => {
       if (!this.actif) return;
+      if (this.surTouche(e)) { e.preventDefault(); this.avalees.add(e.code); return; }
       const lettre = e.key.length === 1 ? e.key.toLowerCase() : '';
       if (modColler(e) && lettre === 'v' && this.surColler) {
         // Pas de preventDefault : le collage natif doit avoir lieu, dans le piège.
@@ -277,6 +280,7 @@ export class EcranFluide {
     t.addEventListener('keyup', e => {
       if (!this.actif) return;
       e.preventDefault();
+      if (this.avalees.delete(e.code)) return;
       const d = this.disposition();
       if (!d) { this.physique(e.code, false); return; }
       if (/^(Shift|Control|Alt)/.test(e.code)) { this.modsTenus.delete(e.code); if (this.modsEnvoyes.has(e.code)) { this.modsEnvoyes.delete(e.code); this.touche(VK[e.code], false, this.etatMods() | (ETENDUES.has(e.code) ? ETENDU : 0)); } return; }

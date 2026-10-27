@@ -17,6 +17,8 @@ import { EcranFluide } from './fluide.js';
 
 // Le plus long texte que ProxLab tape d'une traite (src/frappe.js).
 const FRAPPE_MAX = 100000;
+// Pendant qu'une frappe de ProxLab tourne, ces touches dans l'écran l'arrêtent (un ⌘V de trop).
+const TOUCHES_ARRET_FRAPPE = new Set(['Delete', 'Backspace', 'Escape']);
 
 appliquerTheme();
 const SERVICE = 'ProxLab';
@@ -1006,13 +1008,18 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
   let suiviFrappe = null, frappeVue = null;
   const frappeChip = h('span', { class: 'frappe-chip', hidden: true });
   const duree = (n, ms) => { const s = Math.ceil(n * ms / 1000); return s < 60 ? `${s} s` : `${Math.round(s / 60)} min`; };
+  let frappeEnCours = false;
   const peindreFrappe = fr => {
     const enCours = fr?.etat === 'en cours';
+    frappeEnCours = enCours;
     frappeChip.hidden = !enCours;
     avance.textContent = enCours ? `frappe ${fr.tapes}/${fr.total}…` : '';
     if (enCours) frappeChip.replaceChildren(icone('clavier', 13), h('span', { text: `Frappe ${fr.tapes}/${fr.total} · reste ${duree(fr.total - fr.tapes, fr.msParCaractere)}` }),
-      h('button', { class: 'btn sm flat', type: 'button', onclick: sur(async () => { peindreFrappe(await api.del(urlFrappe)); toast('Frappe arrêtée.'); }) }, 'Arrêter'));
+      h('button', { class: 'btn sm flat', type: 'button', onclick: sur(() => arreterFrappe()) }, 'Arrêter'));
   };
+  const arreterFrappe = async () => { frappeEnCours = false; peindreFrappe(await api.del(urlFrappe)); toast('Frappe arrêtée.'); ecran?.toile.focus({ preventScroll: true }); };
+  // Suppr, ⌫ ou Échap dans l'écran pendant une frappe : elle s'arrête, la touche ne part pas.
+  const toucheArret = e => { if (!frappeEnCours || !TOUCHES_ARRET_FRAPPE.has(e.key)) return false; arreterFrappe().catch(x => toast(x.message, true)); return true; };
   const suivreFrappe = async () => {
     clearTimeout(suiviFrappe);
     if (!membre) return;
@@ -1038,7 +1045,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     frappeVue = fr.debut;
     peindreFrappe(fr);
     if (manque.length) toast(`Absent${manque.length > 1 ? 's' : ''} de la disposition ${DISPOSITIONS[disposition].nom}, sauté${manque.length > 1 ? 's' : ''} : ${manque.slice(0, 8).join(' ')}`, true);
-    else if (fr.total > 150) toast(`ProxLab tape ${fr.total.toLocaleString('fr-FR')} caractères dans la VM (environ ${duree(fr.total, fr.msParCaractere)}) : tu peux quitter la page, la frappe continue.`);
+    else if (fr.total > 150) toast(`ProxLab tape ${fr.total.toLocaleString('fr-FR')} caractères dans la VM (environ ${duree(fr.total, fr.msParCaractere)}) : tu peux quitter la page, la frappe continue ; Suppr ou Échap dans l'écran l'arrête.`);
     ecran?.toile.focus();
     suiviFrappe = setTimeout(suivreFrappe, 500);
   };
@@ -1326,6 +1333,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     wsCourant = ws;
     ws.binaryType = 'arraybuffer';
     ecran = new Ecran(hote, ws, {
+      surTouche: toucheArret,
       remplir, nette: true,
       // Le caractère tapé ici, sur la bonne touche de la VM ; ou la touche physique, au choix.
       disposition: () => (frappePhysique ? null : disposition),
@@ -1533,12 +1541,31 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
     const peindreDispo = () => { const d = disposition(); boutonDispo.replaceChildren(icone('clavier', 14), h('span', { text: d ? DISPOSITIONS[d].nom.split(' ')[0] : 'Touches physiques' })); boutonDispo.title = d ? `Clavier de la VM : ${DISPOSITIONS[d].nom}. Clic : l'autre.` : 'Chaque touche part telle quelle.'; };
     peindreDispo();
     const urlFrappe = `/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/frappe`;
+    // La frappe en cours (collage tapé par ProxLab) : suivie, dite dans la barre, arrêtée par Suppr.
+    let frappeEnCours = false, suiviFrappe = null;
+    const frappeChip = h('span', { class: 'frappe-chip', hidden: true });
+    const peindreFrappe = fr => {
+      frappeEnCours = fr?.etat === 'en cours';
+      frappeChip.hidden = !frappeEnCours;
+      if (frappeEnCours) frappeChip.replaceChildren(icone('clavier', 13), h('span', { text: `Frappe ${fr.tapes}/${fr.total}` }), h('button', { class: 'btn sm flat', type: 'button', onclick: sur(() => arreterFrappe()) }, 'Arrêter'));
+    };
+    const suivreFrappe = async () => {
+      clearTimeout(suiviFrappe);
+      if (!membre) return;
+      let fr;
+      try { fr = await api.get(urlFrappe); } catch { return; }
+      peindreFrappe(fr);
+      if (frappeEnCours) suiviFrappe = setTimeout(suivreFrappe, 700);
+    };
+    const arreterFrappe = async () => { frappeEnCours = false; clearTimeout(suiviFrappe); peindreFrappe(await api.del(urlFrappe)); toast('Frappe arrêtée.'); ecran?.toile.focus({ preventScroll: true }); };
+    const toucheArret = e => { if (!frappeEnCours || !TOUCHES_ARRET_FRAPPE.has(e.key)) return false; arreterFrappe().catch(x => toast(x.message, true)); return true; };
+    suivreFrappe();
     const taper = async texte => {
       texte = String(texte ?? '');
       if (!texte) return;
       const d = disposition() || 'fr';
       if ([...texte].length > FRAPPE_MAX) return toast(`Au plus ${FRAPPE_MAX.toLocaleString('fr-FR')} caractères par frappe.`, true);
-      try { const fr = await api.post(urlFrappe, { texte, disposition: d }); if (fr.total > 150) toast(`ProxLab tape ${fr.total.toLocaleString('fr-FR')} caractères dans la VM : tu peux quitter la page, la frappe continue.`); } catch (e) { toast(e.message, true); }
+      try { const fr = await api.post(urlFrappe, { texte, disposition: d }); peindreFrappe(fr); clearTimeout(suiviFrappe); suiviFrappe = setTimeout(suivreFrappe, 500); if (fr.total > 150) toast(`ProxLab tape ${fr.total.toLocaleString('fr-FR')} caractères dans la VM : tu peux quitter la page, la frappe continue ; Suppr ou Échap dans l'écran l'arrête.`); } catch (e) { toast(e.message, true); }
     };
     const collerIci = async texte => {
       if (texte === null) { try { texte = await navigator.clipboard.readText(); } catch { return toast('Le navigateur refuse la lecture du presse-papiers.', true); } }
@@ -1571,7 +1598,7 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
       const { passe } = await api.post('/api/console', { noeud: f.node, type: 'qemu', vmid: String(f.vmid), mode: 'fluide' });
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       ws = new WebSocket(`${proto}//${location.host}/ws/console?passe=${encodeURIComponent(passe)}`);
-      const e = new EcranFluide(hote, ws, { disposition, surIntapable: ch => toast(`« ${ch} » n'existe pas sur le clavier de la VM.`, true), surColler: collerIci, mac: estMac() });
+      const e = new EcranFluide(hote, ws, { disposition, surTouche: toucheArret, surIntapable: ch => toast(`« ${ch} » n'existe pas sur le clavier de la VM.`, true), surColler: collerIci, mac: estMac() });
       ecran = e;
       garder(e, ws);
       bouton.replaceChildren(icone('croix', 14), 'Fermer');
@@ -1587,7 +1614,7 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
     const outils = h('div', { class: 'ecran-outils' }, choixQualite, boutonDispo, actions.ancre,
       h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Plein écran', title: 'Plein écran', onclick: plein }, icone('agrandir', 14)));
     hote.append(h('p', { class: 'vide', text: enMarche ? 'L\'écran de la VM en vidéo, fluide. Clique dans l\'image pour lui donner le clavier ; ' + MOD + 'V colle (tapé par ProxLab).' : 'La machine est arrêtée : démarre-la pour voir son écran.' }));
-    carte.replaceChildren(h('header', {}, h('h2', { text: 'Écran fluide' }), etat, outils, bouton), hote);
+    carte.replaceChildren(h('header', {}, h('h2', { text: 'Écran fluide' }), etat, frappeChip, outils, bouton), hote);
     hote.addEventListener('dblclick', e => { if (e.target === hote) plein(); });
     if (auto && enMarche) setTimeout(() => ouvrir().catch(x => { etat.textContent = 'fermé'; toast(x.message, true); }), 0);
   }

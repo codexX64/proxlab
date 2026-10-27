@@ -172,8 +172,10 @@ export class Ecran {
   // disposition() : la disposition du clavier de l'invité (« fr », « us »), ou
   // null pour tout envoyer par touche physique. surIntapable(ch) : un caractère
   // tapé ici que cette disposition ne sait pas donner.
-  constructor(hote, ws, { surEtat = () => {}, surPresse = () => {}, surColler = null, remplir = false, garderImage = false, nette = false, disposition = () => null, surIntapable = () => {} } = {}) {
+  constructor(hote, ws, { surEtat = () => {}, surPresse = () => {}, surColler = null, remplir = false, garderImage = false, nette = false, disposition = () => null, surIntapable = () => {}, surTouche = () => false } = {}) {
     this.nette = !!nette;
+    // surTouche : une touche que la page garde pour elle (Suppr pendant une frappe) ; ni elle ni son relâché ne partent.
+    this.surTouche = surTouche; this.avalees = new Set();
     this.disposition = disposition; this.surIntapable = surIntapable;
     // Maj, Ctrl, Alt tenus ici et pas encore envoyés (mode caractère), et ceux envoyés.
     this.modsTenus = new Map(); this.modsEnvoyes = new Set(); this.modUtilise = false;
@@ -708,6 +710,7 @@ export class Ecran {
     // ⌘+lettre devient Ctrl+lettre dans l'invité ; ⌘ seul reste la touche Super.
     const mod = e => (this.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey;
     t.addEventListener('keydown', e => {
+      if (this.surTouche(e)) { e.preventDefault(); this.avalees.add(e.code); return; }
       // La lettre selon la disposition d'ici (⌘A en AZERTY est la touche KeyQ) ;
       // rejouée dans l'invité sur la même touche physique.
       const lettre = e.key.length === 1 ? e.key.toLowerCase() : '';
@@ -767,6 +770,7 @@ export class Ecran {
     });
     t.addEventListener('keyup', e => {
       e.preventDefault();
+      if (this.avalees.delete(e.code)) return;
       if (this.modsTenus.has(e.code)) {
         const envoye = this.modsEnvoyes.delete(e.code);
         if (envoye) this.touche({ code: e.code, key: this.modsTenus.get(e.code) }, false);
