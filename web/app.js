@@ -820,7 +820,13 @@ function menuActions(groupes, { titre = 'Actions' } = {}) {
     window.removeEventListener('scroll', fermerSurDefilement, true); window.removeEventListener('resize', fermerSurDefilement);
     if (rendre) bouton.focus();
   }
-  function fermerSurDefilement(e) { if (!liste.contains(e.target)) fermer(); }
+  // Un défilement (la page, ou le bouton amené en vue juste avant le clic) :
+  // le menu suit son bouton, et ne se ferme que si le bouton sort de l'écran.
+  function fermerSurDefilement(e) {
+    if (liste.contains(e.target)) return;
+    const r = bouton.getBoundingClientRect();
+    if (e.type === 'scroll' && r.bottom > 0 && r.top < innerHeight) placer(); else fermer();
+  }
   // Posé par rapport à la fenêtre (une carte coupe ce qui dépasse) : sous le
   // bouton, ou au-dessus s'il y a plus de place ; hauteur bornée à la fenêtre.
   function placer() {
@@ -843,13 +849,14 @@ function menuActions(groupes, { titre = 'Actions' } = {}) {
     placer();
     document.addEventListener('pointerdown', dehors, true);
     window.addEventListener('scroll', fermerSurDefilement, true); window.addEventListener('resize', fermerSurDefilement);
-    liste.querySelector('.menu-item:not([disabled])')?.focus();
+    // Sans défilement : un focus qui fait défiler la page refermerait le menu aussitôt ouvert.
+    liste.querySelector('.menu-item:not([disabled])')?.focus({ preventScroll: true });
   });
   liste.addEventListener('keydown', e => {
     const items = [...liste.querySelectorAll('.menu-item:not([disabled])')], i = items.indexOf(document.activeElement);
     if (e.key === 'Escape') { e.preventDefault(); fermer(true); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length]?.focus(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length]?.focus({ preventScroll: true }); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus({ preventScroll: true }); }
     else if (e.key === 'Tab') fermer();
   });
   return { ancre, bouton, fermer };
