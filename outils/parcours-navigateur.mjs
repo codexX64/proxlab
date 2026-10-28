@@ -13,7 +13,7 @@ const [hotePve, portPve] = grappe.split(':');
 fs.mkdirSync(sortie, { recursive: true });
 const MDP = 'phrase de passe pour proxlab en local';
 const navigateur = await chromium.launch();
-const contexte = await navigateur.newContext({ viewport: { width: 1280, height: 860 } });
+const contexte = await navigateur.newContext({ viewport: { width: 1280, height: 860 }, permissions: ['clipboard-read', 'clipboard-write'] });
 // Le Chromium du parcours ne décode pas le H.264 (codec propriétaire) : un
 // décodeur de remplacement reçoit les images de l'écran fluide et en peint une
 // mire, pour éprouver tout le reste (relais, configuration, entrées).
@@ -189,15 +189,26 @@ await page.locator('span.note', { hasText: /^ouvert · / }).first().waitFor();
 // Écran fluide : réglé et appairé depuis l'interface, contre le faux Sunshine
 // de la vitrine (127.0.0.2), puis ouvert ; les touches partent en codes VK
 // selon le clavier de la VM (AZERTY : « a » sur la touche Q).
+// Reliée en une commande : le lien le plus étroit proposé d'office, le terminal
+// du nœud pris dans la grappe puis changé, la commande copiée (ou montrée),
+// jouée par la vitrine ; le réglage à la main reste replié.
 await page.getByRole('tab', { name: 'Écran fluide' }).click();
-await page.getByLabel('Adresse de Sunshine dans la VM').waitFor();
+await page.locator('.puces button[aria-pressed="true"]', { hasText: '10.0.0.22 (ens19)' }).waitFor();
+const terminalNoeud = page.getByLabel('Commande qui ouvre un terminal root sur le nœud');
+if (await terminalNoeud.inputValue() !== 'ssh root@10.0.0.11') erreurs.push(`écran fluide : terminal proposé ${await terminalNoeud.inputValue()}`);
+if (await page.getByLabel('Adresse de Sunshine dans la VM').isVisible()) erreurs.push('écran fluide : réglage à la main déplié d\'office');
 await controle('fluide-reglage');
-await page.getByLabel('Adresse de Sunshine dans la VM').fill('127.0.0.2');
-await page.getByRole('button', { name: 'Vérifier' }).click();
-await page.getByText(/version 7\.1\.431/).waitFor();
-await page.getByRole('button', { name: 'Appairer' }).click();
-await page.locator('.pin-fluide .pin').waitFor();
-await controle('fluide-pin');
+await page.getByText('Réglage à la main : adresse et PIN').click();
+await page.getByLabel('Adresse de Sunshine dans la VM').waitFor();
+await controle('fluide-manuel');
+await page.getByText('Réglage à la main : adresse et PIN').click();
+await terminalNoeud.fill('ssh -J rebond root@10.0.0.11');
+await page.getByRole('button', { name: 'Copier la commande' }).click();
+await page.getByText(/En attente de la commande/).waitFor();
+const zoneCommande = page.getByLabel('Commande à copier');
+const commandeCopiee = await zoneCommande.isVisible() ? await zoneCommande.inputValue() : await page.evaluate(() => navigator.clipboard.readText());
+if (!commandeCopiee.startsWith("ssh -J rebond root@10.0.0.11 'bash -s' <<'PROXLAB'\n") || !/VMIP=10\.0\.0\.22;/.test(commandeCopiee) || !commandeCopiee.endsWith('\nPROXLAB\n')) erreurs.push(`écran fluide : commande copiée inattendue (${commandeCopiee.slice(0, 80)}…)`);
+await controle('fluide-commande');
 await page.locator('span.note', { hasText: /ouvert · 1920 × 1080 · 60 i\/s · chiffré/ }).waitFor({ timeout: 20000 });
 await page.waitForFunction(() => window.__fluide.images > 10 && window.__fluide.cles >= 1);
 const conf = await page.evaluate(() => window.__fluide.configure[0]);
