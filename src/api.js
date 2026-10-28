@@ -22,6 +22,7 @@ import { classer } from './reseau.js';
 import { Materiel } from './materiel.js';
 import { lienVnc } from './frappe.js';
 import { ouvrirVnc } from './ecran.js';
+import { ouvrirTermproxy } from './console.js';
 import { Images, ImageRefusee, FICHIER_ISO } from './images.js';
 import { DestinationRefusee, lireUrl } from './sortie.js';
 import { Fluide } from './fluide.js';
@@ -72,7 +73,6 @@ const S = {
   frappe: { texte: { type: 'chaine', requis: true, min: 1, max: FRAPPE_MAX }, disposition: { type: 'chaine', requis: true, parmi: ['fr', 'us'] } },
   console: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, type: { type: 'chaine', requis: true, parmi: ['node', ...TYPES] }, vmid: { type: 'chaine', max: 9, motif: VMID }, mode: { type: 'chaine', parmi: ['texte', 'ecran', 'fluide'] } },
   sonde: { hote: { type: 'chaine', requis: true, max: 253 }, port: { type: 'entier', min: 1, max: 65535, defaut: 8006 } },
-  fluideCommande: { adresseVm: { type: 'chaine', requis: true, max: 15, motif: /^\d{1,3}(\.\d{1,3}){3}$/ } },
   fluide: { hote: { type: 'chaine', requis: true, max: 253 }, portHttp: { type: 'entier', min: 1, max: 65535, defaut: 47989 }, portHttps: { type: 'entier', min: 1, max: 65535, defaut: 47984 } },
   liaison: {
     hote: { type: 'chaine', requis: true, max: 253 }, port: { type: 'entier', min: 1, max: 65535, defaut: 8006 },
@@ -577,6 +577,47 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     const statut = { invalide: 400, interdite: 400, 'non-configure': 404, occupe: 409, pin: 409, 'non-appaire': 409, empreinte: 409 }[e.code] || 502;
     throw new ErreurHttp(statut, `Sunshine : ${e.message}.`);
   };
+  // Un script lancé dans le shell du nœud (termproxy). Écho coupé, puis le
+  // script envoyé encodé en base64, par lignes courtes et à petits pas (la file
+  // d'entrée d'un terminal ne tient que 4 Kio), et lu jusqu'à sa ligne de fin.
+  // La sortie (bornée) est rendue ; chaque ligne passe aussi à surLigne.
+  const executerSurNoeud = async (noeud, script, surLigne = () => {}, { delaiMs = 240e3 } = {}) => {
+    const conn = await ouvrirTermproxy(proxmox, { noeud, type: 'node' });
+    const fin = `PROXLAB-FIN-${crypto.randomBytes(8).toString('hex')}`;
+    const finRe = new RegExp(`${fin} (\\d+)`);
+    const envoyer = t => conn.envoyerTexte(`0:${Buffer.byteLength(t)}:${t}`);
+    const pause = ms => new Promise(r => setTimeout(r, ms));
+    return new Promise((ok, ko) => {
+      let sortie = '', reste = '', premier = true, termine = false;
+      const vie = setInterval(() => { try { conn.envoyerTexte('2'); } catch { /* fermé */ } }, 20e3);
+      const terminer = e => {
+        if (termine) return;
+        termine = true; clearTimeout(chien); clearInterval(vie);
+        try { conn.close(); } catch { /* fermé */ }
+        if (e) ko(e); else ok(sortie);
+      };
+      const chien = setTimeout(() => terminer(new Error('le shell du nœud n\'a pas fini à temps')), delaiMs);
+      const lancer = async () => {
+        await pause(500);
+        envoyer('stty -echo\r');
+        await pause(400);
+        const b64 = Buffer.from(script).toString('base64').match(/.{1,76}/g).join('\r');
+        const corpsEnvoye = `f=$(mktemp); base64 -d > "$f" <<'PROXLAB64'\r${b64}\rPROXLAB64\rbash "$f"; echo "${fin} $?"; rm -f "$f"; exit\r`;
+        for (let i = 0; i < corpsEnvoye.length && !termine; i += 512) { envoyer(corpsEnvoye.slice(i, i + 512)); await pause(15); }
+      };
+      conn.on('message', d => {
+        const t = d.toString('utf8');
+        if (premier) { premier = false; lancer().catch(e => terminer(e)); if (t === 'OK') return; }
+        if (sortie.length < 256 * 1024) sortie += t;
+        reste += t;
+        const lignes = reste.split(/\r?\n/);
+        reste = lignes.pop();
+        for (const l of lignes) { try { surLigne(l); } catch { /* affichage seulement */ } }
+        if (finRe.test(sortie)) terminer(null);
+      });
+      conn.on('fermeture', () => terminer(finRe.test(sortie) ? null : new Error('le shell du nœud s\'est fermé avant la fin du script')));
+    });
+  };
   // Les notes de la VM : là que la commande dépose l'empreinte de Sunshine.
   const notesDe = m => ({
     lireNotes: async () => String((await pve(() => proxmox.get(m.base + '/config')))?.description || ''),
@@ -589,12 +630,14 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     if (admin) {
       const avant = fluide.commandes.get(String(m.vmid))?.etat;
       const apres = await fluide.suivreCommande(m.vmid, notesDe(m)).catch(() => avant);
-      if (avant === 'attente' && (apres === 'reussi' || apres === 'echec')) {
+      if (fluide.commandes.get(String(m.vmid))?.mode === 'commande' && avant === 'attente' && (apres === 'reussi' || apres === 'echec')) {
         const k = fluide.commandes.get(String(m.vmid));
         journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'machine.fluide.relie', objet: m.cible, ip: ctx.ip, resultat: apres === 'reussi' ? 'ok' : 'erreur', details: { noeud: m.noeud, sunshine: k?.relie?.version || null, raison: k?.message || null } });
       }
     }
-    return fluide.publique(m.vmid, { admin });
+    const p = fluide.publique(m.vmid, { admin });
+    if (admin) { const l = reglages.lire('liaison'); p.auto = !!(l?.utilisateur && l?.mdp_scelle); }
+    return p;
   }, { role: 'membre' });
   // Le nœud de la VM : son adresse dans la grappe (le terminal où coller la commande).
   const adresseNoeud = async noeud => {
@@ -620,21 +663,47 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
   }, { role: 'admin' });
   // La connexion en une commande : le script, pour l'adresse de la VM choisie
   // parmi celles que son agent annonce (rien d'autre n'entre dans le script).
-  r.post('/api/machines/:noeud/:type/:vmid/fluide/commande', async ctx => {
-    session(ctx, { role: 'admin', renfort: true });
-    const m = fluideDe(ctx);
-    const { adresseVm } = await corps(ctx, S.fluideCommande);
+  // Ce qu'il faut pour relier une VM : la liaison, l'agent QEMU, les adresses
+  // internes de la VM (la plus étroite d'abord ; le script garde celle qu'un
+  // pont du nœud joint directement).
+  const preparerLien = async m => {
     const l = reglages.lire('liaison');
     const qui = l?.jeton_id || l?.utilisateur;
     if (!qui) throw new ErreurHttp(409, 'ProxLab n\'est pas relié à Proxmox (Réglages).');
     const config = await pve(() => proxmox.get(m.base + '/config', { current: 1 }));
-    if (!agentActif(config?.agent)) throw new ErreurHttp(409, 'L\'agent QEMU n\'est pas activé dans cette VM : la commande règle Sunshine par lui.');
+    if (!agentActif(config?.agent)) throw new ErreurHttp(409, 'L\'agent QEMU n\'est pas activé dans cette VM : ProxLab règle Sunshine par lui.');
     let adresses;
     try { adresses = Fluide.adressesDe((await proxmox.get(m.base + '/agent/network-get-interfaces'))?.result); } catch { throw new ErreurHttp(409, 'L\'agent QEMU ne répond pas dans la VM.'); }
-    if (!adresses.some(a => a.adresse === adresseVm)) throw new ErreurHttp(400, 'Cette adresse n\'est pas une de celles de la VM.');
+    if (!adresses.length) throw new ErreurHttp(409, 'L\'agent QEMU n\'annonce aucune adresse interne dans la VM.');
+    const adressesVm = [...adresses].sort((x, y) => (y.prefixe || 0) - (x.prefixe || 0)).map(x => x.adresse);
+    return { qui, adressesVm, liaison: l };
+  };
+  // Relier depuis ProxLab : le script lancé dans le shell du nœud, ouvert avec
+  // l'utilisateur de la liaison (root@pam : il pose des unités systemd).
+  r.post('/api/machines/:noeud/:type/:vmid/fluide/relier', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const m = fluideDe(ctx);
+    await corps(ctx, {});
+    const { qui, adressesVm, liaison } = await preparerLien(m);
+    if (!liaison.utilisateur || !liaison.mdp_scelle) throw new ErreurHttp(409, 'Relier depuis ProxLab ouvre le shell du nœud : il faut l\'utilisateur root@pam et son mot de passe dans la liaison (Réglages). Sinon, la commande à coller.');
+    const enCours = fluide.commandes.get(String(m.vmid));
+    if (enCours?.mode === 'auto' && enCours.etat === 'en cours') throw new ErreurHttp(409, 'Déjà en cours pour cette VM.');
+    let k;
+    try { k = fluide.relier(m.vmid, { noeud: m.noeud, adressesVm, qui, executer: (script, surLigne) => executerSurNoeud(m.noeud, script, surLigne) }); } catch { throw new ErreurHttp(400, 'Valeur inattendue pour le script (nœud, identité de la liaison).'); }
+    const qui2 = acteur(ctx);
+    journal.ecrire({ acteur: qui2.acteurCompte, action: 'machine.fluide.relier', objet: m.cible, ip: ctx.ip, details: { noeud: m.noeud } });
+    k.promesse.then(etat => journal.ecrire({ acteur: qui2.acteurCompte, action: 'machine.fluide.relie', objet: m.cible, ip: ctx.ip, resultat: etat === 'reussi' ? 'ok' : 'erreur', details: { noeud: m.noeud, sunshine: k.relie?.version || null, raison: k.message || null } }));
+    return fluide.publique(m.vmid, { admin: true });
+  }, { role: 'admin' });
+  // Sans accès root par ProxLab : une ligne à coller (curl … | ssh … bash).
+  r.post('/api/machines/:noeud/:type/:vmid/fluide/commande', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const m = fluideDe(ctx);
+    await corps(ctx, {});
+    const { qui, adressesVm } = await preparerLien(m);
     let r;
-    try { r = fluide.preparerCommande(m.vmid, { noeud: m.noeud, adresseVm, qui }); } catch { throw new ErreurHttp(400, 'Valeur inattendue pour la commande (nœud, identité de la liaison).'); }
-    journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'machine.fluide.commande', objet: m.cible, ip: ctx.ip, details: { noeud: m.noeud, adresse: adresseVm } });
+    try { r = fluide.preparerCommande(m.vmid, { noeud: m.noeud, adressesVm, qui }); } catch { throw new ErreurHttp(400, 'Valeur inattendue pour la commande (nœud, identité de la liaison).'); }
+    journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'machine.fluide.commande', objet: m.cible, ip: ctx.ip, details: { noeud: m.noeud } });
     return { chemin: `/api/fluide/script/${r.jeton}`, expire: r.expire, noeud: { nom: m.noeud, ip: await adresseNoeud(m.noeud) } };
   }, { role: 'admin' });
   // Le script de la commande, sans session : le jeton (256 bits, quinze

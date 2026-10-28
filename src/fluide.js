@@ -5,7 +5,7 @@
 import crypto from 'node:crypto';
 import { nouvelleIdentite, empreinteCert } from './flux/certificat.js';
 import { HoteSunshine, ErreurFlux, PORT_HTTP, PORT_HTTPS, adresseInterne, nomHoteValide } from './flux/hote.js';
-import { scriptConnexion, lireMarque, sansMarque } from './fluide-commande.js';
+import { scriptConnexion, lireMarque, lireSortie, sansMarque } from './fluide-commande.js';
 
 const APPAIRAGE_MS = 180e3;
 const COMMANDE_MS = 15 * 60e3;
@@ -49,7 +49,7 @@ export class Fluide {
     const c = this.config(vmid), a = this.appairages.get(String(vmid));
     const appairage = a ? { etat: a.etat, message: a.message || '', ...(admin && a.etat === 'attente' ? { pin: a.pin, expire: a.fin } : {}) } : null;
     const k = this.commandes.get(String(vmid));
-    const commande = admin && k ? { etat: k.etat === 'attente' && Date.now() > k.fin ? 'expiree' : k.etat, message: k.message || '', expire: k.fin } : null;
+    const commande = admin && k ? { mode: k.mode, etat: k.etat === 'attente' && Date.now() > k.fin ? 'expiree' : k.etat, message: k.message || '', expire: k.fin, lignes: k.lignes || [] } : null;
     if (!c) return { configure: false, appairage, ...(commande ? { commande } : {}) };
     return {
       configure: true, appaire: !!c.cert_serveur, hote: admin ? c.hote : undefined,
@@ -110,19 +110,58 @@ export class Fluide {
     return a;
   }
 
-  // La connexion en une commande : le script à coller sur le nœud, attendu un
-  // quart d'heure. Le nonce n'est valable que pour cette VM et cette fois.
-  preparerCommande(vmid, { noeud, adresseVm, qui }) {
-    const nonce = crypto.randomBytes(16).toString('hex');
-    const script = scriptConnexion({ vmid, noeud, adresseVm, nonce, qui, certClient: this.identite().certPem });
-    const k = { nonce, fin: Date.now() + COMMANDE_MS, etat: 'attente', message: '', vu: 0 };
+  // Relier une VM, de deux façons. Le nonce n'est valable que pour cette VM et
+  // cette fois ; une nouvelle demande remplace la précédente.
+  //  - relier() : ProxLab lance lui-même le script dans le shell du nœud
+  //    (termproxy, utilisateur root de la liaison) et en lit la sortie ;
+  //  - preparerCommande() : le script est servi une fois, à l'adresse d'un jeton
+  //    de 256 bits, pour une ligne à coller (curl … | ssh … bash) ; l'empreinte
+  //    revient alors par les notes de la VM.
+  nouvelle(vmid, mode) {
+    const k = { nonce: crypto.randomBytes(16).toString('hex'), fin: Date.now() + COMMANDE_MS, etat: 'attente', message: '', vu: 0, mode, lignes: [] };
     this.commandes.set(String(vmid), k);
-    // Le script est servi une seule fois, à l'adresse d'un jeton de 256 bits :
-    // la commande à copier tient en une ligne (curl … | ssh … bash).
     for (const [j, x] of this.scripts) if (x.vmid === String(vmid) || Date.now() > x.fin) this.scripts.delete(j);
+    return k;
+  }
+
+  preparerCommande(vmid, { noeud, adressesVm, qui }) {
+    const k = this.nouvelle(vmid, 'commande');
+    const script = scriptConnexion({ vmid, noeud, adressesVm, nonce: k.nonce, qui, certClient: this.identite().certPem, retour: 'notes' });
     const jeton = crypto.randomBytes(32).toString('base64url');
     this.scripts.set(jeton, { script, fin: k.fin, vmid: String(vmid) });
     return { jeton, expire: k.fin };
+  }
+
+  // executer(script, surLigne) : lance le script sur le nœud, rend sa sortie.
+  relier(vmid, { noeud, adressesVm, qui, executer }) {
+    const k = this.nouvelle(vmid, 'auto');
+    const script = scriptConnexion({ vmid, noeud, adressesVm, nonce: k.nonce, qui, certClient: this.identite().certPem, retour: 'sortie' });
+    k.etat = 'en cours';
+    const surLigne = l => {
+      // Écho coupé, une ligne peut suivre l'invite du shell : prise où elle commence.
+      const t = String(l).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').trim();
+      const i = t.indexOf('ProxLab · ');
+      if (i >= 0 && k.lignes.length < 40) k.lignes.push(t.slice(i + 10, i + 310));
+    };
+    k.promesse = (async () => {
+      try {
+        let sortie;
+        try { sortie = await executer(script, surLigne); } catch (e) {
+          if (!k.lignes.length) throw new ErreurFlux(`le shell du nœud n'a pas lancé le script (la liaison doit utiliser root@pam) : ${String(e?.message || e).slice(0, 120)}`, 'refus');
+          throw e;
+        }
+        const m = lireSortie(sortie, k.nonce);
+        if (!m) {
+          const arret = k.lignes.find(x => /^arrêt : /.test(x));
+          throw new ErreurFlux(arret ? arret.slice(8) : k.lignes.length ? 'le script n\'a pas rendu l\'empreinte de Sunshine' : 'le shell du nœud n\'a pas lancé le script (la liaison doit utiliser root@pam)', 'refus');
+        }
+        await this.epingler(vmid, k, m);
+      } catch (e) {
+        k.etat = 'echec'; k.message = String(e?.message || e).slice(0, 300);
+      }
+      return k.etat;
+    })();
+    return k;
   }
 
   // Le script d'un jeton : rendu une fois, puis oublié ; null s'il n'est plus là.
@@ -133,31 +172,32 @@ export class Fluide {
     return Date.now() > x.fin ? null : x;
   }
 
-  // La commande a tourné : l'empreinte de Sunshine est dans les notes de la VM,
-  // lues par l'API de Proxmox. Le certificat présenté doit y correspondre et
-  // Sunshine doit reconnaître ProxLab ; la ligne est ensuite retirée des notes.
+  // L'empreinte reçue par un canal sûr : le certificat présenté doit y
+  // correspondre et Sunshine doit reconnaître ProxLab ; puis il est épinglé.
+  async epingler(vmid, k, m) {
+    if (!adresseInterne(m.hote)) throw new ErreurFlux('adresse annoncée hors du réseau interne', 'interdite');
+    const h = new HoteSunshine({ hote: m.hote, portHttp: m.port, portHttps: m.port - 5, identite: this.identite(), empreinte: m.empreinte });
+    const infos = await h.infos({ chiffre: true });
+    if (!infos.appaire || !h.certVu) throw new ErreurFlux('Sunshine ne reconnaît pas ProxLab', 'refus');
+    this.reglages.ecrire(CLE_VM(vmid), {
+      hote: m.hote, port_http: m.port, port_https: m.port - 5, nom: infos.nom, version: infos.version,
+      cert_serveur: h.certVu, empreinte: m.empreinte, appaire_le: Date.now(),
+    });
+    this.apps.delete(String(vmid)); this.appairages.delete(String(vmid));
+    k.etat = 'reussi'; k.relie = { hote: m.hote, port: m.port, version: infos.version };
+  }
+
+  // La commande collée a tourné : l'empreinte de Sunshine est dans les notes de
+  // la VM, lues par l'API de Proxmox ; la ligne en est ensuite retirée.
   async suivreCommande(vmid, { lireNotes, ecrireNotes }) {
     const k = this.commandes.get(String(vmid));
-    if (!k || k.etat !== 'attente' || Date.now() > k.fin || Date.now() - k.vu < SUIVI_MS) return k?.etat || null;
+    if (!k || k.mode !== 'commande' || k.etat !== 'attente' || Date.now() > k.fin || Date.now() - k.vu < SUIVI_MS) return k?.etat || null;
     k.vu = Date.now();
     const notes = await lireNotes();
     const m = lireMarque(notes, k.nonce);
     if (!m) return k.etat;
     k.etat = 'verification';
-    try {
-      if (!adresseInterne(m.hote)) throw new ErreurFlux('adresse annoncée hors du réseau interne', 'interdite');
-      const h = new HoteSunshine({ hote: m.hote, portHttp: m.port, portHttps: m.port - 5, identite: this.identite(), empreinte: m.empreinte });
-      const infos = await h.infos({ chiffre: true });
-      if (!infos.appaire || !h.certVu) throw new ErreurFlux('Sunshine ne reconnaît pas ProxLab', 'refus');
-      this.reglages.ecrire(CLE_VM(vmid), {
-        hote: m.hote, port_http: m.port, port_https: m.port - 5, nom: infos.nom, version: infos.version,
-        cert_serveur: h.certVu, empreinte: m.empreinte, appaire_le: Date.now(),
-      });
-      this.apps.delete(String(vmid)); this.appairages.delete(String(vmid));
-      k.etat = 'reussi'; k.relie = { hote: m.hote, port: m.port, version: infos.version };
-    } catch (e) {
-      k.etat = 'echec'; k.message = String(e?.message || e).slice(0, 200);
-    }
+    try { await this.epingler(vmid, k, m); } catch (e) { k.etat = 'echec'; k.message = String(e?.message || e).slice(0, 200); }
     try { await ecrireNotes(sansMarque(notes)); } catch { k.notesGardees = true; }
     return k.etat;
   }
