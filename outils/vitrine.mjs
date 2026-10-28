@@ -53,10 +53,17 @@ if (sun) {
       { name: 'ens18', 'ip-addresses': [{ 'ip-address-type': 'ipv4', 'ip-address': '10.0.0.40', prefix: 16 }] },
       { name: 'ens19', 'ip-addresses': [{ 'ip-address-type': 'ipv4', 'ip-address': '10.0.0.22', prefix: 30 }] },
     ];
+    // « Relier » : le script reçu par le shell du nœud, joué en une seconde et
+    // demie ; ProxLab présenté à Sunshine, l'empreinte rendue sur la sortie.
+    pve.etat.surScript = script => new Promise(ok => setTimeout(() => {
+      sun.appaire = s.api.fluide.identite().certPem;
+      const nonce = /NONCE=([0-9a-f]{32})/.exec(script)?.[1] || '';
+      ok({ sortie: `ProxLab · ProxLab : 10.0.0.30 · nœud : 10.0.0.11 · VM : 10.0.0.22 (lien 10.0.0.21)\nProxLab · terminé : la VM 101 est reliée par 10.0.0.11:47989. ProxLab finit tout seul.\nPROXLAB-EMPREINTE ${nonce} 127.0.0.2 47989 ${empreinteCert(sun.certPem)}\n`, code: 0 });
+    }, 1500));
     const joues = new Set();
     setInterval(() => {
       const k = s.api.fluide.commandes.get('101');
-      if (!k || k.etat !== 'attente' || joues.has(k.nonce) || Date.now() - (k.fin - 15 * 60e3) < 5000) return;
+      if (!k || k.mode !== 'commande' || k.etat !== 'attente' || joues.has(k.nonce) || Date.now() - (k.fin - 15 * 60e3) < 5000) return;
       joues.add(k.nonce);
       sun.appaire = s.api.fluide.identite().certPem;
       vm101.conf.description = `${vm101.conf.description ?? 'Machine fabriquée pour les essais.'}\nproxlab-fluide ${k.nonce} 127.0.0.2 47989 ${empreinteCert(sun.certPem)}`;

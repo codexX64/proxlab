@@ -189,31 +189,35 @@ await page.locator('span.note', { hasText: /^ouvert · / }).first().waitFor();
 // Écran fluide : réglé et appairé depuis l'interface, contre le faux Sunshine
 // de la vitrine (127.0.0.2), puis ouvert ; les touches partent en codes VK
 // selon le clavier de la VM (AZERTY : « a » sur la touche Q).
-// Reliée en une commande : le lien le plus étroit proposé d'office, le terminal
-// du nœud pris dans la grappe puis changé, la commande copiée (ou montrée),
-// jouée par la vitrine ; le réglage à la main reste replié.
+// Reliée depuis ProxLab : « Relier » ouvre le shell du nœud (joué par la
+// vitrine), les lignes du script s'affichent, puis l'écran s'ouvre. Avant, la
+// commande à coller (repliée) est copiée et vérifiée ; le réglage à la main
+// reste replié.
 await page.getByRole('tab', { name: 'Écran fluide' }).click();
-await page.locator('.puces button[aria-pressed="true"]', { hasText: '10.0.0.22 (ens19)' }).waitFor();
-const terminalNoeud = page.getByLabel('Commande qui ouvre un terminal root sur le nœud');
-if (await terminalNoeud.inputValue() !== 'ssh root@10.0.0.11') erreurs.push(`écran fluide : terminal proposé ${await terminalNoeud.inputValue()}`);
+await page.getByRole('button', { name: 'Relier', exact: true }).waitFor();
 if (await page.getByLabel('Adresse de Sunshine dans la VM').isVisible()) erreurs.push('écran fluide : réglage à la main déplié d\'office');
 await controle('fluide-reglage');
 await page.getByText('Réglage à la main : adresse et PIN').click();
 await page.getByLabel('Adresse de Sunshine dans la VM').waitFor();
 await controle('fluide-manuel');
 await page.getByText('Réglage à la main : adresse et PIN').click();
+await page.getByText('Ou par une commande à coller').click();
+const terminalNoeud = page.getByLabel('Commande qui ouvre un terminal root sur le nœud');
+await terminalNoeud.waitFor();
+if (await terminalNoeud.inputValue() !== 'ssh root@10.0.0.11') erreurs.push(`écran fluide : terminal proposé ${await terminalNoeud.inputValue()}`);
 await terminalNoeud.fill('ssh -J rebond root@10.0.0.11');
 await page.getByRole('button', { name: 'Copier la commande' }).click();
 await page.getByText(/En attente de la commande/).waitFor();
 const zoneCommande = page.getByLabel('Commande à copier');
 const commandeCopiee = await zoneCommande.isVisible() ? await zoneCommande.inputValue() : await page.evaluate(() => navigator.clipboard.readText());
 if (!/^curl -fsS 'http:\/\/localhost:\d+\/api\/fluide\/script\/[A-Za-z0-9_-]{43}' \| ssh -J rebond root@10\.0\.0\.11 bash\n$/.test(commandeCopiee)) erreurs.push(`écran fluide : commande copiée inattendue (${commandeCopiee.slice(0, 120)})`);
-// Pendant l'attente, seul l'état est relu : un autre choix d'adresse reste fait.
-await page.locator('.puces button[aria-pressed]', { hasText: '10.0.0.40 (ens18)' }).click();
 await page.waitForTimeout(2600);
-if (await page.locator('.puces button[aria-pressed="true"]', { hasText: '10.0.0.40 (ens18)' }).count() !== 1) erreurs.push('écran fluide : choix d\'adresse remis à zéro pendant l\'attente');
-if (await page.getByText('Lecture des adresses de la VM…').count()) erreurs.push('écran fluide : adresses relues pendant l\'attente');
+if (await terminalNoeud.inputValue() !== 'ssh -J rebond root@10.0.0.11') erreurs.push('écran fluide : terminal remis à zéro pendant l\'attente');
 await controle('fluide-commande');
+await page.getByRole('button', { name: 'Relier', exact: true }).click();
+await page.getByText(/ProxLab relie la VM/).waitFor();
+if (!await page.getByRole('button', { name: 'Relier', exact: true }).isDisabled()) erreurs.push('écran fluide : « Relier » encore cliquable pendant qu\'il relie');
+await controle('fluide-relier');
 await page.locator('span.note', { hasText: /ouvert · 1920 × 1080 · 60 i\/s · chiffré/ }).waitFor({ timeout: 20000 });
 await page.waitForFunction(() => window.__fluide.images > 10 && window.__fluide.cles >= 1);
 const conf = await page.evaluate(() => window.__fluide.configure[0]);
