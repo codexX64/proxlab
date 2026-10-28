@@ -804,6 +804,21 @@ async function migrer(f, base) {
 // Ctrl+Alt+Suppr, plein écran, presse-papiers dans les deux sens. Chaque
 // ouverture est journalisée.
 const lireLocal = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+// Avant de taper un texte dans une VM : jamais la commande de connexion de
+// l'écran fluide (elle va dans le terminal de l'ordinateur), et pas sans le
+// dire quand des caractères n'existent pas sur le clavier de la VM.
+const COMMANDE_FLUIDE = /<<'PROXLAB'|\/api\/fluide\/script\/|proxlab_fluide\(\)/;
+async function frappePermise(texte, disposition) {
+  if (COMMANDE_FLUIDE.test(texte)) { toast('C\'est la commande de connexion de l\'écran fluide : colle-la dans le terminal de ton ordinateur, jamais dans une VM.', true); return false; }
+  if (!disposition || !DISPOSITIONS[disposition]) return true;
+  const manque = intapables(texte, disposition);
+  if (!manque.length) return true;
+  const absents = new Set(manque);
+  const n = [...texte].filter(ch => absents.has(ch)).length;
+  return confirmer(`${n.toLocaleString('fr-FR')} caractère${n > 1 ? 's' : ''} impossible${n > 1 ? 's' : ''} à taper`,
+    `Ils n'existent pas sur le clavier ${DISPOSITIONS[disposition].nom} de la VM et seraient sautés : ${manque.slice(0, 12).join(' ')}${manque.length > 12 ? ' …' : ''}. Le texte tapé ne serait pas le même.`,
+    { oui: 'Taper quand même' });
+}
 const poserLocal = (k, v) => { try { localStorage.setItem(k, v); } catch { /* navigation privée */ } };
 const MOD = estMac() ? '⌘' : 'Ctrl+';
 const T_MAJ = estMac() ? '⇧⌘' : 'Ctrl+Maj+';
@@ -1039,6 +1054,7 @@ function ecranMachine(f, garder, relire, { auto = false, seul = false } = {}) {
     if (!texte) return toast('Rien à taper.');
     const n = [...texte].length;
     if (n > FRAPPE_MAX) return toast(`Au plus ${FRAPPE_MAX.toLocaleString('fr-FR')} caractères par frappe (ici ${n.toLocaleString('fr-FR')}).`, true);
+    if (!await frappePermise(texte, disposition)) return;
     const manque = intapables(texte, disposition);
     let fr;
     try { fr = await api.post(urlFrappe, { texte, disposition }); } catch (e) { return toast(e.message, true); }
@@ -1472,14 +1488,20 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
   const enMarche = f.status === 'running';
   const carte = h('div', { class: 'card' });
   let suivi = null, fermerVue = () => {}, commandeAffichee = '';
+  const choix = { adresses: null, noeud: null, choisie: '', raison: '', lecture: null, manuel: false };
+  // Chaque peinture a son numéro : une lecture partie avant (suivi d'une
+  // commande, peinture précédente) ne repeint plus une carte déjà remplacée.
+  let tour = 0;
   const peindre = async () => {
     clearTimeout(suivi);
+    const ici = ++tour;
     let c;
-    try { c = await api.get(url); } catch (e) { carte.replaceChildren(h('header', {}, h('h2', { text: 'Écran fluide' })), h('p', { class: 'vide', text: e.message })); return; }
+    try { c = await api.get(url); } catch (e) { if (ici === tour) carte.replaceChildren(h('header', {}, h('h2', { text: 'Écran fluide' })), h('p', { class: 'vide', text: e.message })); return; }
+    if (ici !== tour) return;
     fermerVue();
     if (c.configure && c.appaire) visionneuse(c); else reglage(c);
   };
-  carte.nettoyer = () => { clearTimeout(suivi); fermerVue(); };
+  carte.nettoyer = () => { tour++; clearTimeout(suivi); fermerVue(); };
 
   function reglage(c) {
     const titre = h('header', {}, h('h2', { text: 'Écran fluide' }), h('span', { class: 'note', text: c.configure ? 'à appairer' : 'à régler' }));
@@ -1514,63 +1536,85 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
         h('button', { class: 'btn sm solid', type: 'button', disabled: !c.configure, onclick: sur(async () => { await api.post(url + '/appairage'); peindre(); }) }, icone('lien', 14), 'Appairer'));
     }
     // La connexion en une commande : le terminal du nœud (retenu par ce
-    // navigateur), l'adresse de la VM côté nœud, puis la commande à coller.
+    // navigateur), l'adresse de la VM côté nœud, puis une ligne à coller qui
+    // va chercher le script une seule fois (curl … | ssh … bash).
     const k = c.commande;
     const cleSsh = `proxlab-fluide-ssh:${f.node}`;
     const terminal = h('input', { class: 'field', maxlength: 200, value: lireLocal(cleSsh, ''), placeholder: 'ssh root@…', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Commande qui ouvre un terminal root sur le nœud' });
-    terminal.addEventListener('change', () => poserLocal(cleSsh, terminal.value.replace(/[\r\n]/g, ' ').trim()));
-    let choisie = '';
-    const adressesVm = h('div', { class: 'puces' }, h('small', { class: 'dim', text: 'Lecture des adresses de la VM…' }));
-    const peindreAdresses = liste => adressesVm.replaceChildren(h('small', { class: 'dim', text: 'Adresse de la VM côté nœud : ' }), ...liste.map(a => h('button', {
-      class: `btn sm ${a.adresse === choisie ? 'solid' : 'flat'}`, type: 'button', 'aria-pressed': String(a.adresse === choisie),
-      onclick: () => { choisie = a.adresse; peindreAdresses(liste); },
-    }, `${a.adresse} (${a.interface})`)));
-    const sortieManuelle = h('div', {});
-    const copierCommande = h('button', { class: 'btn sm solid', type: 'button', disabled: true, onclick: sur(async () => {
-      if (!choisie) return toast('Choisis l\'adresse de la VM.', true);
-      const prefixe = terminal.value.replace(/[\r\n]/g, ' ').trim();
-      poserLocal(cleSsh, prefixe);
-      const texte = api.post(url + '/commande', { adresseVm: choisie }).then(r => `${prefixe ? `${prefixe} 'bash -s'` : 'bash -s'} <<'PROXLAB'\n${r.script}PROXLAB\n`);
+    const prefixe = () => terminal.value.replace(/[\r\n]/g, ' ').trim();
+    terminal.addEventListener('input', () => poserLocal(cleSsh, prefixe()));
+    const adressesVm = h('div', { class: 'puces' });
+    const copierCommande = h('button', { class: 'btn sm solid', type: 'button', disabled: !choix.choisie, onclick: sur(async () => {
+      if (!choix.choisie) return toast('Choisis l\'adresse de la VM.', true);
+      poserLocal(cleSsh, prefixe());
+      const p = prefixe();
+      const texte = api.post(url + '/commande', { adresseVm: choix.choisie }).then(r => `curl -fsS '${location.origin}${r.chemin}' | ${p ? `${p} bash` : 'bash'}\n`);
       try {
         if (window.ClipboardItem && navigator.clipboard?.write) await navigator.clipboard.write([new ClipboardItem({ 'text/plain': texte.then(t => new Blob([t], { type: 'text/plain' })) })]);
         else await navigator.clipboard.writeText(await texte);
-        toast('Commande copiée : colle-la dans ton terminal.');
+        commandeAffichee = '';
+        toast('Commande copiée : colle-la dans le terminal de ton ordinateur.');
       } catch {
         commandeAffichee = await texte;   // une erreur de l'API passe d'abord (toast)
       }
       peindre();
     }) }, icone('copie', 14), 'Copier la commande');
-    api.get(url + '/adresses').then(r => {
-      if (!terminal.value && r.noeud?.ip) terminal.value = `ssh root@${r.noeud.ip}`;
-      const liste = r.adresses || [];
-      if (!liste.length) return adressesVm.replaceChildren(h('small', { class: 'dim', text: r.raison || 'L\'agent QEMU n\'annonce aucune adresse interne.' }));
-      // Par défaut, le lien le plus étroit (un pont isolé entre le nœud et la VM).
-      choisie = [...liste].sort((x, y) => (y.prefixe || 0) - (x.prefixe || 0))[0].adresse;
-      peindreAdresses(liste); copierCommande.disabled = false;
-    }).catch(e => adressesVm.replaceChildren(h('small', { class: 'dim', text: e.message })));
+    const peindreAdresses = () => {
+      if (!choix.adresses) return adressesVm.replaceChildren(h('small', { class: 'dim', text: 'Lecture des adresses de la VM…' }));
+      if (!choix.adresses.length) return adressesVm.replaceChildren(h('small', { class: 'dim', text: choix.raison || 'L\'agent QEMU n\'annonce aucune adresse interne.' }));
+      adressesVm.replaceChildren(h('small', { class: 'dim', text: 'Adresse de la VM côté nœud : ' }), ...choix.adresses.map(x => h('button', {
+        class: `btn sm ${x.adresse === choix.choisie ? 'solid' : 'flat'}`, type: 'button', 'aria-pressed': String(x.adresse === choix.choisie),
+        onclick: () => { choix.choisie = x.adresse; peindreAdresses(); },
+      }, `${x.adresse} (${x.interface})`)));
+      copierCommande.disabled = !choix.choisie;
+    };
+    peindreAdresses();
+    // Les adresses ne sont lues qu'une fois : le choix fait reste le choix.
+    if (!choix.adresses && !choix.lecture) {
+      choix.lecture = api.get(url + '/adresses').then(r => {
+        choix.noeud = r.noeud || null;
+        choix.adresses = r.adresses || [];
+        choix.raison = r.raison || '';
+        // Par défaut, le lien le plus étroit (un pont isolé entre le nœud et la VM).
+        if (!choix.choisie && choix.adresses.length) choix.choisie = [...choix.adresses].sort((x, y) => (y.prefixe || 0) - (x.prefixe || 0))[0].adresse;
+      }).catch(e => { choix.adresses = []; choix.raison = e.message; }).finally(() => { choix.lecture = null; peindreAdresses(); remplirTerminal(); });
+    }
+    const remplirTerminal = () => { if (!terminal.value && choix.noeud?.ip) terminal.value = `ssh root@${choix.noeud.ip}`; };
+    remplirTerminal();
     // Presse-papiers refusé : la commande montrée, à copier à la main.
+    const sortieManuelle = h('div', {});
     if (commandeAffichee && (k?.etat === 'attente' || k?.etat === 'verification')) {
-      const zone = h('textarea', { class: 'field commande-fluide', rows: 5, readonly: true, spellcheck: 'false', 'aria-label': 'Commande à copier' });
+      const zone = h('textarea', { class: 'field commande-fluide', rows: 2, readonly: true, spellcheck: 'false', 'aria-label': 'Commande à copier' });
       zone.value = commandeAffichee;
       zone.addEventListener('focus', () => zone.select());
       sortieManuelle.replaceChildren(h('small', { class: 'dim', text: 'Copie automatique impossible ici : sélectionne la commande et copie-la.' }), zone);
     } else commandeAffichee = '';
+    // En attente : seul l'état est relu ; la carte n'est repeinte que quand il change.
     let etatCommande = null;
     if (k?.etat === 'attente' || k?.etat === 'verification') {
       etatCommande = h('p', { class: 'dim', text: 'En attente de la commande… ProxLab termine tout seul dès qu\'elle a tourné (quinze minutes au plus).' });
-      suivi = setTimeout(peindre, 2000);
+      const depart = tour;
+      const relire = async () => {
+        let n;
+        try { n = await api.get(url); } catch { if (depart === tour) suivi = setTimeout(relire, 4000); return; }
+        if (depart !== tour) return;
+        if ((n.commande?.etat || '') !== k.etat || (n.configure && n.appaire)) return peindre();
+        suivi = setTimeout(relire, 2000);
+      };
+      suivi = setTimeout(relire, 2000);
     } else if (k?.etat === 'echec') etatCommande = h('p', { class: 'erreur', text: `La commande a tourné, mais : ${k.message}` });
     else if (k?.etat === 'expiree') etatCommande = h('p', { class: 'dim', text: 'Commande expirée : recopie-la.' });
 
-    const manuelOuvert = (c.configure && !c.appaire) || a?.etat === 'attente' || a?.etat === 'echec';
+    if (a?.etat === 'attente' || a?.etat === 'echec') choix.manuel = true;
+    const manuelOuvert = !!choix.manuel;
     carte.replaceChildren(titre, h('div', { class: 'pad sans-serie' }, intro,
       h('ol', { class: 'etapes' },
         h('li', {}, 'Dans la VM, installer Sunshine (github.com/LizardByte/Sunshine ; Arch : paquet AUR « sunshine ») et ouvrir une session.'),
-        h('li', {}, h('span', { text: 'La relier, une fois : copie la commande et colle-la dans ton terminal. Elle relaie Sunshine par le nœud (ProxLab seul admis), le règle dans la VM (image toujours chiffrée, ports ouverts au nœud seul, VM plus annoncée sur le réseau) et lui présente ProxLab : ni PIN, ni mot de passe.' }),
+        h('li', {}, h('span', { text: 'La relier, une fois : copie la commande et colle-la dans le terminal de ton ordinateur, jamais dans la VM. Une seule ligne : elle va chercher chez ProxLab un script à usage unique et le lance en root sur le nœud. Il relaie Sunshine par le nœud (ProxLab seul admis), le règle dans la VM (image toujours chiffrée, ports ouverts au nœud seul, VM plus annoncée sur le réseau) et lui présente ProxLab : ni PIN, ni mot de passe.' }),
           h('div', { class: 'ligne-fluide' }, terminal, copierCommande),
           h('small', { class: 'dim', text: 'Le terminal : la commande qui ouvre un shell root sur le nœud depuis ton poste (retenue par ce navigateur). Vide : colle-la dans le Shell du nœud, dans Proxmox.' }),
           adressesVm, sortieManuelle, etatCommande)),
-      h('details', { class: 'manuel', ...(manuelOuvert ? { open: true } : {}) }, h('summary', { text: 'Réglage à la main : adresse et PIN' }),
+      h('details', { class: 'manuel', ...(manuelOuvert ? { open: true } : {}), ontoggle: e => { choix.manuel = e.target.open; } }, h('summary', { text: 'Réglage à la main : adresse et PIN' }),
         h('ol', { class: 'etapes' },
           h('li', {}, 'Pour que l\'image ne circule jamais en clair, ajouter à la configuration de Sunshine : ',
             h('span', { class: 'cmd' }, h('code', { text: cmd }), h('button', { class: 'btn flat sm', type: 'button', 'aria-label': 'Copier', onclick: copier(cmd) }, icone('copie', 12)))),
@@ -1622,6 +1666,7 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
       if (!texte) return;
       const d = disposition() || 'fr';
       if ([...texte].length > FRAPPE_MAX) return toast(`Au plus ${FRAPPE_MAX.toLocaleString('fr-FR')} caractères par frappe.`, true);
+      if (!await frappePermise(texte, d)) return;
       try { const fr = await api.post(urlFrappe, { texte, disposition: d }); peindreFrappe(fr); clearTimeout(suiviFrappe); suiviFrappe = setTimeout(suivreFrappe, 500); if (fr.total > 150) toast(`ProxLab tape ${fr.total.toLocaleString('fr-FR')} caractères dans la VM : tu peux quitter la page, la frappe continue ; Suppr ou Échap dans l'écran l'arrête.`); } catch (e) { toast(e.message, true); }
     };
     const collerIci = async texte => {
