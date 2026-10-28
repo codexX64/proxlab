@@ -42,7 +42,7 @@ if (sun) {
     for (const a of s.api.fluide.appairages.values()) if (a.etat === 'attente' && !a.vu && Date.now() - a.debut > 1000) { a.vu = true; sun.saisirPin(a.pin); }
   }, 200).unref();
   // La VM 101 a l'agent QEMU, un lien isolé vers le nœud et une seconde carte.
-  // La « connexion en une commande » est jouée ici deux secondes après la copie,
+  // La « connexion en une commande » est jouée ici cinq secondes après la copie,
   // comme le ferait le script sur le nœud : ProxLab présenté à Sunshine,
   // l'empreinte de Sunshine dans les notes de la VM.
   const vm101 = pve.etat.machines.find(m => m.vmid === 101);
@@ -56,7 +56,7 @@ if (sun) {
     const joues = new Set();
     setInterval(() => {
       const k = s.api.fluide.commandes.get('101');
-      if (!k || k.etat !== 'attente' || joues.has(k.nonce) || Date.now() - (k.fin - 15 * 60e3) < 2000) return;
+      if (!k || k.etat !== 'attente' || joues.has(k.nonce) || Date.now() - (k.fin - 15 * 60e3) < 5000) return;
       joues.add(k.nonce);
       sun.appaire = s.api.fluide.identite().certPem;
       vm101.conf.description = `${vm101.conf.description ?? 'Machine fabriquée pour les essais.'}\nproxlab-fluide ${k.nonce} 127.0.0.2 47989 ${empreinteCert(sun.certPem)}`;

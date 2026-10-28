@@ -207,7 +207,12 @@ await page.getByRole('button', { name: 'Copier la commande' }).click();
 await page.getByText(/En attente de la commande/).waitFor();
 const zoneCommande = page.getByLabel('Commande à copier');
 const commandeCopiee = await zoneCommande.isVisible() ? await zoneCommande.inputValue() : await page.evaluate(() => navigator.clipboard.readText());
-if (!commandeCopiee.startsWith("ssh -J rebond root@10.0.0.11 'bash -s' <<'PROXLAB'\n") || !/VMIP=10\.0\.0\.22;/.test(commandeCopiee) || !commandeCopiee.endsWith('\nPROXLAB\n')) erreurs.push(`écran fluide : commande copiée inattendue (${commandeCopiee.slice(0, 80)}…)`);
+if (!/^curl -fsS 'http:\/\/localhost:\d+\/api\/fluide\/script\/[A-Za-z0-9_-]{43}' \| ssh -J rebond root@10\.0\.0\.11 bash\n$/.test(commandeCopiee)) erreurs.push(`écran fluide : commande copiée inattendue (${commandeCopiee.slice(0, 120)})`);
+// Pendant l'attente, seul l'état est relu : un autre choix d'adresse reste fait.
+await page.locator('.puces button[aria-pressed]', { hasText: '10.0.0.40 (ens18)' }).click();
+await page.waitForTimeout(2600);
+if (await page.locator('.puces button[aria-pressed="true"]', { hasText: '10.0.0.40 (ens18)' }).count() !== 1) erreurs.push('écran fluide : choix d\'adresse remis à zéro pendant l\'attente');
+if (await page.getByText('Lecture des adresses de la VM…').count()) erreurs.push('écran fluide : adresses relues pendant l\'attente');
 await controle('fluide-commande');
 await page.locator('span.note', { hasText: /ouvert · 1920 × 1080 · 60 i\/s · chiffré/ }).waitFor({ timeout: 20000 });
 await page.waitForFunction(() => window.__fluide.images > 10 && window.__fluide.cles >= 1);
