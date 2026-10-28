@@ -627,8 +627,18 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     let r;
     try { r = fluide.preparerCommande(m.vmid, { noeud: m.noeud, adresseVm, qui }); } catch { throw new ErreurHttp(400, 'Valeur inattendue pour la commande (nœud, identité de la liaison).'); }
     journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'machine.fluide.commande', objet: m.cible, ip: ctx.ip, details: { noeud: m.noeud, adresse: adresseVm } });
-    return { script: r.script, expire: r.expire, noeud: { nom: m.noeud, ip: await adresseNoeud(m.noeud) } };
+    return { chemin: `/api/fluide/script/${r.jeton}`, expire: r.expire, noeud: { nom: m.noeud, ip: await adresseNoeud(m.noeud) } };
   }, { role: 'admin' });
+  // Le script de la commande, sans session : le jeton (256 bits, quinze
+  // minutes, une seule lecture) en tient lieu. Il ne porte aucun secret.
+  r.get('/api/fluide/script/:jeton', ctx => {
+    const jeton = String(ctx.params.jeton || '');
+    const x = /^[A-Za-z0-9_-]{43}$/.test(jeton) ? fluide.prendreScript(jeton) : null;
+    if (!x) throw new ErreurHttp(404, 'Commande inconnue, déjà utilisée ou expirée : recopie-la depuis ProxLab.');
+    journal.ecrire({ acteur: null, action: 'machine.fluide.script', objet: `qemu/${x.vmid}`, ip: ctx.ip, details: {} });
+    ctx.res.writeHead(200, { 'Content-Type': 'text/x-shellscript; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Length': Buffer.byteLength(x.script) });
+    ctx.res.end(x.script);
+  }, { public: true });
   r.post('/api/machines/:noeud/:type/:vmid/fluide', async ctx => {
     session(ctx, { role: 'admin', renfort: true });
     const m = fluideDe(ctx);

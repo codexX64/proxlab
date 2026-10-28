@@ -35,7 +35,11 @@ export function scriptConnexion({ vmid, noeud, adresseVm, nonce, qui, certClient
   if (!QUI.test(qui)) throw new Error('identité');
   const cert = String(certClient).replace(/\r/g, '');
   if (!PEM.test(cert)) throw new Error('certificat');
+  // Tout le script dans une fonction : bash le lit en entier avant d'en lancer
+  // la première ligne (il arrive par un tube : curl … | ssh … bash), et rien
+  // de ce qu'il lance ne peut lire la suite du script sur l'entrée standard.
   return `# ProxLab · écran fluide de la VM ${vmid} : relais sur ce nœud, Sunshine réglé, ProxLab reconnu.
+proxlab_fluide() {
 set -uo pipefail
 VMID=${vmid}; NOEUD=${noeud}; VMIP=${adresseVm}; NONCE=${nonce}; QUI='${qui}'; BASE0=${PORT_BASE}
 read -r -d '' CERT <<'PEM' || true
@@ -178,5 +182,7 @@ while l and not l[-1].strip(): l.pop()
 print("\\n".join(l + ["proxlab-fluide '"\${NONCE} \${ICI} \${BASE} sha256:\${FP}"'"]), end="")')
 qm set \${VMID} --description "\${NOTE}" >/dev/null || stop "notes de la VM non modifiables"
 dit "terminé : la VM \${VMID} est reliée par \${ICI}:\${BASE}. ProxLab finit tout seul."
+}
+proxlab_fluide </dev/null
 `;
 }

@@ -20,6 +20,7 @@ export class Fluide {
     this.apps = new Map();                // vmid → identifiant de l'application « Desktop »
     this.finies = new Map();              // vmid → fin de la dernière session
     this.commandes = new Map();           // vmid → { nonce, fin, etat, message, vu }
+    this.scripts = new Map();             // jeton → { script, fin, vmid } : lu une fois
   }
 
   // Sunshine démonte une session en quelques centaines de millisecondes (son,
@@ -84,6 +85,7 @@ export class Fluide {
   oublier(vmid) {
     this.reglages.ecrire(CLE_VM(vmid), null);
     this.appairages.delete(String(vmid)); this.apps.delete(String(vmid)); this.commandes.delete(String(vmid));
+    for (const [j, x] of this.scripts) if (x.vmid === String(vmid)) this.scripts.delete(j);
   }
 
   // Lance l'appairage : rend le PIN tout de suite ; Sunshine répond quand
@@ -115,7 +117,20 @@ export class Fluide {
     const script = scriptConnexion({ vmid, noeud, adresseVm, nonce, qui, certClient: this.identite().certPem });
     const k = { nonce, fin: Date.now() + COMMANDE_MS, etat: 'attente', message: '', vu: 0 };
     this.commandes.set(String(vmid), k);
-    return { script, expire: k.fin };
+    // Le script est servi une seule fois, à l'adresse d'un jeton de 256 bits :
+    // la commande à copier tient en une ligne (curl … | ssh … bash).
+    for (const [j, x] of this.scripts) if (x.vmid === String(vmid) || Date.now() > x.fin) this.scripts.delete(j);
+    const jeton = crypto.randomBytes(32).toString('base64url');
+    this.scripts.set(jeton, { script, fin: k.fin, vmid: String(vmid) });
+    return { jeton, expire: k.fin };
+  }
+
+  // Le script d'un jeton : rendu une fois, puis oublié ; null s'il n'est plus là.
+  prendreScript(jeton) {
+    const x = this.scripts.get(String(jeton));
+    if (!x) return null;
+    this.scripts.delete(String(jeton));
+    return Date.now() > x.fin ? null : x;
   }
 
   // La commande a tourné : l'empreinte de Sunshine est dans les notes de la VM,
