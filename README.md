@@ -134,10 +134,14 @@ ouvert) et tape chaque caractère sur sa touche dans la disposition de la VM
 quitter la page : la frappe continue, et la barre de l'écran la montre en
 revenant, avec de quoi l'arrêter ; un collage parti par mégarde s'arrête aussi
 d'une touche : Suppr, ⌫ ou Échap dans l'écran (ou l'écran fluide) pendant la
-frappe l'arrêtent, sans que la touche parte dans la VM. Le rythme suit la longueur : un texte court
-au pas d'une frappe rapide (25 ms par caractère), un long plus vite, jamais
-sous 8 ms (la file du clavier PS/2 de QEMU ne tient que quelques touches) —
-environ 13 s pour 1 000 caractères, 32 s pour 4 000. Ça marche partout, même
+frappe l'arrêtent, sans que la touche parte dans la VM. Le rythme est fixe :
+40 caractères par seconde (25 ms), environ 25 s pour 1 000 caractères ; plus
+vite, un bureau chargé (compositeur Wayland, fond animé) perdait des touches
+et en laissait une enfoncée, répétée sans fin. Un texte qui contient des
+caractères absents du clavier de la VM (é sur un clavier QWERTY…) n'est tapé
+qu'après confirmation, en disant lesquels seraient sautés ; la commande de
+connexion de l'écran fluide est refusée (elle va dans le terminal de
+l'ordinateur, jamais dans une VM). Ça marche partout, même
 à l'écran de connexion ; le panneau permet de passer plutôt par le
 presse-papiers de la VM. Le texte n'est ni gardé ni journalisé : le journal
 dit qui a fait taper combien de caractères. Le
@@ -177,7 +181,11 @@ fluide »), en une commande : ProxLab propose l'adresse de la VM côté nœud (l
 lien le plus étroit que son agent QEMU annonce, un pont isolé par exemple) et
 le terminal du nœud (`ssh root@` et l'adresse du nœud dans la grappe ; à
 changer une fois, par exemple pour passer par un rebond, ce navigateur s'en
-souvient), puis copie une commande à coller dans un terminal. Elle tourne en
+souvient), puis copie une commande d'une ligne à coller dans le terminal de l'ordinateur
+(jamais dans la VM) : `curl … | ssh … bash`. Elle va chercher le script chez
+ProxLab, par l'adresse où la page est ouverte (domaine ou réseau local), à un
+lien qui ne sert qu'une fois et quinze minutes au plus, sans session (un jeton
+de 256 bits en tient lieu ; le script ne porte aucun secret). Il tourne en
 root sur le nœud : relais des six ports de Sunshine par le nœud (socat, unités
 systemd `proxlab-fluide-<vmid>-*`), n'admettant que l'adresse d'où ProxLab
 parle à l'API (lue dans le journal de pveproxy) ; dans la VM, par l'agent :
