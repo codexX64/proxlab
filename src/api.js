@@ -581,7 +581,7 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
   // script envoyé encodé en base64, par lignes courtes et à petits pas (la file
   // d'entrée d'un terminal ne tient que 4 Kio), et lu jusqu'à sa ligne de fin.
   // La sortie (bornée) est rendue ; chaque ligne passe aussi à surLigne.
-  const executerSurNoeud = async (noeud, script, surLigne = () => {}, { delaiMs = 240e3 } = {}) => {
+  const executerSurNoeud = async (noeud, script, surLigne = () => {}, { delaiMs = 300e3 } = {}) => {
     const conn = await ouvrirTermproxy(proxmox, { noeud, type: 'node' });
     const fin = `PROXLAB-FIN-${crypto.randomBytes(8).toString('hex')}`;
     const finRe = new RegExp(`${fin} (\\d+)`);

@@ -69,8 +69,11 @@ command -v qm >/dev/null || stop "ce n'est pas un nœud Proxmox"
 qm status \${VMID} 2>/dev/null | grep -q running || stop "la VM \${VMID} n'est pas démarrée"
 command -v python3 >/dev/null || stop "python3 manque sur le nœud"
 # Dans la VM, par l'agent QEMU : sortie standard rendue, code de sortie gardé.
+# Une commande encore en cours au bout du délai est un échec (sa sortie manque).
 g(){ qm guest exec \${VMID} --timeout 90 "$@" | python3 -c 'import json,sys
-d=json.load(sys.stdin); sys.stdout.write(d.get("out-data","")); sys.stderr.write(d.get("err-data","")); sys.exit(d.get("exitcode",0))'; }
+d=json.load(sys.stdin)
+if not d.get("exited"): sys.stderr.write("délai dépassé dans la VM\\n"); sys.exit(124)
+sys.stdout.write(d.get("out-data","")); sys.stderr.write(d.get("err-data","")); sys.exit(d.get("exitcode",0))'; }
 
 # 1. ProxLab vu d'ici : la dernière adresse qui a parlé à l'API sous son identité.
 SRC=$(grep -hF " \${QUI} " /var/log/pveproxy/access.log 2>/dev/null | tail -1 | awk '{print $1}' | sed 's/^::ffff://')
@@ -121,7 +124,9 @@ read -r -d '' REGLER <<'S' || true
 H=$(getent passwd "$U" | cut -d: -f6); R=/run/user/$(id -u "$U"); C="$H/.config/sunshine"; F="$C/sunshine.conf"
 us(){ runuser -u "$U" -- env XDG_RUNTIME_DIR="$R" DBUS_SESSION_BUS_ADDRESS="unix:path=$R/bus" systemctl --user "$@"; }
 UNITE=app-dev.lizardbyte.app.Sunshine; us cat "$UNITE" >/dev/null 2>&1 || UNITE=sunshine
-us stop "$UNITE" >/dev/null 2>&1; pkill -u "$U" -x sunshine 2>/dev/null; sleep 1
+# Arrêt borné : Sunshine peut s'attarder sur la capture ; tué au-delà de 10 s.
+timeout 10 runuser -u "$U" -- env XDG_RUNTIME_DIR="$R" DBUS_SESSION_BUS_ADDRESS="unix:path=$R/bus" systemctl --user stop "$UNITE" >/dev/null 2>&1
+pkill -u "$U" -x sunshine 2>/dev/null; sleep 1; pkill -9 -u "$U" -x sunshine 2>/dev/null
 mkdir -p "$C"; touch "$F"
 kv(){ sed -i "/^[[:space:]]*$1[[:space:]]*=/d" "$F"; echo "$1 = $2" >> "$F"; }
 kv lan_encryption_mode 2; kv wan_encryption_mode 2; kv upnp disabled; kv address_family ipv4
@@ -137,15 +142,18 @@ if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q 'Status: active
 elif systemctl is-active -q firewalld 2>/dev/null || systemctl is-active -q nftables 2>/dev/null; then
   echo "pare-feu de la VM non modifié : ouvrir TCP $((BASE-5)), $BASE, $((BASE+21)) et UDP $((BASE+9))-$((BASE+11)) depuis $LIEN sur $IF" >&2
 fi
-cat "$C/sunshine_state.json" 2>/dev/null || echo '{}'
+echo "ETAT-DEBUT"; cat "$C/sunshine_state.json" 2>/dev/null || echo '{}'
 S
 ETAT=$(g -- bash -c "U=\${U}; BASE=\${BASE}; VMIP=\${VMIP}; LIEN=\${LIEN}; \${REGLER}") || stop "réglage de Sunshine dans la VM impossible"
+# L'état lu en entier, sinon rien n'est réécrit (les appareils déjà appairés restent).
+case "\${ETAT}" in *ETAT-DEBUT*) ETAT=\${ETAT#*ETAT-DEBUT} ;; *) stop "état de Sunshine non lu dans la VM" ;; esac
+dit "Sunshine arrêté et réglé dans la VM (utilisateur \${U}, ports \${BASE})"
 
 # 5. ProxLab reconnu par Sunshine : son certificat parmi les appareils appairés.
 NOUVEL=$(printf '%s' "\${ETAT}" | CERT="\${CERT}" python3 -c 'import json,os,sys,uuid
-try: d=json.loads(sys.stdin.read() or "{}")
-except Exception: d={}
-if not isinstance(d,dict): d={}
+t=sys.stdin.read().strip() or "{}"
+d=json.loads(t)
+if not isinstance(d,dict): raise SystemExit(1)
 r=d.setdefault("root",{}); r.setdefault("uniqueid",str(uuid.uuid4()).upper()); l=r.get("named_devices") or []
 c=os.environ["CERT"].strip()+"\\n"
 l=[x for x in l if isinstance(x,dict) and x.get("cert","").strip()!=c.strip()]
@@ -156,19 +164,22 @@ C=$(getent passwd "$U" | cut -d: -f6)/.config/sunshine
 cat > "$C/sunshine_state.json.proxlab" && chown "$U": "$C/sunshine_state.json.proxlab" && chmod 600 "$C/sunshine_state.json.proxlab" && mv "$C/sunshine_state.json.proxlab" "$C/sunshine_state.json"
 S
 printf '%s' "\${NOUVEL}" | g --pass-stdin 1 -- bash -c "U=\${U}; \${ECRIRE}" || stop "écriture de l'état de Sunshine impossible"
+dit "ProxLab ajouté aux appareils de Sunshine"
 
 # 6. Sunshine relancé avec la session ; son certificat lu.
 read -r -d '' LANCER <<'S' || true
 H=$(getent passwd "$U" | cut -d: -f6); R=/run/user/$(id -u "$U"); C="$H/.config/sunshine"
 us(){ runuser -u "$U" -- env XDG_RUNTIME_DIR="$R" DBUS_SESSION_BUS_ADDRESS="unix:path=$R/bus" systemctl --user "$@"; }
 UNITE=app-dev.lizardbyte.app.Sunshine; us cat "$UNITE" >/dev/null 2>&1 || UNITE=sunshine
-us enable "$UNITE" >/dev/null 2>&1; us restart "$UNITE" >/dev/null 2>&1
-for _ in $(seq 1 20); do [ -s "$C/credentials/cacert.pem" ] && ss -Hlnt "( sport = :$BASE )" | grep -q . && break; sleep 1; done
+us enable "$UNITE" >/dev/null 2>&1; us reset-failed "$UNITE" >/dev/null 2>&1
+timeout 15 runuser -u "$U" -- env XDG_RUNTIME_DIR="$R" DBUS_SESSION_BUS_ADDRESS="unix:path=$R/bus" systemctl --user start --no-block "$UNITE" >/dev/null 2>&1
+for _ in $(seq 1 40); do [ -s "$C/credentials/cacert.pem" ] && ss -Hlnt "( sport = :$BASE )" | grep -q . && break; sleep 1; done
 cat "$C/credentials/cacert.pem"
 S
 PEMS=$(g -- bash -c "U=\${U}; BASE=\${BASE}; \${LANCER}") || stop "Sunshine ne démarre pas dans la VM (journal : ~/.config/sunshine/sunshine.log)"
 FP=$(printf '%s\\n' "\${PEMS}" | openssl x509 -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1)
 [[ "\${FP}" =~ ^[0-9a-f]{64}$ ]] || stop "certificat de Sunshine illisible"
+dit "Sunshine relancé, certificat lu"
 
 # 7. Le relais : ce nœud, ports de la VM, ProxLab seul admis.
 for p in \${TCP} \${UDP}; do
@@ -192,6 +203,7 @@ systemctl daemon-reload
 for p in \${TCP} \${UDP}; do case " \${TCP} " in *" \${p} "*) n=tcp ;; *) n=udp ;; esac; systemctl enable --now proxlab-fluide-\${VMID}-\${n}-\${p}.service >/dev/null 2>&1; done
 pve-firewall status 2>/dev/null | grep -q 'enabled' && dit "le pare-feu de Proxmox est actif sur ce nœud : ouvrir TCP \${TCP} et UDP \${UDP} depuis \${SRC}"
 curl -s -m 5 -o /dev/null "http://\${VMIP}:\${BASE}/serverinfo" || stop "Sunshine ne répond pas sur \${VMIP}:\${BASE}"
+dit "relais posé sur le nœud (\${ICI}:\${BASE}, ProxLab seul admis)"
 
 # 8. L'empreinte, rendue à ProxLab : par la sortie (shell ouvert par ProxLab)
 #    ou par les notes de la VM (commande collée ailleurs).
