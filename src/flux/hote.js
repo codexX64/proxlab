@@ -21,6 +21,23 @@ export class ErreurFlux extends Error {
   constructor(message, code = 'flux') { super(message); this.code = code; }
 }
 
+// Ce qui empêche de joindre Sunshine, dit pour qui règle le réseau : rien qui
+// écoute, aucune réponse, pas de route.
+const ou = (hote, port) => `${net.isIPv6(hote) ? `[${hote}]` : hote}:${port}`;
+const silence = (hote, port) => new ErreurFlux(`${ou(hote, port)} ne répond pas (paquets ignorés : pare-feu, ou machine éteinte)`, 'delai');
+function injoignable(e, hote, port) {
+  const cause = {
+    ECONNREFUSED: 'connexion refusée : rien n\'écoute sur ce port (Sunshine arrêté, ou relais absent)',
+    ECONNRESET: 'connexion coupée à l\'ouverture',
+    EHOSTUNREACH: 'hôte injoignable depuis ProxLab (route ou pare-feu)',
+    ENETUNREACH: 'réseau injoignable depuis ProxLab',
+    ETIMEDOUT: 'aucune réponse (pare-feu, ou machine éteinte)',
+    ENOTFOUND: 'nom inconnu',
+    EAI_AGAIN: 'nom non résolu pour l\'instant',
+  }[e?.code] || String(e?.code || e?.message || 'erreur').slice(0, 80);
+  return new ErreurFlux(`${ou(hote, port)} : ${cause}`, 'injoignable');
+}
+
 export function adresseInterne(hote) {
   const h = String(hote || '').replace(/^\[|\]$/g, '');
   return net.isIP(h) !== 0 && classer(h) === 'interne';
@@ -71,8 +88,8 @@ export class HoteSunshine {
   get(chemin, args, { timeout = this.timeout } = {}) {
     return new Promise((resolve, reject) => {
       const req = http.request({ host: this.hote, port: this.portHttp, path: this.url(chemin, args), method: 'GET', lookup: lookupInterne, timeout, agent: false }, res => lire(res, resolve, reject));
-      req.once('timeout', () => req.destroy(new ErreurFlux('Sunshine ne répond pas', 'delai')));
-      req.once('error', e => reject(e instanceof ErreurFlux ? e : new ErreurFlux(`Sunshine injoignable : ${e.code || e.message}`, 'injoignable')));
+      req.once('timeout', () => req.destroy(silence(this.hote, this.portHttp)));
+      req.once('error', e => reject(e instanceof ErreurFlux ? e : injoignable(e, this.hote, this.portHttp)));
       req.end();
     });
   }
@@ -98,12 +115,12 @@ export class HoteSunshine {
           s.setTimeout(0);
           rappel(null, s);
         });
-        s.once('timeout', () => s.destroy(new ErreurFlux('Sunshine ne répond pas', 'delai')));
+        s.once('timeout', () => s.destroy(silence(this.hote, this.portHttps)));
         s.once('error', e => rappel(e));
       };
       const req = https.request({ host: this.hote, port: this.portHttps, path: this.url(chemin, args), method: 'GET', agent, timeout }, res => lire(res, resolve, reject));
-      req.once('timeout', () => req.destroy(new ErreurFlux('Sunshine ne répond pas', 'delai')));
-      req.once('error', e => reject(e instanceof ErreurFlux ? e : new ErreurFlux(`Sunshine injoignable : ${e.code || e.message}`, 'injoignable')));
+      req.once('timeout', () => req.destroy(silence(this.hote, this.portHttps)));
+      req.once('error', e => reject(e instanceof ErreurFlux ? e : injoignable(e, this.hote, this.portHttps)));
       req.end();
     });
   }

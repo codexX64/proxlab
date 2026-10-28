@@ -1301,6 +1301,12 @@ test('écran fluide : réglage et appairage par PIN sous renfort, droits par rô
     assert.equal((await sansRenfort(() => admin.post(url, { hote: '127.0.0.1', portHttp: sun.portHttp, portHttps: sun.portHttps }))).status, 403, 'renfort exigé');
     assert.equal((await admin.post(url, { hote: '8.8.8.8' })).status, 400, 'adresse publique refusée');
     assert.equal((await admin.get(machine('pve-a', 'lxc', 110) + '/fluide')).status, 400, 'conteneur : non');
+    // Rien n'écoute : la cause est dite.
+    const ferme = await new Promise(ok => { const t = net.createServer(); t.listen(0, '127.0.0.1', () => { const p = t.address().port; t.close(() => ok(p)); }); });
+    const direct = await admin.post(url, { hote: '127.0.0.1', portHttp: ferme });
+    assert.equal(direct.status, 502);
+    assert.match(direct.json.error, new RegExp(`127\\.0\\.0\\.1:${ferme} : connexion refusée : rien n'écoute`));
+    assert.equal((await admin.get(url)).json.configure, false, 'adresse injoignable : rien d\'enregistré');
     const pose = await admin.post(url, { hote: '127.0.0.1', portHttp: sun.portHttp, portHttps: sun.portHttps });
     assert.equal(pose.status, 200, JSON.stringify(pose.json));
     assert.equal(pose.json.configure, true); assert.equal(pose.json.appaire, false); assert.equal(pose.json.version, '7.1.431.-1');
