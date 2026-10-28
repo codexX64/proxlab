@@ -25,12 +25,28 @@ export function lireMarque(description, nonce) {
   }
   return null;
 }
+// La ligne que le script écrit sur sa sortie (shell du nœud ouvert par ProxLab).
+export function lireSortie(sortie, nonce) {
+  for (const l of String(sortie || '').split(/\r?\n/)) {
+    const m = /(?:^|\s)PROXLAB-EMPREINTE ([0-9a-f]{32}) (\S+) (\d{1,5}) (sha256:[0-9a-f]{64})\s*$/.exec(l.trim());
+    if (m && m[1] === nonce && IPV4.test(m[2]) && Number(m[3]) > 5 && Number(m[3]) < 65000) return { hote: m[2], port: Number(m[3]), empreinte: m[4] };
+  }
+  return null;
+}
 export const sansMarque = description => String(description || '').split('\n').filter(l => !l.trim().startsWith(`${MARQUE} `)).join('\n').replace(/\n+$/, '');
 
-export function scriptConnexion({ vmid, noeud, adresseVm, nonce, qui, certClient }) {
+// adressesVm : les adresses internes de la VM, la plus étroite d'abord ; le
+// script garde la première qu'un pont du nœud joint directement (le lien isolé),
+// jamais une adresse que le nœud n'atteint que par une passerelle.
+// retour : « notes » (commande collée : l'empreinte revient par les notes de la
+// VM) ou « sortie » (lancé par ProxLab dans le shell du nœud : elle revient par
+// la sortie, déjà authentifiée).
+export function scriptConnexion({ vmid, noeud, adressesVm, nonce, qui, certClient, retour = 'notes' }) {
   if (!/^\d{3,9}$/.test(String(vmid))) throw new Error('vmid');
   if (!NOEUD.test(noeud)) throw new Error('noeud');
-  if (!IPV4.test(adresseVm) || net.isIP(adresseVm) !== 4) throw new Error('adresse');
+  const adresses = [...new Set(adressesVm || [])];
+  if (!adresses.length || adresses.length > 16 || adresses.some(a => !IPV4.test(a) || net.isIP(a) !== 4)) throw new Error('adresse');
+  if (!['notes', 'sortie'].includes(retour)) throw new Error('retour');
   if (!/^[0-9a-f]{32}$/.test(nonce)) throw new Error('nonce');
   if (!QUI.test(qui)) throw new Error('identité');
   const cert = String(certClient).replace(/\r/g, '');
@@ -41,7 +57,7 @@ export function scriptConnexion({ vmid, noeud, adresseVm, nonce, qui, certClient
   return `# ProxLab · écran fluide de la VM ${vmid} : relais sur ce nœud, Sunshine réglé, ProxLab reconnu.
 proxlab_fluide() {
 set -uo pipefail
-VMID=${vmid}; NOEUD=${noeud}; VMIP=${adresseVm}; NONCE=${nonce}; QUI='${qui}'; BASE0=${PORT_BASE}
+VMID=${vmid}; NOEUD=${noeud}; VMIPS='${adresses.join(' ')}'; NONCE=${nonce}; QUI='${qui}'; BASE0=${PORT_BASE}; RETOUR=${retour}
 read -r -d '' CERT <<'PEM' || true
 ${cert.trim()}
 PEM
@@ -60,7 +76,10 @@ d=json.load(sys.stdin); sys.stdout.write(d.get("out-data","")); sys.stderr.write
 SRC=$(grep -hF " \${QUI} " /var/log/pveproxy/access.log 2>/dev/null | tail -1 | awk '{print $1}' | sed 's/^::ffff://')
 [[ "\${SRC}" =~ ^[0-9]{1,3}(\\.[0-9]{1,3}){3}$ ]] || stop "ProxLab n'apparaît pas dans le journal de l'API de ce nœud : garde ProxLab ouvert et relance"
 ICI=$(ip -4 route get "\${SRC}" | sed -n 's/.* src \\([0-9.]*\\).*/\\1/p' | head -1)
-ip -4 route get "\${VMIP}" | grep -q ' via ' && stop "\${VMIP} n'est pas sur un pont de ce nœud"
+# La VM côté nœud : sa première adresse sur un pont de ce nœud (sans passerelle).
+VMIP=""
+for a in \${VMIPS}; do r=$(ip -4 route get "\${a}" 2>/dev/null) || continue; case "\${r}" in *" via "*) continue ;; esac; VMIP=\${a}; break; done
+[ -n "\${VMIP}" ] || stop "aucune adresse de la VM (\${VMIPS}) n'est sur un pont de ce nœud"
 LIEN=$(ip -4 route get "\${VMIP}" | sed -n 's/.* src \\([0-9.]*\\).*/\\1/p' | head -1)
 [ -n "\${ICI}" ] && [ -n "\${LIEN}" ] || stop "routes introuvables vers ProxLab ou vers la VM"
 dit "ProxLab : \${SRC} · nœud : \${ICI} · VM : \${VMIP} (lien \${LIEN})"
@@ -174,13 +193,17 @@ for p in \${TCP} \${UDP}; do case " \${TCP} " in *" \${p} "*) n=tcp ;; *) n=udp 
 pve-firewall status 2>/dev/null | grep -q 'enabled' && dit "le pare-feu de Proxmox est actif sur ce nœud : ouvrir TCP \${TCP} et UDP \${UDP} depuis \${SRC}"
 curl -s -m 5 -o /dev/null "http://\${VMIP}:\${BASE}/serverinfo" || stop "Sunshine ne répond pas sur \${VMIP}:\${BASE}"
 
-# 8. L'empreinte, transmise à ProxLab par les notes de la VM.
+# 8. L'empreinte, rendue à ProxLab : par la sortie (shell ouvert par ProxLab)
+#    ou par les notes de la VM (commande collée ailleurs).
+printf 'PROXLAB-EMPREINTE %s %s %s sha256:%s\n' "\${NONCE}" "\${ICI}" "\${BASE}" "\${FP}"
+if [ "\${RETOUR}" = notes ]; then
 DESC=$(pvesh get /nodes/\${NOEUD}/qemu/\${VMID}/config --output-format json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("description",""), end="")')
 NOTE=$(printf '%s' "\${DESC}" | python3 -c 'import sys
 l=[x for x in sys.stdin.read().split("\\n") if not x.strip().startswith("proxlab-fluide ")]
 while l and not l[-1].strip(): l.pop()
 print("\\n".join(l + ["proxlab-fluide '"\${NONCE} \${ICI} \${BASE} sha256:\${FP}"'"]), end="")')
 qm set \${VMID} --description "\${NOTE}" >/dev/null || stop "notes de la VM non modifiables"
+fi
 dit "terminé : la VM \${VMID} est reliée par \${ICI}:\${BASE}. ProxLab finit tout seul."
 }
 proxlab_fluide </dev/null
