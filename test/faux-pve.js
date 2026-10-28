@@ -135,6 +135,7 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
         if (p === '/version') return repondre(200, { version: '8.4.1', release: '8.4', repoid: 'essai' });
         if (p === '/cluster/resources') return repondre(200, [...etat.noeuds.map(n => ({ type: 'node', id: 'node/' + n.node, ...n })), ...etat.machines.map(m => ({ id: `${m.type}/${m.vmid}`, ...m })), ...etat.stockages.map(x => ({ type: 'storage', id: `storage/${x.node}/${x.storage}`, ...x }))]);
         if (p === '/cluster/tasks') return repondre(200, etat.taches.slice(0, 50));
+        if (p === '/cluster/status') return repondre(200, [{ type: 'cluster', name: 'essai' }, ...etat.noeuds.map((n, i) => ({ type: 'node', name: n.node, ip: `10.0.0.${11 + i}`, online: 1 }))]);
         if (p === '/cluster/nextid') { let n = 100; while (etat.machines.some(m => m.vmid === n)) n++; return repondre(200, String(n)); }
         if (s[0] !== 'nodes' || !etat.noeuds.some(n => n.node === s[1])) return repondre(404, null, 'no such node');
         const node = s[1];
@@ -203,8 +204,9 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
           }
           if (reste === 'status/current') return repondre(200, { ...m, qmpstatus: m.status });
           if (reste === 'config' && req.method === 'GET') return repondre(200, { name: m.name, cores: 2, sockets: 1, memory: Math.round(m.maxmem / 1048576), ostype: 'l26', onboot: 1, net0: 'virtio=02:00:00:00:01:01,bridge=vmbr0', scsi0: 'local-lvm:vm-' + m.vmid + '-disk-0,size=32G', cipassword: '**********', sshkeys: 'ssh-ed25519%20AAAA', ciuser: 'essai', digest: 'abc', description: 'Machine fabriquée pour les essais.', ...m.conf, ...(params.current ? {} : m.attente) });
-          if (reste === 'config' && req.method === 'PUT') { for (const [k, v] of Object.entries(params)) if (/^(ide|sata|scsi)\d+$/.test(k)) (m.conf ||= {})[k] = v; if (params.name) m.name = params.name; if (params.hostname) m.name = params.hostname; if (params.memory) m.maxmem = Number(params.memory) * 1048576; for (const k of ['serial0', 'vga', 'agent']) if (params[k]) (m.status === 'running' ? (m.attente ||= {}) : (m.conf ||= {}))[k] = params[k]; return repondre(200, null); }
+          if (reste === 'config' && req.method === 'PUT') { if (params.description !== undefined) (m.conf ||= {}).description = params.description; if (/(^|,)description(,|$)/.test(params.delete || '')) (m.conf ||= {}).description = ''; for (const [k, v] of Object.entries(params)) if (/^(ide|sata|scsi)\d+$/.test(k)) (m.conf ||= {})[k] = v; if (params.name) m.name = params.name; if (params.hostname) m.name = params.hostname; if (params.memory) m.maxmem = Number(params.memory) * 1048576; for (const k of ['serial0', 'vga', 'agent']) if (params[k]) (m.status === 'running' ? (m.attente ||= {}) : (m.conf ||= {}))[k] = params[k]; return repondre(200, null); }
           if (reste === 'rrddata') return repondre(200, rrd(m.vmid));
+          if (reste === 'agent/network-get-interfaces') return m.interfaces ? repondre(200, { result: m.interfaces }) : repondre(500, null, 'QEMU guest agent is not running');
           // L'agent QEMU : coché dans la configuration, puis présent dans la VM (m.clavierInvite).
           if (reste === 'agent/exec' && req.method === 'POST') {
             if (!/^(1|enabled=1)/.test(String(m.conf?.agent || ''))) return repondre(500, null, 'No QEMU guest agent configured');

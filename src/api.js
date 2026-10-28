@@ -13,6 +13,7 @@
 // recopié et une confirmation d'identité faite pour elle seule.
 import { detecterClavier, activerConsoleSerie, agentActif } from './clavier.js';
 import crypto from 'node:crypto';
+import net from 'node:net';
 import { ErreurHttp, Routeur, lireCorps, valider, repondreJson, egal, Frappes, FRAPPE_MAX } from '../socle/src/index.js';
 import { ErreurProxmox, Proxmox, chemin } from './pve.js';
 import { observer, empreinte, empreinteValide } from './tls.js';
@@ -71,6 +72,7 @@ const S = {
   frappe: { texte: { type: 'chaine', requis: true, min: 1, max: FRAPPE_MAX }, disposition: { type: 'chaine', requis: true, parmi: ['fr', 'us'] } },
   console: { noeud: { type: 'chaine', requis: true, max: 63, motif: NOEUD }, type: { type: 'chaine', requis: true, parmi: ['node', ...TYPES] }, vmid: { type: 'chaine', max: 9, motif: VMID }, mode: { type: 'chaine', parmi: ['texte', 'ecran', 'fluide'] } },
   sonde: { hote: { type: 'chaine', requis: true, max: 253 }, port: { type: 'entier', min: 1, max: 65535, defaut: 8006 } },
+  fluideCommande: { adresseVm: { type: 'chaine', requis: true, max: 15, motif: /^\d{1,3}(\.\d{1,3}){3}$/ } },
   fluide: { hote: { type: 'chaine', requis: true, max: 253 }, portHttp: { type: 'entier', min: 1, max: 65535, defaut: 47989 }, portHttps: { type: 'entier', min: 1, max: 65535, defaut: 47984 } },
   liaison: {
     hote: { type: 'chaine', requis: true, max: 253 }, port: { type: 'entier', min: 1, max: 65535, defaut: 8006 },
@@ -567,21 +569,65 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     const statut = { invalide: 400, interdite: 400, 'non-configure': 404, occupe: 409, pin: 409, 'non-appaire': 409, empreinte: 409 }[e.code] || 502;
     throw new ErreurHttp(statut, `Sunshine : ${e.message}.`);
   };
-  r.get('/api/machines/:noeud/:type/:vmid/fluide', ctx => {
+  // Les notes de la VM : là que la commande dépose l'empreinte de Sunshine.
+  const notesDe = m => ({
+    lireNotes: async () => String((await pve(() => proxmox.get(m.base + '/config')))?.description || ''),
+    ecrireNotes: notes => pve(() => proxmox.put(m.base + '/config', notes ? { description: notes } : { delete: 'description' })),
+  });
+  r.get('/api/machines/:noeud/:type/:vmid/fluide', async ctx => {
     const s = session(ctx, { role: 'membre' });
     const m = fluideDe(ctx);
-    return fluide.publique(m.vmid, { admin: s.compteLigne.role === 'admin' });
+    const admin = s.compteLigne.role === 'admin';
+    if (admin) {
+      const avant = fluide.commandes.get(String(m.vmid))?.etat;
+      const apres = await fluide.suivreCommande(m.vmid, notesDe(m)).catch(() => avant);
+      if (avant === 'attente' && (apres === 'reussi' || apres === 'echec')) {
+        const k = fluide.commandes.get(String(m.vmid));
+        journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'machine.fluide.relie', objet: m.cible, ip: ctx.ip, resultat: apres === 'reussi' ? 'ok' : 'erreur', details: { noeud: m.noeud, sunshine: k?.relie?.version || null, raison: k?.message || null } });
+      }
+    }
+    return fluide.publique(m.vmid, { admin });
   }, { role: 'membre' });
+  // Le nœud de la VM : son adresse dans la grappe (le terminal où coller la commande).
+  const adresseNoeud = async noeud => {
+    try {
+      const st = await proxmox.get('/cluster/status');
+      const n = (Array.isArray(st) ? st : []).find(x => x?.type === 'node' && x.name === noeud);
+      if (n?.ip && net.isIP(String(n.ip))) return String(n.ip);
+    } catch { /* droits ou nœud seul : repli sur l'adresse de la liaison */ }
+    const h = reglages.lire('liaison')?.hote || '';
+    return net.isIP(h) ? h : '';
+  };
   // Les adresses internes de la VM, lues par son agent : des propositions.
   r.get('/api/machines/:noeud/:type/:vmid/fluide/adresses', async ctx => {
     session(ctx, { role: 'admin' });
     const m = fluideDe(ctx);
     const config = await pve(() => proxmox.get(m.base + '/config', { current: 1 }));
     if (!agentActif(config?.agent)) return { adresses: [], raison: 'L\'agent QEMU n\'est pas activé dans cette VM.' };
+    const noeud = { nom: m.noeud, ip: await adresseNoeud(m.noeud) };
     try {
       const r = await proxmox.get(m.base + '/agent/network-get-interfaces');
-      return { adresses: Fluide.adressesDe(r?.result) };
-    } catch { return { adresses: [], raison: 'L\'agent QEMU ne répond pas dans la VM.' }; }
+      return { adresses: Fluide.adressesDe(r?.result), noeud };
+    } catch { return { adresses: [], noeud, raison: 'L\'agent QEMU ne répond pas dans la VM.' }; }
+  }, { role: 'admin' });
+  // La connexion en une commande : le script, pour l'adresse de la VM choisie
+  // parmi celles que son agent annonce (rien d'autre n'entre dans le script).
+  r.post('/api/machines/:noeud/:type/:vmid/fluide/commande', async ctx => {
+    session(ctx, { role: 'admin', renfort: true });
+    const m = fluideDe(ctx);
+    const { adresseVm } = await corps(ctx, S.fluideCommande);
+    const l = reglages.lire('liaison');
+    const qui = l?.jeton_id || l?.utilisateur;
+    if (!qui) throw new ErreurHttp(409, 'ProxLab n\'est pas relié à Proxmox (Réglages).');
+    const config = await pve(() => proxmox.get(m.base + '/config', { current: 1 }));
+    if (!agentActif(config?.agent)) throw new ErreurHttp(409, 'L\'agent QEMU n\'est pas activé dans cette VM : la commande règle Sunshine par lui.');
+    let adresses;
+    try { adresses = Fluide.adressesDe((await proxmox.get(m.base + '/agent/network-get-interfaces'))?.result); } catch { throw new ErreurHttp(409, 'L\'agent QEMU ne répond pas dans la VM.'); }
+    if (!adresses.some(a => a.adresse === adresseVm)) throw new ErreurHttp(400, 'Cette adresse n\'est pas une de celles de la VM.');
+    let r;
+    try { r = fluide.preparerCommande(m.vmid, { noeud: m.noeud, adresseVm, qui }); } catch { throw new ErreurHttp(400, 'Valeur inattendue pour la commande (nœud, identité de la liaison).'); }
+    journal.ecrire({ acteur: acteur(ctx).acteurCompte, action: 'machine.fluide.commande', objet: m.cible, ip: ctx.ip, details: { noeud: m.noeud, adresse: adresseVm } });
+    return { script: r.script, expire: r.expire, noeud: { nom: m.noeud, ip: await adresseNoeud(m.noeud) } };
   }, { role: 'admin' });
   r.post('/api/machines/:noeud/:type/:vmid/fluide', async ctx => {
     session(ctx, { role: 'admin', renfort: true });

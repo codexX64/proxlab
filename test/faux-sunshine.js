@@ -250,5 +250,6 @@ export async function fauxSunshine({ version = '7.1.431.-1', chiffrementVideo = 
     for (const x of [srvHttp, srvHttps, srvRtsp]) { x.closeAllConnections?.(); await new Promise(r => x.close(() => r())); }
     for (const x of [enet, video, audio]) { try { x.close(); } catch { /* fermée */ } }
   };
+  f.certPem = id.certPem;
   return f;
 }

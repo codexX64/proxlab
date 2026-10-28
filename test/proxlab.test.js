@@ -1246,7 +1246,7 @@ test('écran fluide, briques : certificat, Reed-Solomon de nanors, RTSP et contr
   // Sunshine n'est joint que sur le réseau interne.
   assert.ok(adresseInterne('127.0.0.1') && adresseInterne('10.0.0.11') && !adresseInterne('8.8.8.8') && !adresseInterne('169.254.169.254'));
   assert.throws(() => new HoteSunshine({ hote: '8.8.8.8', identite: id }), /réseau interne/);
-  assert.deepEqual(Fluide.adressesDe([{ name: 'lo', 'ip-addresses': [{ 'ip-address-type': 'ipv4', 'ip-address': '127.0.0.1' }] }, { name: 'ens18', 'ip-addresses': [{ 'ip-address-type': 'ipv4', 'ip-address': '10.0.0.11' }, { 'ip-address-type': 'ipv4', 'ip-address': '203.0.113.9' }, { 'ip-address-type': 'ipv6', 'ip-address': 'fd00::1' }] }]), [{ interface: 'ens18', adresse: '10.0.0.11' }]);
+  assert.deepEqual(Fluide.adressesDe([{ name: 'lo', 'ip-addresses': [{ 'ip-address-type': 'ipv4', 'ip-address': '127.0.0.1' }] }, { name: 'ens18', 'ip-addresses': [{ 'ip-address-type': 'ipv4', 'ip-address': '10.0.0.11' }, { 'ip-address-type': 'ipv4', 'ip-address': '203.0.113.9' }, { 'ip-address-type': 'ipv6', 'ip-address': 'fd00::1' }] }]), [{ interface: 'ens18', adresse: '10.0.0.11', prefixe: 0 }]);
 });
 
 test('écran fluide, file des images : paquets perdus retrouvés par la parité, image perdue → rien avant la prochaine image clé', async () => {
@@ -1413,6 +1413,88 @@ test('écran fluide de bout en bout : vidéo chiffrée relayée, parité, image 
     await attendre(() => w2.recu.some(m => m.includes('message refusé')));
     await attendre(() => w2.conn.ferme);
   } finally { await sun.fermer(); }
+});
+
+test('écran fluide en une commande : script pour une adresse de la VM, empreinte lue dans les notes par l\'API, Sunshine reconnu, notes rendues', async () => {
+  const { fauxSunshine } = await import('./faux-sunshine.js');
+  const { empreinteCert } = await import('../src/flux/certificat.js');
+  // HTTPS = HTTP − 5, comme Sunshine : deux ports libres à cet écart.
+  const libre = () => new Promise(ok => { const t = net.createServer(); t.listen(0, '127.0.0.1', () => { const p = t.address().port; t.close(() => ok(p)); }); });
+  let sun;
+  for (let i = 0; !sun && i < 20; i++) { const p = await libre(); if (p < 60000) sun = await fauxSunshine({ portHttps: p, portHttp: p + 5 }).catch(() => null); }
+  assert.ok(sun, 'ports libres');
+  const vm = pve.etat.machines.find(m => m.vmid === 101);
+  const avant = { conf: vm.conf, interfaces: vm.interfaces };
+  const url = machine('pve-a', 'qemu', 101) + '/fluide';
+  try {
+    await admin.del(url);
+    vm.conf = { ...(vm.conf || {}), agent: '1', description: 'Notes à garder.' };
+    vm.interfaces = [
+      { name: 'lo', 'ip-addresses': [{ 'ip-address-type': 'ipv4', 'ip-address': '127.0.0.1', prefix: 8 }] },
+      { name: 'ens19', 'ip-addresses': [{ 'ip-address-type': 'ipv4', 'ip-address': '10.0.0.22', prefix: 30 }] },
+    ];
+    const ad = await admin.get(url + '/adresses');
+    assert.deepEqual(ad.json.adresses, [{ interface: 'ens19', adresse: '10.0.0.22', prefixe: 30 }], JSON.stringify([ad.status, ad.json]));
+    assert.equal(ad.json.noeud.ip, '10.0.0.11', 'adresse du nœud lue dans la grappe');
+    // Administrateur sous renfort ; seulement une adresse que l'agent annonce.
+    assert.equal((await membre.post(url + '/commande', { adresseVm: '10.0.0.22' })).status, 403);
+    assert.equal((await sansRenfort(() => admin.post(url + '/commande', { adresseVm: '10.0.0.22' }))).status, 403, 'renfort exigé');
+    assert.equal((await admin.post(url + '/commande', { adresseVm: '10.0.0.99' })).status, 400, 'adresse étrangère à la VM');
+    assert.equal((await admin.post(url + '/commande', { adresseVm: "10.0.0.22';id;'" })).status, 400, 'rien d\'autre qu\'une adresse');
+    let c = await admin.post(url + '/commande', { adresseVm: '10.0.0.22' });
+    assert.equal(c.status, 200, JSON.stringify(c.json));
+    assert.match(c.json.script, /^VMID=101; NOEUD=pve-a; VMIP=10\.0\.0\.22; NONCE=[0-9a-f]{32}; QUI='proxlab@pve!panneau'; BASE0=47989$/m);
+    assert.equal(c.json.noeud.ip, '10.0.0.11');
+    assert.equal(spawnSync('bash', ['-n'], { input: c.json.script }).status, 0, 'script bash valide');
+    const nonceDe = x => /NONCE=([0-9a-f]{32})/.exec(x.json.script)[1];
+    let nonce = nonceDe(c);
+    assert.equal((await admin.get(url)).json.commande.etat, 'attente');
+    assert.equal((await membre.get(url)).json.commande, undefined, 'la commande ne se montre qu\'à l\'administrateur');
+    // Ce que fait la commande : Sunshine reconnaît ProxLab, l'empreinte va dans les notes.
+    const identite = JSON.parse(s.db.prepare("SELECT valeur FROM reglages WHERE cle = 'fluide-identite'").get().valeur);
+    sun.appaire = identite.cert;
+    const ligne = (n, fp, port = sun.portHttp) => `Notes à garder.\nproxlab-fluide ${n} 127.0.0.1 ${port} ${fp}`;
+    const patienter = () => new Promise(r => setTimeout(r, 1600));
+    // Un autre nonce : ignoré, la ligne reste à qui l'a écrite.
+    vm.conf.description = ligne('f'.repeat(32), empreinteCert(sun.certPem));
+    await patienter();
+    assert.equal((await admin.get(url)).json.commande.etat, 'attente');
+    // Bon nonce, empreinte fausse : refus avant toute requête, ligne retirée.
+    vm.conf.description = ligne(nonce, 'sha256:' + '0'.repeat(64));
+    await patienter();
+    let g = await admin.get(url);
+    assert.equal(g.json.commande.etat, 'echec');
+    assert.match(g.json.commande.message, /pas celui annoncé par la commande/);
+    assert.equal(vm.conf.description, 'Notes à garder.');
+    assert.equal(g.json.configure, false);
+    // Nouvelle commande, bonne empreinte : relié, épinglé, notes rendues.
+    c = await admin.post(url + '/commande', { adresseVm: '10.0.0.22' });
+    nonce = nonceDe(c);
+    vm.conf.description = ligne(nonce, empreinteCert(sun.certPem));
+    await patienter();
+    g = await admin.get(url);
+    assert.equal(g.json.commande.etat, 'reussi', JSON.stringify(g.json));
+    assert.equal(g.json.configure, true); assert.equal(g.json.appaire, true);
+    assert.equal(g.json.hote, '127.0.0.1'); assert.equal(g.json.empreinte, empreinteCert(sun.certPem));
+    assert.equal(vm.conf.description, 'Notes à garder.', 'la ligne de la commande est retirée des notes');
+    // Une ligne rejouée plus tard (même nonce) ne sert plus à rien.
+    vm.conf.description = ligne(nonce, 'sha256:' + '1'.repeat(64));
+    await patienter();
+    assert.equal((await admin.get(url)).json.empreinte, empreinteCert(sun.certPem));
+    const j = s.db.prepare("SELECT action, resultat FROM socle_journal WHERE action IN ('machine.fluide.commande', 'machine.fluide.relie')").all();
+    assert.ok(j.filter(l => l.action === 'machine.fluide.commande').length >= 2);
+    assert.deepEqual(j.filter(l => l.action === 'machine.fluide.relie').map(l => l.resultat), ['erreur', 'ok']);
+    // Les notes vides après retrait : effacées plutôt qu'écrites vides.
+    await admin.del(url);
+    c = await admin.post(url + '/commande', { adresseVm: '10.0.0.22' });
+    vm.conf.description = `proxlab-fluide ${nonceDe(c)} 127.0.0.1 ${sun.portHttp} ${empreinteCert(sun.certPem)}`;
+    await patienter();
+    assert.equal((await admin.get(url)).json.appaire, true);
+    assert.equal(vm.conf.description, '');
+  } finally {
+    vm.conf = avant.conf; vm.interfaces = avant.interfaces;
+    await sun.fermer?.();
+  }
 });
 
 test('rotation de SOCLE_CLE : les secrets de la liaison et des alertes sont rescellés, Proxmox reste joignable', async () => {

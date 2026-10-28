@@ -5,8 +5,11 @@
 import crypto from 'node:crypto';
 import { nouvelleIdentite, empreinteCert } from './flux/certificat.js';
 import { HoteSunshine, ErreurFlux, PORT_HTTP, PORT_HTTPS, adresseInterne, nomHoteValide } from './flux/hote.js';
+import { scriptConnexion, lireMarque, sansMarque } from './fluide-commande.js';
 
 const APPAIRAGE_MS = 180e3;
+const COMMANDE_MS = 15 * 60e3;
+const SUIVI_MS = 1500;
 const ECART_SESSIONS_MS = 800;
 const CLE_VM = vmid => `fluide:${vmid}`;
 
@@ -16,6 +19,7 @@ export class Fluide {
     this.appairages = new Map();          // vmid → { pin, etat, message, debut, fin }
     this.apps = new Map();                // vmid → identifiant de l'application « Desktop »
     this.finies = new Map();              // vmid → fin de la dernière session
+    this.commandes = new Map();           // vmid → { nonce, fin, etat, message, vu }
   }
 
   // Sunshine démonte une session en quelques centaines de millisecondes (son,
@@ -43,10 +47,13 @@ export class Fluide {
   publique(vmid, { admin = false } = {}) {
     const c = this.config(vmid), a = this.appairages.get(String(vmid));
     const appairage = a ? { etat: a.etat, message: a.message || '', ...(admin && a.etat === 'attente' ? { pin: a.pin, expire: a.fin } : {}) } : null;
-    if (!c) return { configure: false, appairage };
+    const k = this.commandes.get(String(vmid));
+    const commande = admin && k ? { etat: k.etat === 'attente' && Date.now() > k.fin ? 'expiree' : k.etat, message: k.message || '', expire: k.fin } : null;
+    if (!c) return { configure: false, appairage, ...(commande ? { commande } : {}) };
     return {
       configure: true, appaire: !!c.cert_serveur, hote: admin ? c.hote : undefined,
       empreinte: admin ? c.empreinte || '' : undefined, nom: c.nom || '', version: c.version || '', appaireLe: c.appaire_le || 0, appairage,
+      ...(commande ? { commande } : {}),
     };
   }
 
@@ -76,7 +83,7 @@ export class Fluide {
 
   oublier(vmid) {
     this.reglages.ecrire(CLE_VM(vmid), null);
-    this.appairages.delete(String(vmid)); this.apps.delete(String(vmid));
+    this.appairages.delete(String(vmid)); this.apps.delete(String(vmid)); this.commandes.delete(String(vmid));
   }
 
   // Lance l'appairage : rend le PIN tout de suite ; Sunshine répond quand
@@ -101,6 +108,45 @@ export class Fluide {
     return a;
   }
 
+  // La connexion en une commande : le script à coller sur le nœud, attendu un
+  // quart d'heure. Le nonce n'est valable que pour cette VM et cette fois.
+  preparerCommande(vmid, { noeud, adresseVm, qui }) {
+    const nonce = crypto.randomBytes(16).toString('hex');
+    const script = scriptConnexion({ vmid, noeud, adresseVm, nonce, qui, certClient: this.identite().certPem });
+    const k = { nonce, fin: Date.now() + COMMANDE_MS, etat: 'attente', message: '', vu: 0 };
+    this.commandes.set(String(vmid), k);
+    return { script, expire: k.fin };
+  }
+
+  // La commande a tourné : l'empreinte de Sunshine est dans les notes de la VM,
+  // lues par l'API de Proxmox. Le certificat présenté doit y correspondre et
+  // Sunshine doit reconnaître ProxLab ; la ligne est ensuite retirée des notes.
+  async suivreCommande(vmid, { lireNotes, ecrireNotes }) {
+    const k = this.commandes.get(String(vmid));
+    if (!k || k.etat !== 'attente' || Date.now() > k.fin || Date.now() - k.vu < SUIVI_MS) return k?.etat || null;
+    k.vu = Date.now();
+    const notes = await lireNotes();
+    const m = lireMarque(notes, k.nonce);
+    if (!m) return k.etat;
+    k.etat = 'verification';
+    try {
+      if (!adresseInterne(m.hote)) throw new ErreurFlux('adresse annoncée hors du réseau interne', 'interdite');
+      const h = new HoteSunshine({ hote: m.hote, portHttp: m.port, portHttps: m.port - 5, identite: this.identite(), empreinte: m.empreinte });
+      const infos = await h.infos({ chiffre: true });
+      if (!infos.appaire || !h.certVu) throw new ErreurFlux('Sunshine ne reconnaît pas ProxLab', 'refus');
+      this.reglages.ecrire(CLE_VM(vmid), {
+        hote: m.hote, port_http: m.port, port_https: m.port - 5, nom: infos.nom, version: infos.version,
+        cert_serveur: h.certVu, empreinte: m.empreinte, appaire_le: Date.now(),
+      });
+      this.apps.delete(String(vmid)); this.appairages.delete(String(vmid));
+      k.etat = 'reussi'; k.relie = { hote: m.hote, port: m.port, version: infos.version };
+    } catch (e) {
+      k.etat = 'echec'; k.message = String(e?.message || e).slice(0, 200);
+    }
+    try { await ecrireNotes(sansMarque(notes)); } catch { k.notesGardees = true; }
+    return k.etat;
+  }
+
   // L'application à lancer : le bureau (« Desktop »), sinon la première.
   async appId(vmid, hote) {
     const cle = String(vmid);
@@ -119,7 +165,7 @@ export class Fluide {
       if (!i || /^lo$/.test(i.name)) continue;
       for (const a of Array.isArray(i['ip-addresses']) ? i['ip-addresses'] : []) {
         const ip = String(a?.['ip-address'] || '');
-        if (a?.['ip-address-type'] === 'ipv4' && adresseInterne(ip) && !ip.startsWith('127.')) sortie.push({ interface: String(i.name).slice(0, 32), adresse: ip });
+        if (a?.['ip-address-type'] === 'ipv4' && adresseInterne(ip) && !ip.startsWith('127.')) sortie.push({ interface: String(i.name).slice(0, 32), adresse: ip, prefixe: Number(a.prefix) || 0 });
       }
     }
     return sortie.slice(0, 16);
