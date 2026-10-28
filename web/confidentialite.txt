@@ -54,6 +54,12 @@ Secrets de la liaison et des alertes
   - les images et les touches ne font que passer : rien n'est enregistré ni
     journalisé, sinon l'ouverture, la taille, la fin et le nombre d'images
     d'une session.
+  - la connexion en une commande : la commande copiée porte le numéro et
+    l'adresse de la VM, le nom du nœud, l'identité de la liaison Proxmox, le
+    certificat de ProxLab (public) et un numéro à usage unique, jamais un
+    secret ; l'empreinte du certificat de Sunshine passe une fois par les notes
+    de la VM, puis ProxLab l'en retire. Le terminal du nœud est retenu par le
+    navigateur seulement.
   Finalité : voir et piloter l'écran d'une VM en vidéo.
 
 Sauvegardes

@@ -173,13 +173,29 @@ le seul client : rien à installer sur le poste, et le flux passe par la même
 connexion HTTPS que le reste (Hub, relais inverse) ; pas de WebRTC, qui
 annoncerait les adresses des machines.
 Réglage, une fois par VM, par un administrateur sous renfort (onglet « Écran
-fluide ») : l'adresse de Sunshine — réseau interne seulement, plages privées
-et bouclage ; l'agent QEMU en propose les adresses —, puis l'appairage : ProxLab
-tire un PIN, à saisir dans l'interface de Sunshine (`https://localhost:47990`,
-onglet PIN, demande « ProxLab ») ; la preuve de l'appairage GameStream
-(certificats signés, défis chiffrés par le PIN) est vérifiée de part et
-d'autre, puis le certificat de Sunshine est épinglé et revérifié avant chaque
-connexion. Le voir : membre, comme l'écran. Chiffrement : poser
+fluide »), en une commande : ProxLab propose l'adresse de la VM côté nœud (le
+lien le plus étroit que son agent QEMU annonce, un pont isolé par exemple) et
+le terminal du nœud (`ssh root@` et l'adresse du nœud dans la grappe ; à
+changer une fois, par exemple pour passer par un rebond, ce navigateur s'en
+souvient), puis copie une commande à coller dans un terminal. Elle tourne en
+root sur le nœud : relais des six ports de Sunshine par le nœud (socat, unités
+systemd `proxlab-fluide-<vmid>-*`), n'admettant que l'adresse d'où ProxLab
+parle à l'API (lue dans le journal de pveproxy) ; dans la VM, par l'agent :
+Sunshine réglé (image toujours chiffrée, écoute sur le seul lien, interface web
+que le pare-feu n'ouvre pas, UPnP coupé), pare-feu ufw ouvert au nœud seul sur ce lien, avahi masqué
+(la VM ne s'annonce plus par mDNS), certificat de ProxLab ajouté aux appareils
+de Sunshine, Sunshine relancé avec la session. L'empreinte du certificat de
+Sunshine revient à ProxLab par les notes de la VM, lues par l'API de Proxmox
+(dont ProxLab vérifie le certificat), avec un numéro à usage unique tiré pour
+cette commande ; ProxLab vérifie que Sunshine présente ce certificat et le
+reconnaît, l'épingle, puis retire la ligne des notes. Ni PIN, ni mot de passe,
+ni interface de Sunshine à ouvrir. Sunshine doit être installé dans la VM, une
+session ouverte. À la main, l'ancien chemin reste : l'adresse de Sunshine —
+réseau interne seulement, plages privées et bouclage —, puis l'appairage :
+ProxLab tire un PIN, à saisir dans l'interface de Sunshine (onglet PIN, demande
+« ProxLab ») ; la preuve de l'appairage GameStream (certificats signés, défis
+chiffrés par le PIN) est vérifiée de part et d'autre, puis le certificat de
+Sunshine est épinglé et revérifié avant chaque connexion. Le voir : membre, comme l'écran. Chiffrement : poser
 `lan_encryption_mode = 2` dans la configuration de Sunshine ; la poignée RTSP,
 le contrôle et les entrées sont toujours chiffrés (AES-128-GCM, clé tirée pour
 chaque session), la vidéo aussi dès que Sunshine le propose. Clavier au
@@ -195,11 +211,11 @@ ouverture le reprend. Pas de son ni de copie depuis la VM (Sunshine n'en
 relaie pas). ProxLab joint Sunshine sur TCP 47984, 47989 et 48010 et UDP
 47998 à 48000 : la VM doit lui être joignable sur ces ports, par un réseau
 interne (une seconde carte sur un pont sans sortie, par exemple) ; Sunshine
-lui-même ne parle qu'à ProxLab. Quand la VM n'est joignable que de l'hôte
-(pont isolé), un relais de ces six ports sur l'hôte, limité à l'adresse de
-ProxLab, convient : l'adresse à régler est alors celle de l'hôte. Si Sunshine
-ne répond pas, ProxLab dit pourquoi : rien n'écoute sur le port, paquets
-ignorés (pare-feu), ou pas de route.
+lui-même ne parle qu'à ProxLab. Quand la VM n'est joignable que du nœud
+(pont isolé), c'est le relais que pose la commande ; plusieurs VM d'un même
+nœud prennent chacune leur base de ports (47989, 48089, …). Si Sunshine ne
+répond pas, ProxLab dit pourquoi : rien n'écoute sur le port, paquets ignorés
+(pare-feu), ou pas de route.
 
 **Console d'une VM.** Elle passe par le port série de la VM : sans `serial0`,
 ProxLab le dit avant d'appeler Proxmox et propose de l'ajouter
