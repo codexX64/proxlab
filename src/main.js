@@ -79,7 +79,17 @@ export async function demarrer(env = process.env, { log = CONSOLE } = {}) {
       const fichier = chemin === '/' ? '/index.html' : chemin;
       if (servirFichier(req, res, path.join(RACINE, 'web'), fichier, { nonce, gamme: socle.cfg.gamme, version: VERSION, ...(cache ? { cache } : {}) })) return;
       repondreJson(res, 404, { error: 'Introuvable.' });
-    } catch (e) { repondreErreur(res, e, { journal: log }); }
+    } catch (e) {
+      // Cloudflare remplace les 502 et 504 de l'origine par sa propre page : le
+      // message écrit pour l'utilisateur (Sunshine, Proxmox injoignable) devenait
+      // « Erreur 502 ». Arrivées par lui, ces erreurs partent en 503, statut
+      // d'origine en en-tête.
+      if (req.headers['cf-ray'] && e instanceof ErreurHttp && (e.status === 502 || e.status === 504)) {
+        res.setHeader('X-Statut-Amont', String(e.status));
+        e.status = 503;
+      }
+      repondreErreur(res, e, { journal: log });
+    }
   }));
 
   // Console : origine contrôlée, session du socle exigée et passe à usage unique
