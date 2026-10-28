@@ -177,28 +177,36 @@ le seul client : rien à installer sur le poste, et le flux passe par la même
 connexion HTTPS que le reste (Hub, relais inverse) ; pas de WebRTC, qui
 annoncerait les adresses des machines.
 Réglage, une fois par VM, par un administrateur sous renfort (onglet « Écran
-fluide »), en une commande : ProxLab propose l'adresse de la VM côté nœud (le
-lien le plus étroit que son agent QEMU annonce, un pont isolé par exemple) et
-le terminal du nœud (`ssh root@` et l'adresse du nœud dans la grappe ; à
-changer une fois, par exemple pour passer par un rebond, ce navigateur s'en
-souvient), puis copie une commande d'une ligne à coller dans le terminal de l'ordinateur
-(jamais dans la VM) : `curl … | ssh … bash`. Elle va chercher le script chez
-ProxLab, par l'adresse où la page est ouverte (domaine ou réseau local), à un
-lien qui ne sert qu'une fois et quinze minutes au plus, sans session (un jeton
-de 256 bits en tient lieu ; le script ne porte aucun secret). Il tourne en
-root sur le nœud : relais des six ports de Sunshine par le nœud (socat, unités
-systemd `proxlab-fluide-<vmid>-*`), n'admettant que l'adresse d'où ProxLab
-parle à l'API (lue dans le journal de pveproxy) ; dans la VM, par l'agent :
-Sunshine réglé (image toujours chiffrée, écoute sur le seul lien, interface web
-que le pare-feu n'ouvre pas, UPnP coupé), pare-feu ufw ouvert au nœud seul sur ce lien, avahi masqué
-(la VM ne s'annonce plus par mDNS), certificat de ProxLab ajouté aux appareils
-de Sunshine, Sunshine relancé avec la session. L'empreinte du certificat de
-Sunshine revient à ProxLab par les notes de la VM, lues par l'API de Proxmox
-(dont ProxLab vérifie le certificat), avec un numéro à usage unique tiré pour
-cette commande ; ProxLab vérifie que Sunshine présente ce certificat et le
-reconnaît, l'épingle, puis retire la ligne des notes. Ni PIN, ni mot de passe,
-ni interface de Sunshine à ouvrir. Sunshine doit être installé dans la VM, une
-session ouverte. À la main, l'ancien chemin reste : l'adresse de Sunshine —
+fluide »), d'un bouton : « Relier ». ProxLab ouvre lui-même le shell du nœud
+(termproxy, avec l'utilisateur de la liaison : root@pam et son mot de passe),
+y envoie un script (encodé, écho coupé) et en lit la sortie. Le script prend,
+parmi les adresses internes que l'agent QEMU de la VM annonce, la première
+qu'un pont du nœud joint sans passerelle (le lien isolé ; jamais l'adresse
+d'un réseau que le nœud n'atteint que par une passerelle). Il pose un relais
+des six ports de Sunshine sur le nœud (socat, unités systemd
+`proxlab-fluide-<vmid>-*`), qui n'admet que l'adresse d'où ProxLab parle à
+l'API (lue dans le journal de pveproxy). Dans la VM, par l'agent, il règle
+Sunshine : image toujours chiffrée, écoute sur le seul lien, interface web
+que le pare-feu n'ouvre pas, UPnP coupé ; ouvre ufw au nœud seul sur ce lien ;
+masque avahi (la VM ne s'annonce plus par mDNS) ; ajoute le certificat de
+ProxLab aux appareils de Sunshine et relance Sunshine avec la session.
+L'empreinte du certificat de Sunshine revient sur la sortie du shell, déjà
+authentifiée, avec un numéro à usage unique tiré pour cette fois ; ProxLab
+vérifie que Sunshine présente ce certificat et le reconnaît, puis l'épingle.
+Les lignes du script s'affichent pendant qu'il tourne. Ni PIN, ni mot de
+passe, rien à coller. Sunshine doit être installé dans la VM, une session
+ouverte.
+
+Sans root@pam dans la liaison, ou au choix : une commande d'une ligne à coller
+dans le terminal de l'ordinateur (jamais dans la VM), `curl … | ssh … bash`,
+avec le terminal du nœud proposé (`ssh root@` et l'adresse du nœud dans la
+grappe ; à changer une fois, ce navigateur s'en souvient). Elle va chercher le
+même script chez ProxLab, par l'adresse où la page est ouverte (domaine ou
+réseau local), à un lien qui ne sert qu'une fois et quinze minutes au plus,
+sans session (un jeton de 256 bits en tient lieu ; le script ne porte aucun
+secret). L'empreinte revient alors par les notes de la VM, lues par l'API de
+Proxmox (dont ProxLab vérifie le certificat), et ProxLab retire la ligne des
+notes. À la main, l'ancien chemin reste : l'adresse de Sunshine —
 réseau interne seulement, plages privées et bouclage —, puis l'appairage :
 ProxLab tire un PIN, à saisir dans l'interface de Sunshine (onglet PIN, demande
 « ProxLab ») ; la preuve de l'appairage GameStream (certificats signés, défis
