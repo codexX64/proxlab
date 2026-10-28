@@ -195,7 +195,11 @@ ouverture le reprend. Pas de son ni de copie depuis la VM (Sunshine n'en
 relaie pas). ProxLab joint Sunshine sur TCP 47984, 47989 et 48010 et UDP
 47998 à 48000 : la VM doit lui être joignable sur ces ports, par un réseau
 interne (une seconde carte sur un pont sans sortie, par exemple) ; Sunshine
-lui-même ne parle qu'à ProxLab.
+lui-même ne parle qu'à ProxLab. Quand la VM n'est joignable que de l'hôte
+(pont isolé), un relais de ces six ports sur l'hôte, limité à l'adresse de
+ProxLab, convient : l'adresse à régler est alors celle de l'hôte. Si Sunshine
+ne répond pas, ProxLab dit pourquoi : rien n'écoute sur le port, paquets
+ignorés (pare-feu), ou pas de route.
 
 **Console d'une VM.** Elle passe par le port série de la VM : sans `serial0`,
 ProxLab le dit avant d'appeler Proxmox et propose de l'ajouter
@@ -374,6 +378,11 @@ Déclarer l'adresse du relais dans `SOCLE_PROXYS` ; sans cela, ProxLab ignore
 `X-Forwarded-For` et `X-Forwarded-Proto`. Le relais doit transmettre
 `X-Forwarded-For`, `X-Forwarded-Proto` et `Host`, et laisser passer la mise à
 niveau WebSocket sur `/ws/console`.
+
+Derrière Cloudflare, qui remplace par sa propre page les réponses 502 et 504
+d'un serveur d'origine, ProxLab répond 503 à la place (statut d'origine dans
+`X-Statut-Amont`) : le message d'un Proxmox ou d'un Sunshine injoignable
+reste lisible.
 
 ## Sécurité
 
