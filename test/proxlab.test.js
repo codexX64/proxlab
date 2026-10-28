@@ -1148,7 +1148,7 @@ test('frappe par ProxLab : le texte tapé dans la VM par sa propre connexion VNC
   const coupe = await attendreFin();
   assert.equal(coupe.etat, 'arrêtée');
   assert.ok(coupe.tapes > 0 && coupe.tapes < long.length, `${coupe.tapes}`);
-  assert.ok(coupe.msParCaractere < 30, 'texte long : plus vite qu’un texte court');
+  assert.equal(coupe.msParCaractere, 25, 'texte long : 40 caractères par seconde, pas plus vite (un bureau chargé perdrait des touches)');
   const derniere = pve.ecrans.at(-1).messages.filter(m => m[0] === 255);
   const enfoncees = new Set();
   for (const m of derniere) { const b = Buffer.from(m); if (b.readUInt16BE(2)) enfoncees.add(b.readUInt32BE(8)); else enfoncees.delete(b.readUInt32BE(8)); }
@@ -1441,13 +1441,33 @@ test('écran fluide en une commande : script pour une adresse de la VM, empreint
     assert.equal((await sansRenfort(() => admin.post(url + '/commande', { adresseVm: '10.0.0.22' }))).status, 403, 'renfort exigé');
     assert.equal((await admin.post(url + '/commande', { adresseVm: '10.0.0.99' })).status, 400, 'adresse étrangère à la VM');
     assert.equal((await admin.post(url + '/commande', { adresseVm: "10.0.0.22';id;'" })).status, 400, 'rien d\'autre qu\'une adresse');
+    // La commande tient en une ligne : le script est servi une fois, sans session, à l'adresse d'un jeton.
+    const script = async r => {
+      assert.equal(r.status, 200, JSON.stringify(r.json));
+      assert.match(r.json.chemin, /^\/api\/fluide\/script\/[A-Za-z0-9_-]{43}$/);
+      const x = await new Client(s.port).get(r.json.chemin, { origine: null });
+      assert.equal(x.status, 200); assert.match(x.entetes['content-type'], /^text\/x-shellscript/);
+      assert.equal(x.entetes['cache-control'], 'no-store');
+      assert.equal((await new Client(s.port).get(r.json.chemin, { origine: null })).status, 404, 'une seule lecture');
+      return x.texte;
+    };
     let c = await admin.post(url + '/commande', { adresseVm: '10.0.0.22' });
-    assert.equal(c.status, 200, JSON.stringify(c.json));
-    assert.match(c.json.script, /^VMID=101; NOEUD=pve-a; VMIP=10\.0\.0\.22; NONCE=[0-9a-f]{32}; QUI='proxlab@pve!panneau'; BASE0=47989$/m);
+    assert.equal(c.json.script, undefined, 'le script ne passe pas par le navigateur');
+    const texte = await script(c);
+    assert.match(texte, /^VMID=101; NOEUD=pve-a; VMIP=10\.0\.0\.22; NONCE=[0-9a-f]{32}; QUI='proxlab@pve!panneau'; BASE0=47989$/m);
+    assert.match(texte, /^proxlab_fluide <\/dev\/null$/m, 'lu en entier avant de tourner');
     assert.equal(c.json.noeud.ip, '10.0.0.11');
-    assert.equal(spawnSync('bash', ['-n'], { input: c.json.script }).status, 0, 'script bash valide');
-    const nonceDe = x => /NONCE=([0-9a-f]{32})/.exec(x.json.script)[1];
-    let nonce = nonceDe(c);
+    assert.equal(spawnSync('bash', ['-n'], { input: texte }).status, 0, 'script bash valide');
+    assert.equal((await new Client(s.port).get('/api/fluide/script/' + 'A'.repeat(43), { origine: null })).status, 404);
+    assert.equal((await new Client(s.port).get('/api/fluide/script/court', { origine: null })).status, 404);
+    // Collée par erreur dans l'écran d'une VM : refusée avant toute frappe.
+    for (const t of [`curl -fsS 'http://x${c.json.chemin}' | ssh root@10.0.0.11 bash`, "ssh root@10.0.0.11 'bash -s' <<'PROXLAB'\necho\nPROXLAB"]) {
+      const r = await membre.post(machine('pve-a', 'qemu', 101) + '/frappe', { texte: t, disposition: 'us' });
+      assert.equal(r.status, 400); assert.match(r.json.error, /terminal de ton ordinateur, jamais dans une VM/);
+    }
+    let derniere = texte;
+    const nonceDe = () => /NONCE=([0-9a-f]{32})/.exec(derniere)[1];
+    let nonce = nonceDe();
     assert.equal((await admin.get(url)).json.commande.etat, 'attente');
     assert.equal((await membre.get(url)).json.commande, undefined, 'la commande ne se montre qu\'à l\'administrateur');
     // Ce que fait la commande : Sunshine reconnaît ProxLab, l'empreinte va dans les notes.
@@ -1469,7 +1489,7 @@ test('écran fluide en une commande : script pour une adresse de la VM, empreint
     assert.equal(g.json.configure, false);
     // Nouvelle commande, bonne empreinte : relié, épinglé, notes rendues.
     c = await admin.post(url + '/commande', { adresseVm: '10.0.0.22' });
-    nonce = nonceDe(c);
+    derniere = await script(c); nonce = nonceDe();
     vm.conf.description = ligne(nonce, empreinteCert(sun.certPem));
     await patienter();
     g = await admin.get(url);
@@ -1487,7 +1507,8 @@ test('écran fluide en une commande : script pour une adresse de la VM, empreint
     // Les notes vides après retrait : effacées plutôt qu'écrites vides.
     await admin.del(url);
     c = await admin.post(url + '/commande', { adresseVm: '10.0.0.22' });
-    vm.conf.description = `proxlab-fluide ${nonceDe(c)} 127.0.0.1 ${sun.portHttp} ${empreinteCert(sun.certPem)}`;
+    derniere = await script(c);
+    vm.conf.description = `proxlab-fluide ${nonceDe()} 127.0.0.1 ${sun.portHttp} ${empreinteCert(sun.certPem)}`;
     await patienter();
     assert.equal((await admin.get(url)).json.appaire, true);
     assert.equal(vm.conf.description, '');
