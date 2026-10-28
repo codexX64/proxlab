@@ -1471,7 +1471,7 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
   const url = `/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/fluide`;
   const enMarche = f.status === 'running';
   const carte = h('div', { class: 'card' });
-  let suivi = null, fermerVue = () => {};
+  let suivi = null, fermerVue = () => {}, commandeAffichee = '';
   const peindre = async () => {
     clearTimeout(suivi);
     let c;
@@ -1513,13 +1513,70 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
         a?.etat === 'echec' ? h('p', { class: 'erreur', text: `Appairage échoué : ${a.message}` }) : null,
         h('button', { class: 'btn sm solid', type: 'button', disabled: !c.configure, onclick: sur(async () => { await api.post(url + '/appairage'); peindre(); }) }, icone('lien', 14), 'Appairer'));
     }
+    // La connexion en une commande : le terminal du nœud (retenu par ce
+    // navigateur), l'adresse de la VM côté nœud, puis la commande à coller.
+    const k = c.commande;
+    const cleSsh = `proxlab-fluide-ssh:${f.node}`;
+    const terminal = h('input', { class: 'field', maxlength: 200, value: lireLocal(cleSsh, ''), placeholder: 'ssh root@…', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Commande qui ouvre un terminal root sur le nœud' });
+    terminal.addEventListener('change', () => poserLocal(cleSsh, terminal.value.replace(/[\r\n]/g, ' ').trim()));
+    let choisie = '';
+    const adressesVm = h('div', { class: 'puces' }, h('small', { class: 'dim', text: 'Lecture des adresses de la VM…' }));
+    const peindreAdresses = liste => adressesVm.replaceChildren(h('small', { class: 'dim', text: 'Adresse de la VM côté nœud : ' }), ...liste.map(a => h('button', {
+      class: `btn sm ${a.adresse === choisie ? 'solid' : 'flat'}`, type: 'button', 'aria-pressed': String(a.adresse === choisie),
+      onclick: () => { choisie = a.adresse; peindreAdresses(liste); },
+    }, `${a.adresse} (${a.interface})`)));
+    const sortieManuelle = h('div', {});
+    const copierCommande = h('button', { class: 'btn sm solid', type: 'button', disabled: true, onclick: sur(async () => {
+      if (!choisie) return toast('Choisis l\'adresse de la VM.', true);
+      const prefixe = terminal.value.replace(/[\r\n]/g, ' ').trim();
+      poserLocal(cleSsh, prefixe);
+      const texte = api.post(url + '/commande', { adresseVm: choisie }).then(r => `${prefixe ? `${prefixe} 'bash -s'` : 'bash -s'} <<'PROXLAB'\n${r.script}PROXLAB\n`);
+      try {
+        if (window.ClipboardItem && navigator.clipboard?.write) await navigator.clipboard.write([new ClipboardItem({ 'text/plain': texte.then(t => new Blob([t], { type: 'text/plain' })) })]);
+        else await navigator.clipboard.writeText(await texte);
+        toast('Commande copiée : colle-la dans ton terminal.');
+      } catch {
+        commandeAffichee = await texte;   // une erreur de l'API passe d'abord (toast)
+      }
+      peindre();
+    }) }, icone('copie', 14), 'Copier la commande');
+    api.get(url + '/adresses').then(r => {
+      if (!terminal.value && r.noeud?.ip) terminal.value = `ssh root@${r.noeud.ip}`;
+      const liste = r.adresses || [];
+      if (!liste.length) return adressesVm.replaceChildren(h('small', { class: 'dim', text: r.raison || 'L\'agent QEMU n\'annonce aucune adresse interne.' }));
+      // Par défaut, le lien le plus étroit (un pont isolé entre le nœud et la VM).
+      choisie = [...liste].sort((x, y) => (y.prefixe || 0) - (x.prefixe || 0))[0].adresse;
+      peindreAdresses(liste); copierCommande.disabled = false;
+    }).catch(e => adressesVm.replaceChildren(h('small', { class: 'dim', text: e.message })));
+    // Presse-papiers refusé : la commande montrée, à copier à la main.
+    if (commandeAffichee && (k?.etat === 'attente' || k?.etat === 'verification')) {
+      const zone = h('textarea', { class: 'field commande-fluide', rows: 5, readonly: true, spellcheck: 'false', 'aria-label': 'Commande à copier' });
+      zone.value = commandeAffichee;
+      zone.addEventListener('focus', () => zone.select());
+      sortieManuelle.replaceChildren(h('small', { class: 'dim', text: 'Copie automatique impossible ici : sélectionne la commande et copie-la.' }), zone);
+    } else commandeAffichee = '';
+    let etatCommande = null;
+    if (k?.etat === 'attente' || k?.etat === 'verification') {
+      etatCommande = h('p', { class: 'dim', text: 'En attente de la commande… ProxLab termine tout seul dès qu\'elle a tourné (quinze minutes au plus).' });
+      suivi = setTimeout(peindre, 2000);
+    } else if (k?.etat === 'echec') etatCommande = h('p', { class: 'erreur', text: `La commande a tourné, mais : ${k.message}` });
+    else if (k?.etat === 'expiree') etatCommande = h('p', { class: 'dim', text: 'Commande expirée : recopie-la.' });
+
+    const manuelOuvert = (c.configure && !c.appaire) || a?.etat === 'attente' || a?.etat === 'echec';
     carte.replaceChildren(titre, h('div', { class: 'pad sans-serie' }, intro,
       h('ol', { class: 'etapes' },
-        h('li', {}, 'Dans la VM, installer et lancer Sunshine (github.com/LizardByte/Sunshine ; Arch : paquet « sunshine »). Pour que l\'image ne circule jamais en clair, ajouter à sa configuration : ',
-          h('span', { class: 'cmd' }, h('code', { text: cmd }), h('button', { class: 'btn flat sm', type: 'button', 'aria-label': 'Copier', onclick: copier(cmd) }, icone('copie', 12)))),
-        h('li', { class: c.configure ? 'fait' : '' }, h('span', {}, 'Son adresse, joignable par ProxLab sur le réseau interne : '), h('div', { class: 'ligne-fluide' }, champ, verifier), propositions,
-          c.configure ? h('small', { class: 'dim', text: `${c.nom || 'Sunshine'} · version ${c.version}` }) : null),
-        h('li', { class: c.appaire ? 'fait' : '' }, h('span', { text: 'L\'appairer à ProxLab, une fois : ' }), etapeAppairage)),
+        h('li', {}, 'Dans la VM, installer Sunshine (github.com/LizardByte/Sunshine ; Arch : paquet AUR « sunshine ») et ouvrir une session.'),
+        h('li', {}, h('span', { text: 'La relier, une fois : copie la commande et colle-la dans ton terminal. Elle relaie Sunshine par le nœud (ProxLab seul admis), le règle dans la VM (image toujours chiffrée, ports ouverts au nœud seul, VM plus annoncée sur le réseau) et lui présente ProxLab : ni PIN, ni mot de passe.' }),
+          h('div', { class: 'ligne-fluide' }, terminal, copierCommande),
+          h('small', { class: 'dim', text: 'Le terminal : la commande qui ouvre un shell root sur le nœud depuis ton poste (retenue par ce navigateur). Vide : colle-la dans le Shell du nœud, dans Proxmox.' }),
+          adressesVm, sortieManuelle, etatCommande)),
+      h('details', { class: 'manuel', ...(manuelOuvert ? { open: true } : {}) }, h('summary', { text: 'Réglage à la main : adresse et PIN' }),
+        h('ol', { class: 'etapes' },
+          h('li', {}, 'Pour que l\'image ne circule jamais en clair, ajouter à la configuration de Sunshine : ',
+            h('span', { class: 'cmd' }, h('code', { text: cmd }), h('button', { class: 'btn flat sm', type: 'button', 'aria-label': 'Copier', onclick: copier(cmd) }, icone('copie', 12)))),
+          h('li', { class: c.configure ? 'fait' : '' }, h('span', {}, 'Son adresse, joignable par ProxLab sur le réseau interne : '), h('div', { class: 'ligne-fluide' }, champ, verifier), propositions,
+            c.configure ? h('small', { class: 'dim', text: `${c.nom || 'Sunshine'} · version ${c.version}` }) : null),
+          h('li', { class: c.appaire ? 'fait' : '' }, h('span', { text: 'L\'appairer à ProxLab, une fois : ' }), etapeAppairage))),
       c.configure ? h('p', {}, h('button', { class: 'btn sm flat', type: 'button', onclick: sur(async () => {
         if (!await confirmer('Oublier l\'écran fluide de cette VM ?', 'L\'adresse et l\'appairage sont effacés de ProxLab. Dans Sunshine, l\'appareil « ProxLab » peut être retiré aussi.', { oui: 'Oublier', danger: true })) return;
         await api.del(url); peindre();

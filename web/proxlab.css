@@ -175,6 +175,11 @@ canvas.ecran:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .ligne-fluide{display:flex;gap:8px;align-items:center;margin-top:6px;max-width:460px}
 .ligne-fluide .field{flex:1 1 auto;min-width:0}
 .puces{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.puces>small{flex-basis:100%}
+.commande-fluide{display:block;width:100%;max-width:680px;margin-top:6px;font-family:var(--mono,ui-monospace,monospace);font-size:12px;white-space:pre;resize:vertical}
+details.manuel{margin-top:14px}
+details.manuel>summary{cursor:pointer;color:var(--muted,inherit);font-size:13px}
+details.manuel>.etapes{margin-top:8px}
 .pin-fluide{display:flex;flex-direction:column;gap:6px;margin-top:6px}
 .pin-fluide .pin{font-family:var(--mono);font-size:30px;font-weight:600;letter-spacing:.3em;color:var(--ink)}
 .sans-serie li.fait .pin-fluide,.sans-serie li.fait .ligne-fluide{color:var(--ink)}
