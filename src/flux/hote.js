@@ -73,10 +73,13 @@ function verifierStatut(texte) {
 
 export class HoteSunshine {
   // identite : { certPem, clePem, uniqueId } ; certServeur : PEM épinglé (null avant appairage).
-  constructor({ hote, portHttp = PORT_HTTP, portHttps = PORT_HTTPS, identite, certServeur = null, timeout = 8000 }) {
+  // empreinte : à défaut du certificat épinglé, son empreinte reçue par un canal
+  // sûr (l'API de Proxmox, connexion en une commande) ; le certificat présenté
+  // qui lui correspond est gardé dans certVu.
+  constructor({ hote, portHttp = PORT_HTTP, portHttps = PORT_HTTPS, identite, certServeur = null, empreinte = null, timeout = 8000 }) {
     if (!nomHoteValide(hote)) throw new ErreurFlux('adresse de Sunshine invalide', 'invalide');
     if (net.isIP(hote) && !adresseInterne(hote)) throw new ErreurFlux('Sunshine doit être sur le réseau interne (adresse privée)', 'interdite');
-    Object.assign(this, { hote, portHttp, portHttps, identite, certServeur, timeout });
+    Object.assign(this, { hote, portHttp, portHttps, identite, certServeur, empreinte, timeout, certVu: null });
   }
 
   url(chemin, args = {}) {
@@ -97,8 +100,8 @@ export class HoteSunshine {
   // GET chiffré (port HTTPS) : notre certificat présenté, celui de Sunshine
   // comparé à l'épinglé avant que la requête ne soit écrite.
   getTls(chemin, args, { timeout = this.timeout, certServeur = this.certServeur } = {}) {
-    if (!certServeur) return Promise.reject(new ErreurFlux('Sunshine n\'est pas appairé', 'non-appaire'));
-    const attendue = empreinteCert(certServeur);
+    const attendue = certServeur ? empreinteCert(certServeur) : this.empreinte;
+    if (!attendue) return Promise.reject(new ErreurFlux('Sunshine n\'est pas appairé', 'non-appaire'));
     return new Promise((resolve, reject) => {
       const agent = new https.Agent({ keepAlive: false });
       agent.createConnection = (_o, rappel) => {
@@ -111,7 +114,8 @@ export class HoteSunshine {
         }, () => {
           const c = s.getPeerCertificate(false);
           const fp = c?.raw ? 'sha256:' + crypto.createHash('sha256').update(c.raw).digest('hex') : '';
-          if (fp !== attendue) { s.destroy(); return rappel(new ErreurFlux('le certificat de Sunshine a changé depuis l\'appairage', 'empreinte')); }
+          if (fp !== attendue) { s.destroy(); return rappel(new ErreurFlux(certServeur ? 'le certificat de Sunshine a changé depuis l\'appairage' : 'le certificat de Sunshine n\'est pas celui annoncé par la commande', 'empreinte')); }
+          this.certVu = new crypto.X509Certificate(c.raw).toString();
           s.setTimeout(0);
           rappel(null, s);
         });
