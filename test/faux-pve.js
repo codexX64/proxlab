@@ -318,6 +318,21 @@ export async function fauxProxmox({ certificats = certificatsGrappe(), ecran = [
       if (!m) return;
       c.saisies.push(m[2]);
       if (vm?.sansGetty) return;
+      // Un script envoyé par ProxLab au shell d'un nœud (écran fluide relié) :
+      // reçu en entier, décodé, rendu à etat.surScript, sa sortie renvoyée.
+      if (!vt.cle && (c.script !== undefined || /stty -echo|base64 -d/.test(m[2]))) {
+        c.script = (c.script || '') + m[2];
+        const f = /<<'PROXLAB64'\r([\s\S]*?)\rPROXLAB64\r[\s\S]*?echo "(PROXLAB-FIN-[0-9a-f]+) \$\?"[\s\S]*exit\r$/.exec(c.script);
+        if (f) {
+          const script = Buffer.from(f[1].replace(/\r/g, ''), 'base64').toString('utf8');
+          c.script = undefined;
+          Promise.resolve(etat.surScript ? etat.surScript(script, vt.node) : { sortie: '', code: 127 }).then(({ sortie = '', code = 0 } = {}) => {
+            ws.envoyerBinaire(Buffer.from(`${String(sortie).replace(/\n/g, '\r\n')}${f[2]} ${code}\r\nexit\r\n`));
+            setTimeout(() => ws.close(), 20);
+          });
+        }
+        return;
+      }
       for (const ch of m[2]) {
         if (ch === '\r') {
           const sortie = ligne === 'hostname' ? (vt.cle ? 'invite-' + vt.cle.split('/')[1] : vt.node) : ligne === 'uname' ? 'Linux' : ligne ? `${ligne.split(' ')[0]}: commande inconnue` : '';
