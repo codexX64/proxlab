@@ -505,6 +505,11 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     journal: f => journal.ecrire({ acteur: f.par?.compte || null, action: 'machine.frappe.fin', objet: `qemu/${f.vmid}`, resultat: f.etat === 'échec' ? 'erreur' : 'ok', details: { noeud: f.noeud, etat: f.etat, total: f.total, tapes: f.tapes, sautes: f.sautes } }),
   });
   const cleFrappe = m => `${m.noeud}/${m.vmid}`;
+  // 40 caractères par seconde, quelle que soit la longueur : plus vite, un
+  // bureau chargé (compositeur Wayland, fond animé) perd des touches et en
+  // laisse une enfoncée, que la VM répète sans fin.
+  const FRAPPE_MS = 25;
+  const COMMANDE_FLUIDE = /<<'PROXLAB'|\/api\/fluide\/script\/|proxlab_fluide\(\)/;
   const frappeDe = ctx => {
     const m = machine(ctx.params);
     if (m.type !== 'qemu') throw new ErreurHttp(400, 'La frappe passe par l\'écran d\'une machine virtuelle ; un conteneur a sa console texte.');
@@ -514,11 +519,14 @@ export function creerApi({ socle, cfg, reglages, evenements, surveillance, emett
     session(ctx, { role: 'membre' });
     const m = frappeDe(ctx);
     const b = valider(await lireCorps(ctx.req, { limite: 512 * 1024 }), S.frappe);
+    // La commande de connexion de l'écran fluide n'a rien à faire dans une VM :
+    // elle y laisserait l'adresse du nœud et ferait sortir la VM vers ProxLab.
+    if (COMMANDE_FLUIDE.test(b.texte)) throw new ErreurHttp(400, 'C\'est la commande de connexion de l\'écran fluide : elle se colle dans le terminal de ton ordinateur, jamais dans une VM.');
     if (!reglages.lire('liaison')?.utilisateur) throw new ErreurHttp(409, 'La frappe passe par l\'écran : elle demande l\'utilisateur et le mot de passe Proxmox dans la liaison (Réglages).');
     const st = await pve(() => proxmox.get(m.base + '/status/current'));
     if (st?.status !== 'running') throw new ErreurHttp(409, 'La VM est arrêtée : démarre-la pour taper dedans.');
     const qui = acteur(ctx);
-    const e = frappes.demarrer(cleFrappe(m), { cible: { noeud: m.noeud, vmid: m.vmid }, texte: b.texte, disposition: b.disposition, mode: 'qemu', par: { compte: qui.acteurCompte, nom: qui.acteur }, contexte: { noeud: m.noeud, vmid: m.vmid } });
+    const e = frappes.demarrer(cleFrappe(m), { cible: { noeud: m.noeud, vmid: m.vmid }, texte: b.texte, disposition: b.disposition, mode: 'qemu', min: FRAPPE_MS, max: FRAPPE_MS, par: { compte: qui.acteurCompte, nom: qui.acteur }, contexte: { noeud: m.noeud, vmid: m.vmid } });
     journal.ecrire({ acteur: qui.acteurCompte, action: 'machine.frappe', objet: m.cible, ip: ctx.ip, details: { noeud: m.noeud, caracteres: e.total, disposition: b.disposition } });
     return publiqueFrappe(e);
   }, { role: 'membre' });
