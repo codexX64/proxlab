@@ -1736,6 +1736,7 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
         if (mes?.hote != null) t.push(`encodage ${nf(mes.hote, 1)} ms`);
         if (reseau != null) t.push(`réseau ${Math.round(reseau)} ms`);
         if (e.decodageMs != null) t.push(`décodage ${Math.round(e.decodageMs)} ms`);
+        if (mes?.sautees) t.push(`${mes.sautees} sautées (liaison trop lente)`);
         etat.textContent = base + (t.length ? ' · ' + t.join(' · ') : '');
       };
       ws.addEventListener('close', () => clearInterval(sonde));

@@ -1199,7 +1199,9 @@ test('écran fluide, briques : certificat, Reed-Solomon de nanors, RTSP et contr
   const { encoder, decoder } = await import('../src/flux/rs.js');
   const { sceller, desceller, analyserUrl } = await import('../src/flux/rtsp.js');
   const { scellerControle, ouvrirControle } = await import('../src/flux/controle.js');
-  const { lireEntree, lireDebut } = await import('../src/flux/relais.js');
+  const { lireEntree, lireDebut, retardMax } = await import('../src/flux/relais.js');
+  assert.equal(retardMax(20000), 375000, '150 ms à 20 Mbit/s');
+  assert.equal(retardMax(1000), 256 * 1024, 'plancher de 256 Kio');
   const { HoteSunshine, adresseInterne } = await import('../src/flux/hote.js');
   const { Fluide } = await import('../src/fluide.js');
   // Un certificat autosigné que Node relit et vérifie ; sa signature fait 256 octets.

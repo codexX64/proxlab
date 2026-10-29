@@ -11,7 +11,11 @@
 //   0x12 bouton [bas][n]   0x13 molette [dy i16][dx i16]   0x14 image clé
 import { SessionFlux, ENTREE } from './session.js';
 
-const RETARD_MAX = 4 * 1024 * 1024;       // octets en attente vers le navigateur
+// Octets en attente vers le navigateur au-delà desquels une image est sautée :
+// 150 ms du débit demandé (256 Kio au moins). Une file plus longue ne se voit
+// pas comme une perte mais comme un retard qui grandit, souris comprise.
+const RETARD_MS = 150, RETARD_MIN = 256 * 1024;
+export const retardMax = debitKbps => Math.max(RETARD_MIN, Math.round(debitKbps * 1000 / 8 * RETARD_MS / 1000));
 const ENTREES_PAR_SECONDE = 2000;
 const BATTEMENT_MS = 25000;
 export const LIMITES = { largeurMin: 320, largeurMax: 3840, hauteurMin: 200, hauteurMax: 2160, ips: [30, 60, 120], debitMin: 1000, debitMax: 150000 };
@@ -81,11 +85,11 @@ export function relayerFlux(navigateur, { ouvrirHote, appId, preparer = null, su
   // de traitement moyen par image (capture + encodage, en dixièmes de ms dans
   // l'en-tête de chaque image). Le navigateur y ajoute l'aller-retour vers
   // ProxLab (écho de {p}) et son temps de décodage.
-  let mesureImages = 0, mesureLatence = 0, mesureAvecLatence = 0, dernierEcho = 0;
+  let mesureImages = 0, mesureLatence = 0, mesureAvecLatence = 0, mesureSautees = 0, dernierEcho = 0;
   const mesures = setInterval(() => {
     if (!session) return;
-    const m = { ips: mesureImages, ...(mesureAvecLatence ? { hote: Math.round(mesureLatence / mesureAvecLatence) / 10 } : {}) };
-    mesureImages = 0; mesureLatence = 0; mesureAvecLatence = 0;
+    const m = { ips: mesureImages, ...(mesureAvecLatence ? { hote: Math.round(mesureLatence / mesureAvecLatence) / 10 } : {}), ...(mesureSautees ? { sautees: mesureSautees } : {}) };
+    mesureImages = 0; mesureLatence = 0; mesureAvecLatence = 0; mesureSautees = 0;
     try { navigateur.envoyerTexte(JSON.stringify({ m })); } catch { /* fermé */ }
   }, 1000);
   mesures.unref?.();
@@ -139,8 +143,9 @@ export function relayerFlux(navigateur, { ouvrirHote, appId, preparer = null, su
         if (i.latenceHote > 0) { mesureLatence += i.latenceHote; mesureAvecLatence++; }
         // Navigateur en retard : l'image est sautée, et les suivantes jusqu'à
         // une image clé, demandée aussitôt (sinon le décodeur partirait d'un trou).
-        if (navigateur.socket.writableLength > RETARD_MAX) { attenteCle = true; session.demanderImageComplete(); return; }
-        if (attenteCle && !i.cle) return;
+        // Une seule demande par attente, renouvelée si l'image clé elle-même est sautée.
+        if (navigateur.socket.writableLength > retardMax(debut.debit)) { mesureSautees++; if (!attenteCle || i.cle) session.demanderImageComplete(); attenteCle = true; return; }
+        if (attenteCle && !i.cle) { mesureSautees++; return; }
         attenteCle = false;
         const tete = Buffer.alloc(6);
         tete[0] = 0x01; tete[1] = i.cle ? 1 : 0; tete.writeUInt32BE(i.numero >>> 0, 2);
