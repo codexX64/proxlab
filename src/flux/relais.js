@@ -69,7 +69,7 @@ export function relayerFlux(navigateur, { ouvrirHote, appId, preparer = null, su
   const finir = message => {
     if (fini) return;
     fini = true;
-    clearInterval(battement); clearInterval(garde);
+    clearInterval(battement); clearInterval(garde); clearInterval(mesures);
     if (message) { try { navigateur.envoyerTexte(JSON.stringify({ fin: message })); } catch { /* fermé */ } }
     try { navigateur.close(); } catch { /* fermé */ }
     const s = session; session = null;
@@ -77,13 +77,33 @@ export function relayerFlux(navigateur, { ouvrirHote, appId, preparer = null, su
     surFin(s?.stats?.() || null, message);
   };
   const battement = setInterval(() => { try { navigateur.envoyerTexte('{"b":1}'); navigateur.ping(); } catch { /* fermé */ } }, BATTEMENT_MS);
+  // Mesures, une fois par seconde : images reçues de Sunshine et son temps
+  // de traitement moyen par image (capture + encodage, en dixièmes de ms dans
+  // l'en-tête de chaque image). Le navigateur y ajoute l'aller-retour vers
+  // ProxLab (écho de {p}) et son temps de décodage.
+  let mesureImages = 0, mesureLatence = 0, mesureAvecLatence = 0, dernierEcho = 0;
+  const mesures = setInterval(() => {
+    if (!session) return;
+    const m = { ips: mesureImages, ...(mesureAvecLatence ? { hote: Math.round(mesureLatence / mesureAvecLatence) / 10 } : {}) };
+    mesureImages = 0; mesureLatence = 0; mesureAvecLatence = 0;
+    try { navigateur.envoyerTexte(JSON.stringify({ m })); } catch { /* fermé */ }
+  }, 1000);
+  mesures.unref?.();
   const garde = setInterval(() => { if (!vivante()) finir('session fermée'); }, 60e3);
   battement.unref?.(); garde.unref?.();
   navigateur.on('fermeture', () => finir(null));
   navigateur.on('message', (m, texte) => {
     if (fini) return;
     if (texte) {
-      if (debut) return;
+      if (debut) {
+        // Écho de mesure : {p:<nombre>} rendu tel quel, quatre fois par seconde au plus.
+        if (m.length > 64 || Date.now() - dernierEcho < 250) return;
+        let p; try { p = JSON.parse(m.toString('utf8'))?.p; } catch { return; }
+        if (typeof p !== 'number' || !Number.isFinite(p)) return;
+        dernierEcho = Date.now();
+        try { navigateur.envoyerTexte(JSON.stringify({ p })); } catch { /* fermé */ }
+        return;
+      }
       debut = lireDebut(m.toString('utf8'));
       if (!debut) return finir('demande d\'écran invalide');
       lancer();
@@ -115,6 +135,8 @@ export function relayerFlux(navigateur, { ouvrirHote, appId, preparer = null, su
       session = new SessionFlux({ hote, appId: id, largeur: debut.largeur, hauteur: debut.hauteur, ips: debut.ips, debitKbps: debut.debit });
       session.on('fin', r => finir(r || 'session terminée'));
       session.on('image', i => {
+        mesureImages++;
+        if (i.latenceHote > 0) { mesureLatence += i.latenceHote; mesureAvecLatence++; }
         // Navigateur en retard : l'image est sautée, et les suivantes jusqu'à
         // une image clé, demandée aussitôt (sinon le décodeur partirait d'un trou).
         if (navigateur.socket.writableLength > RETARD_MAX) { attenteCle = true; session.demanderImageComplete(); return; }

@@ -1726,11 +1726,28 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
       garder(e, ws);
       bouton.replaceChildren(icone('croix', 14), 'Fermer');
       ws.addEventListener('open', () => { const q = qualite(); e.commencer({ ...q, ...tailleFluide(q), ajuster: ajusterVm }); etat.textContent = ajusterVm ? 'écran de la VM à la taille du flux…' : 'lancement de Sunshine…'; });
+      // Mesures dans la barre : images par seconde reçues, temps de Sunshine
+      // (capture + encodage), aller-retour navigateur ↔ ProxLab, décodage.
+      let base = '', reseau = null, mes = null, sonde = null;
+      const peindreMesures = () => {
+        if (!base || ecran !== e) return;
+        const t = [];
+        if (mes) t.push(`${mes.ips} i/s reçues`);
+        if (mes?.hote != null) t.push(`encodage ${nf(mes.hote, 1)} ms`);
+        if (reseau != null) t.push(`réseau ${Math.round(reseau)} ms`);
+        if (e.decodageMs != null) t.push(`décodage ${Math.round(e.decodageMs)} ms`);
+        etat.textContent = base + (t.length ? ' · ' + t.join(' · ') : '');
+      };
+      ws.addEventListener('close', () => clearInterval(sonde));
       ws.addEventListener('message', ev => {
         if (typeof ev.data !== 'string') return;
         let m; try { m = JSON.parse(ev.data); } catch { return; }
+        if (typeof m.p === 'number') { const r = performance.now() - m.p; if (r >= 0 && r < 10000) reseau = reseau == null ? r : reseau * 0.7 + r * 0.3; return; }
+        if (m.m) { mes = m.m; peindreMesures(); return; }
         if (m.pret) {
-          e.pret(m.pret); etat.textContent = `ouvert · ${m.pret.largeur} × ${m.pret.hauteur} · ${m.pret.ips} i/s${m.pret.chiffre ? ' · chiffré' : ' · vidéo en clair (lan_encryption_mode)'}`; e.toile.focus({ preventScroll: true });
+          e.pret(m.pret); base = `ouvert · ${m.pret.largeur} × ${m.pret.hauteur} · ${m.pret.ips} i/s${m.pret.chiffre ? ' · chiffré' : ' · vidéo en clair (lan_encryption_mode)'}`; etat.textContent = base; e.toile.focus({ preventScroll: true });
+          clearInterval(sonde);
+          sonde = setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ p: performance.now() })); else clearInterval(sonde); }, 1000);
           const v = m.pret.ecranVm;
           if (v && !v.fait && !avisTaille) { avisTaille = true; toast(`L'écran de la VM garde sa taille${v.refus ? ` : ${v.refus}` : v.erreur ? ` : ${v.erreur}` : ' (l\'invité n\'a pas suivi à temps)'}. Bandes noires possibles.`, true); }
         }

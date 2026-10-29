@@ -227,6 +227,7 @@ await page.locator('span.note', { hasText: /ouvert · \d+ × 1080 · 60 i\/s · 
 await page.waitForFunction(() => window.__fluide.images > 10 && window.__fluide.cles >= 1);
 const conf = await page.evaluate(() => window.__fluide.configure[0]);
 if (!/^avc1\.640028$/.test(conf.codec) || !conf.description) erreurs.push(`écran fluide : décodeur configuré ${JSON.stringify(conf)}`);
+await page.locator('span.note', { hasText: /i\/s reçues · .*réseau \d+ ms/ }).waitFor({ timeout: 8000 }).catch(() => erreurs.push('écran fluide : mesures absentes de la barre'));
 await controle('ecran-fluide');
 if (await page.evaluate(() => getComputedStyle(document.querySelector('canvas.fluide')).cursor) !== 'none') erreurs.push('écran fluide : curseur du poste encore affiché sur l\'image');
 await page.evaluate(() => {

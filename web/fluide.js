@@ -114,6 +114,9 @@ export class EcranFluide {
     this.decodeur = new VideoDecoder({
       output: f => {
         this.stats.decodees++;
+        // Temps de décodage, lissé : de l'image confiée au décodeur à l'image prête.
+        const d = performance.now() - f.timestamp / 1000;
+        if (d >= 0 && d < 5000) this.decodageMs = this.decodageMs == null ? d : this.decodageMs * 0.9 + d * 0.1;
         try { this.ctx.drawImage(f, 0, 0, this.toile.width, this.toile.height); } finally { f.close(); }
       },
       error: e => { this.surEtat('erreur', String(e?.message || e)); this.creerDecodeur(); this.demanderCle(); },

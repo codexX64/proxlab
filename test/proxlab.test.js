@@ -1384,6 +1384,15 @@ test('écran fluide de bout en bout : vidéo chiffrée relayée, parité, image 
     assert.equal(images().length, 1, 'rien ne sort après une perte');
     sun.envoyerImage(idr, { cle: true });
     await attendre(() => images().length === 2);
+    // Mesures : écho de {p} pour l'aller-retour, et chaque seconde les images reçues avec le temps de Sunshine.
+    w.conn.envoyerTexte(JSON.stringify({ p: 1234.5 }));
+    await attendre(() => w.recu.some(m => m === '{"p":1234.5}'));
+    w.conn.envoyerTexte(JSON.stringify({ p: 'x'.repeat(80) }));
+    await attendre(() => w.recu.some(m => m.startsWith('{"m":')), 3000);
+    const mes = JSON.parse(w.recu.find(m => m.startsWith('{"m":'))).m;
+    assert.ok(mes.ips >= 0 && (mes.hote === undefined || mes.hote === 0.5), JSON.stringify(mes));
+    assert.ok(!w.recu.some(m => m.includes('xxxx')), 'un écho trop long n\'est pas rendu');
+    assert.ok(!w.conn.ferme, 'un texte de mesure ne ferme pas la session');
     // Entrées : touche, position, clic, molette → paquets GameStream sur les bons canaux.
     w.conn.envoyerBinaire(Buffer.from([0x10, 1, 0x41, 0, 0]));
     w.conn.envoyerBinaire(Buffer.from([0x10, 0, 0x41, 0, 0]));
