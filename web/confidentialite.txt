@@ -53,7 +53,7 @@ Secrets de la liaison et des alertes
     scellée au repos comme les secrets ci-dessus.
   - les images et les touches ne font que passer : rien n'est enregistré ni
     journalisé, sinon l'ouverture, la taille, la fin et le nombre d'images
-    d'une session.
+    d'une session, et la taille donnée à l'écran de la VM pour elle.
   - relier depuis ProxLab : le script est envoyé au shell du nœud, ouvert avec
     l'utilisateur de la liaison ; seules ses lignes « ProxLab · » sont gardées
     en mémoire le temps de l'affichage, et l'empreinte de Sunshine qu'il rend.

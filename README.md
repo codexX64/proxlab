@@ -197,6 +197,14 @@ Les lignes du script s'affichent pendant qu'il tourne. Ni PIN, ni mot de
 passe, rien à coller. Sunshine doit être installé dans la VM, une session
 ouverte.
 
+Sans bandes noires : le flux prend les proportions de l'écran du poste (la
+hauteur de la qualité choisie, 1440, 1080 ou 720, et la largeur qui suit), et
+juste avant son ouverture ProxLab demande à la VM un écran de cette taille, par
+VNC comme l'onglet « Écran » (SetDesktopSize ; l'invité le suit en
+VirtIO-GPU). L'image remplit alors l'écran en plein écran, pixel pour pixel.
+Un affichage qui ne change pas de taille le dit, et le flux s'ouvre quand même.
+Réglable par poste dans Actions : « Écran de la VM à la taille du flux ».
+
 Sans root@pam dans la liaison, ou au choix : une commande d'une ligne à coller
 dans le terminal de l'ordinateur (jamais dans la VM), `curl … | ssh … bash`,
 avec le terminal du nœud proposé (`ssh root@` et l'adresse du nœud dans la
