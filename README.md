@@ -207,6 +207,11 @@ Réglable par poste dans Actions : « Écran de la VM à la taille du flux ».
 Un seul curseur sur l'image, celui de la VM, dessiné dans la vidéo : le curseur
 du poste, toujours en avance sur elle, faisait voir le retard du flux. Il
 revient par Actions : « Curseur du poste sur l'image ».
+La barre de l'écran fluide mesure en continu : images reçues par seconde, temps
+de Sunshine par image (capture et encodage, lu dans l'en-tête de chaque image),
+aller-retour du navigateur à ProxLab, décodage. Une liaison trop lente pour le
+débit ne s'accumule pas en retard : au-delà de 150 ms d'images en attente,
+ProxLab saute jusqu'à la prochaine image clé, et la barre le compte.
 
 Sans root@pam dans la liaison, ou au choix : une commande d'une ligne à coller
 dans le terminal de l'ordinateur (jamais dans la VM), `curl … | ssh … bash`,
