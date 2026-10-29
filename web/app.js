@@ -1483,6 +1483,17 @@ const QUALITES_FLUIDE = [
   { k: 'equilibree', nom: 'Équilibrée · 1080p 30 i/s', largeur: 1920, hauteur: 1080, ips: 30, debit: 10000 },
   { k: 'legere', nom: 'Légère · 720p 30 i/s', largeur: 1280, hauteur: 720, ips: 30, debit: 4000 },
 ];
+// La taille du flux : la hauteur de la qualité choisie, aux proportions de
+// l'écran (le plein écran est là où l'image doit le remplir). Avec l'écran de
+// la VM réglé sur cette taille, plus aucune bande noire.
+function tailleFluide(q, ecranL = screen.width, ecranH = screen.height) {
+  const r = ecranL > 0 && ecranH > 0 ? ecranL / ecranH : 16 / 9;
+  const paire = v => Math.round(v / 2) * 2;
+  let l, h;
+  if (r >= 1) { h = q.hauteur; l = paire(h * r); if (l > 3840) { l = 3840; h = paire(l / r); } }
+  else { l = q.hauteur; h = paire(l / r); if (h > 2160) { h = 2160; l = paire(h * r); } }
+  return { largeur: Math.max(320, l), hauteur: Math.max(200, h) };
+}
 function ecranFluide(f, garder, relire, { auto = false } = {}) {
   const url = `/api/machines/${encodeURIComponent(f.node)}/qemu/${f.vmid}/fluide`;
   const enMarche = f.status === 'running';
@@ -1626,6 +1637,7 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
     const etat = h('span', { class: 'note', text: 'fermé' });
     const hote = h('div', { class: 'ecran-hote fluide' });
     let ecran = null, ws = null, choisie = lireLocal('proxlab-fluide-qualite', 'haute');
+    let ajusterVm = lireLocal('proxlab-fluide-ajuster', '1') === '1', avisTaille = false;
     const qualite = () => QUALITES_FLUIDE.find(q => q.k === choisie) || QUALITES_FLUIDE[1];
     // Le clavier de la VM : le même réglage que l'écran VNC de cette VM.
     const cleDispo = `proxlab-disposition:${f.node}/${f.vmid}`;
@@ -1675,6 +1687,11 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
       { texte: 'Ctrl+Alt+Suppr', ic: 'clavier', inactif: !ecran?.actif, agir: () => ecran?.ctrlAltSuppr() },
       { texte: 'Coller (tapé par ProxLab)', ic: 'presse', touche: `${MOD}V`, agir: () => collerIci(null) },
       { texte: 'Image complète', ic: 'relance', inactif: !ecran?.actif, agir: () => ecran?.demanderCle() },
+      { texte: 'Écran de la VM à la taille du flux', ic: ajusterVm ? 'verifie' : null, agir: () => {
+        ajusterVm = !ajusterVm; poserLocal('proxlab-fluide-ajuster', ajusterVm ? '1' : '0');
+        toast(ajusterVm ? 'À chaque ouverture, l\'écran de la VM prend la taille du flux : l\'image remplit l\'écran, sans bandes noires.' : 'L\'écran de la VM garde sa taille : bandes noires possibles si ses proportions diffèrent.');
+        if (ecran) ouvrir();
+      } },
     ] }, ...(admin ? [{ titre: 'Réglage', items: [
       { texte: 'Réappairer', ic: 'lien', agir: sur(async () => { await api.post(url + '/appairage'); fermer(); peindre(); }) },
       { texte: 'Oublier ce réglage', ic: 'corbeille', agir: sur(async () => { if (!await confirmer('Oublier l\'écran fluide de cette VM ?', 'L\'adresse et l\'appairage sont effacés de ProxLab.', { oui: 'Oublier', danger: true })) return; await api.del(url); fermer(); peindre(); }) },
@@ -1699,11 +1716,15 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
       ecran = e;
       garder(e, ws);
       bouton.replaceChildren(icone('croix', 14), 'Fermer');
-      ws.addEventListener('open', () => { const q = qualite(); e.commencer(q); etat.textContent = 'lancement de Sunshine…'; });
+      ws.addEventListener('open', () => { const q = qualite(); e.commencer({ ...q, ...tailleFluide(q), ajuster: ajusterVm }); etat.textContent = ajusterVm ? 'écran de la VM à la taille du flux…' : 'lancement de Sunshine…'; });
       ws.addEventListener('message', ev => {
         if (typeof ev.data !== 'string') return;
         let m; try { m = JSON.parse(ev.data); } catch { return; }
-        if (m.pret) { e.pret(m.pret); etat.textContent = `ouvert · ${m.pret.largeur} × ${m.pret.hauteur} · ${m.pret.ips} i/s${m.pret.chiffre ? ' · chiffré' : ' · vidéo en clair (lan_encryption_mode)'}`; e.toile.focus({ preventScroll: true }); }
+        if (m.pret) {
+          e.pret(m.pret); etat.textContent = `ouvert · ${m.pret.largeur} × ${m.pret.hauteur} · ${m.pret.ips} i/s${m.pret.chiffre ? ' · chiffré' : ' · vidéo en clair (lan_encryption_mode)'}`; e.toile.focus({ preventScroll: true });
+          const v = m.pret.ecranVm;
+          if (v && !v.fait && !avisTaille) { avisTaille = true; toast(`L'écran de la VM garde sa taille${v.refus ? ` : ${v.refus}` : v.erreur ? ` : ${v.erreur}` : ' (l\'invité n\'a pas suivi à temps)'}. Bandes noires possibles.`, true); }
+        }
         if (m.fin) { etat.textContent = 'fermé'; hote.append(h('p', { class: 'vide', text: m.fin })); }
       });
       ws.addEventListener('close', () => { if (ecran === e) { ecran = null; bouton.replaceChildren(icone('ecran', 14), 'Rouvrir'); if (!/fermé|Sunshine|indisponible/.test(etat.textContent)) etat.textContent = 'fermé'; } });

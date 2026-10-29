@@ -11,7 +11,7 @@ import { Surveillance } from './surveillance.js';
 import { creerApi } from './api.js';
 import { verifierUpgrade, accepter, refuser } from './websocket.js';
 import { ouvrirTermproxy, relayer } from './console.js';
-import { ouvrirVnc, relayerEcran } from './ecran.js';
+import { ouvrirVnc, relayerEcran, tailleEcranVm } from './ecran.js';
 import { relayerFlux } from './flux/relais.js';
 import {
   Debit, ErreurHttp, demarrerSocle, entetesSecurite, envelopper, nonceCsp, politiqueContenu,
@@ -124,8 +124,9 @@ export async function demarrer(env = process.env, { log = CONSOLE } = {}) {
         const relais = relayerFlux(ws, {
           ouvrirHote: async () => { await api.fluide.patienter(cible.vmid); return api.fluide.hote(cible.vmid); },
           appId: hote => api.fluide.appId(cible.vmid, hote),
+          preparer: d => tailleEcranVm(() => ouvrirVnc(proxmox, cible), d.largeur, d.hauteur),
           vivante: suivi.vivante,
-          journal: pret => socle.journal.ecrire({ acteur: ctx.session.compte, action: 'machine.fluide.session', objet: `qemu/${cible.vmid}`, ip: ctx.ip, details: { noeud: cible.noeud, largeur: pret.largeur, hauteur: pret.hauteur, ips: pret.ips, codec: pret.codec, chiffre: pret.chiffre } }),
+          journal: pret => socle.journal.ecrire({ acteur: ctx.session.compte, action: 'machine.fluide.session', objet: `qemu/${cible.vmid}`, ip: ctx.ip, details: { noeud: cible.noeud, largeur: pret.largeur, hauteur: pret.hauteur, ips: pret.ips, codec: pret.codec, chiffre: pret.chiffre, ...(pret.ecranVm ? { ecranVm: pret.ecranVm.fait ? `${pret.ecranVm.avant?.join('x')} → ${pret.ecranVm.apres?.join('x')}` : pret.ecranVm.refus || pret.ecranVm.erreur || 'délai dépassé' } : {}) } }),
           surFin: (stats, raison) => {
             if (fluides.get(cible.vmid) === relais) fluides.delete(cible.vmid);
             api.fluide.noterFin(cible.vmid);

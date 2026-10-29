@@ -1242,6 +1242,8 @@ test('écran fluide, briques : certificat, Reed-Solomon de nanors, RTSP et contr
   assert.equal(lireEntree(Buffer.from([0x13, 0x7f, 0xff, 0, 0]), taille).souris.length, 1, 'molette bornée');
   assert.equal(lireEntree(Buffer.from([0x99]), taille), null);
   assert.deepEqual(lireDebut('{"debut":{"largeur":1921,"hauteur":1080,"ips":60,"debit":20000}}'), { largeur: 1920, hauteur: 1080, ips: 60, debit: 20000 });
+  assert.deepEqual(lireDebut('{"debut":{"largeur":2218,"hauteur":1440,"ips":60,"debit":20000,"ajuster":true}}'), { largeur: 2218, hauteur: 1440, ips: 60, debit: 20000, ajuster: true });
+  assert.equal(lireDebut('{"debut":{"largeur":1920,"hauteur":1080,"ips":60,"debit":20000,"ajuster":"oui"}}').ajuster, undefined, 'ajuster : un vrai booléen seulement');
   for (const mauvais of ['{"debut":{"largeur":99999,"hauteur":1080,"ips":60,"debit":20000}}', '{"debut":{"largeur":1920,"hauteur":1080,"ips":61,"debit":20000}}', '{"debut":{"largeur":1920,"hauteur":1080,"ips":60,"debit":999999}}', 'pas du json', '{}']) assert.equal(lireDebut(mauvais), null, mauvais);
   // Sunshine n'est joint que sur le réseau interne.
   assert.ok(adresseInterne('127.0.0.1') && adresseInterne('10.0.0.11') && !adresseInterne('8.8.8.8') && !adresseInterne('169.254.169.254'));
@@ -1405,13 +1407,34 @@ test('écran fluide de bout en bout : vidéo chiffrée relayée, parité, image 
     // Un message d'entrée invalide ferme la session.
     const p2 = (await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '101', mode: 'fluide' })).json.passe;
     const w2 = await ouvrirWs(membre, p2);
-    w2.conn.envoyerTexte(JSON.stringify({ debut: { largeur: 1280, hauteur: 720, ips: 60, debit: 15000 } }));
+    // L'écran de la VM à la taille du flux : affichage std → refus dit, le flux s'ouvre quand même.
+    w2.conn.envoyerTexte(JSON.stringify({ debut: { largeur: 1280, hauteur: 720, ips: 60, debit: 15000, ajuster: true } }));
     await attendre(() => w2.recu.some(m => m.includes('"pret"')), 8000);
+    const pret2 = JSON.parse(w2.recu.find(m => m.includes('"pret"'))).pret;
+    assert.match(pret2.ecranVm.refus, /VirtIO-GPU/);
+    assert.deepEqual(pve.ecrans.at(-1).tailles, [[1280, 720]], 'SetDesktopSize demandé par VNC, à la taille du flux');
     assert.equal(sun.reprises, 1, 'le bureau lancé par la session d\'avant est repris, pas relancé');
     assert.equal(sun.annule || 0, 0, 'fermer l\'écran n\'arrête pas le bureau dans Sunshine');
     w2.conn.envoyerBinaire(Buffer.from([0x10, 1, 0xff, 0x7f, 0]));
     await attendre(() => w2.recu.some(m => m.includes('message refusé')));
     await attendre(() => w2.conn.ferme);
+    // VirtIO-GPU : l'invité prend la taille, avant le lancement du flux.
+    const vm101 = pve.etat.machines.find(m => m.vmid === 101), vgaAvant = vm101.conf.vga;
+    vm101.conf.vga = 'virtio,clipboard=vnc';
+    try {
+      const p3 = (await membre.post('/api/console', { noeud: 'pve-a', type: 'qemu', vmid: '101', mode: 'fluide' })).json.passe;
+      const w3 = await ouvrirWs(membre, p3);
+      w3.conn.envoyerTexte(JSON.stringify({ debut: { largeur: 2218, hauteur: 1440, ips: 60, debit: 15000, ajuster: true } }));
+      await attendre(() => w3.recu.some(m => m.includes('"pret"')), 8000);
+      const pret3 = JSON.parse(w3.recu.find(m => m.includes('"pret"'))).pret;
+      assert.equal(pret3.ecranVm.fait, true);
+      assert.deepEqual(pret3.ecranVm.apres, [2218, 1440]);
+      assert.equal(sun.lancement.mode, '2218x1440x60');
+      await attendre(() => pve.ecrans.at(-1).ferme === true);
+      const j3 = s.db.prepare("SELECT details FROM socle_journal WHERE action = 'machine.fluide.session' ORDER BY rowid DESC LIMIT 1").get();
+      assert.match(j3.details, /→ 2218x1440/);
+      w3.conn.close();
+    } finally { vm101.conf.vga = vgaAvant; }
   } finally { await sun.fermer(); }
 });
 

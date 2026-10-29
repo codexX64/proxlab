@@ -25,7 +25,8 @@ export function lireDebut(texte) {
   const largeur = entier(d.largeur, LIMITES.largeurMin, LIMITES.largeurMax), hauteur = entier(d.hauteur, LIMITES.hauteurMin, LIMITES.hauteurMax);
   const ips = LIMITES.ips.includes(d.ips) ? d.ips : null, debit = entier(d.debit, LIMITES.debitMin, LIMITES.debitMax);
   if (!largeur || !hauteur || !ips || !debit) return null;
-  return { largeur: largeur & ~1, hauteur: hauteur & ~1, ips, debit };
+  // ajuster : l'écran de la VM prend la taille du flux (sans bandes noires).
+  return { largeur: largeur & ~1, hauteur: hauteur & ~1, ips, debit, ...(d.ajuster === true ? { ajuster: true } : {}) };
 }
 
 // Un message d'entrée du navigateur → paquet GameStream (ou null si invalide).
@@ -62,7 +63,7 @@ export function lireEntree(m, { largeur, hauteur }) {
   }
 }
 
-export function relayerFlux(navigateur, { ouvrirHote, appId, surFin = () => {}, vivante = () => true, journal = () => {} }) {
+export function relayerFlux(navigateur, { ouvrirHote, appId, preparer = null, surFin = () => {}, vivante = () => true, journal = () => {} }) {
   let session = null, fini = false, debut = null, attenteCle = false;
   let fenetre = Date.now(), entrees = 0;
   const finir = message => {
@@ -101,6 +102,13 @@ export function relayerFlux(navigateur, { ouvrirHote, appId, surFin = () => {}, 
 
   async function lancer() {
     try {
+      // L'écran de la VM à la taille du flux, avant que Sunshine ne le capture.
+      // Sans effet ou refusé, le flux s'ouvre quand même (bandes noires).
+      let ecranVm = null;
+      if (debut.ajuster && preparer) {
+        try { ecranVm = await preparer(debut); } catch (e) { ecranVm = { erreur: String(e?.message || e).slice(0, 120) }; }
+        if (fini) return;
+      }
       const hote = await ouvrirHote();
       if (fini) return;
       const id = await appId(hote);
@@ -118,6 +126,7 @@ export function relayerFlux(navigateur, { ouvrirHote, appId, surFin = () => {}, 
       });
       const pret = await session.demarrer();
       if (fini) { session?.arreter().catch(() => {}); return; }
+      if (ecranVm) pret.ecranVm = ecranVm;
       journal(pret);
       navigateur.envoyerTexte(JSON.stringify({ pret }));
     } catch (e) {

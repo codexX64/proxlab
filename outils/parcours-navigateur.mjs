@@ -218,7 +218,12 @@ await page.getByRole('button', { name: 'Relier', exact: true }).click();
 await page.getByText(/ProxLab relie la VM/).waitFor();
 if (!await page.getByRole('button', { name: 'Relier', exact: true }).isDisabled()) erreurs.push('écran fluide : « Relier » encore cliquable pendant qu\'il relie');
 await controle('fluide-relier');
-await page.locator('span.note', { hasText: /ouvert · 1920 × 1080 · 60 i\/s · chiffré/ }).waitFor({ timeout: 20000 });
+await page.locator('span.note', { hasText: /ouvert · \d+ × 1080 · 60 i\/s · chiffré/ }).waitFor({ timeout: 20000 });
+{
+  // Le flux aux proportions de l'écran : 1080 de haut, la largeur suit.
+  const { l, attendu } = await page.evaluate(() => ({ l: Number(/ouvert · (\d+) × 1080/.exec([...document.querySelectorAll('span.note')].map(n => n.textContent).join(' '))?.[1]), attendu: Math.round(1080 * screen.width / screen.height / 2) * 2 }));
+  if (l !== attendu) erreurs.push(`écran fluide : flux de ${l} de large, ${attendu} attendu (proportions de l'écran)`);
+}
 await page.waitForFunction(() => window.__fluide.images > 10 && window.__fluide.cles >= 1);
 const conf = await page.evaluate(() => window.__fluide.configure[0]);
 if (!/^avc1\.640028$/.test(conf.codec) || !conf.description) erreurs.push(`écran fluide : décodeur configuré ${JSON.stringify(conf)}`);
@@ -235,7 +240,7 @@ const vks = await page.evaluate(() => window.__fluideEnvois.map(x => x.toString(
 if (vks !== '51 a0 41 a0 31') erreurs.push(`écran fluide, touches : ${vks} au lieu de 51 a0 41 a0 31`);
 await page.getByLabel('Qualité de l\'écran fluide').selectOption('legere');
 await page.getByLabel('Qualité de l\'écran fluide').selectOption('legere');
-await page.locator('span.note', { hasText: /ouvert · 1280 × 720 · 30 i\/s/ }).waitFor({ timeout: 20000 });
+await page.locator('span.note', { hasText: /ouvert · \d+ × 720 · 30 i\/s/ }).waitFor({ timeout: 20000 });
 await page.locator('.card', { hasText: 'Écran fluide' }).getByRole('button', { name: 'Fermer', exact: true }).click();
 await page.locator('.card', { hasText: 'Écran fluide' }).getByRole('button', { name: 'Rouvrir', exact: true }).waitFor();
 await page.getByLabel('Qualité de l\'écran fluide').selectOption('haute');

@@ -97,8 +97,8 @@ export class EcranFluide {
   }
 
   // La demande d'écran : taille (paire), cadence et débit.
-  commencer({ largeur, hauteur, ips, debit }) {
-    this.ws.send(JSON.stringify({ debut: { largeur: largeur & ~1, hauteur: hauteur & ~1, ips, debit } }));
+  commencer({ largeur, hauteur, ips, debit, ajuster = false }) {
+    this.ws.send(JSON.stringify({ debut: { largeur: largeur & ~1, hauteur: hauteur & ~1, ips, debit, ...(ajuster ? { ajuster: true } : {}) } }));
   }
 
   pret({ largeur, hauteur }) {
