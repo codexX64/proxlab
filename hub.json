@@ -3,7 +3,7 @@
   "manifestVersion": 1,
   "id": "proxlab",
   "name": "ProxLab",
-  "version": "2.25.1",
+  "version": "2.25.2",
   "description": "La grappe Proxmox VE sous les yeux : machines, consoles, instantanés, sauvegardes, disponibilité et alertes — auto-hébergé, sur le socle commun.",
   "icon": "server",
   "repository": "https://github.com/CodexX64/proxlab",
@@ -54,7 +54,7 @@
       "key": "IMAGE_TAG",
       "label": "Version de l'image",
       "type": "string",
-      "default": "2.25.1",
+      "default": "2.25.2",
       "help": "Étiquette de l'image publiée sur ghcr.io."
     },
     {
