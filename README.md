@@ -204,6 +204,9 @@ VNC comme l'onglet « Écran » (SetDesktopSize ; l'invité le suit en
 VirtIO-GPU). L'image remplit alors l'écran en plein écran, pixel pour pixel.
 Un affichage qui ne change pas de taille le dit, et le flux s'ouvre quand même.
 Réglable par poste dans Actions : « Écran de la VM à la taille du flux ».
+Un seul curseur sur l'image, celui de la VM, dessiné dans la vidéo : le curseur
+du poste, toujours en avance sur elle, faisait voir le retard du flux. Il
+revient par Actions : « Curseur du poste sur l'image ».
 
 Sans root@pam dans la liaison, ou au choix : une commande d'une ligne à coller
 dans le terminal de l'ordinateur (jamais dans la VM), `curl … | ssh … bash`,
