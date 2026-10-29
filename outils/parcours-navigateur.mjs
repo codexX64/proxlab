@@ -228,6 +228,7 @@ await page.waitForFunction(() => window.__fluide.images > 10 && window.__fluide.
 const conf = await page.evaluate(() => window.__fluide.configure[0]);
 if (!/^avc1\.640028$/.test(conf.codec) || !conf.description) erreurs.push(`écran fluide : décodeur configuré ${JSON.stringify(conf)}`);
 await controle('ecran-fluide');
+if (await page.evaluate(() => getComputedStyle(document.querySelector('canvas.fluide')).cursor) !== 'none') erreurs.push('écran fluide : curseur du poste encore affiché sur l\'image');
 await page.evaluate(() => {
   window.__fluideEnvois = [];
   const envoyer = WebSocket.prototype.send;

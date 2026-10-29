@@ -112,6 +112,7 @@
 .ecran-hote{position:relative;margin:0 18px 18px;min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
 .ecran-hote:fullscreen{margin:0;background:#000;gap:0}
 canvas.ecran{display:block;width:auto;height:auto;max-width:100%;max-height:min(75vh,900px);background:#000;border-radius:var(--r-ctl);outline:none;cursor:default;touch-action:none;image-rendering:auto}
+canvas.ecran.fluide.sans-curseur{cursor:none}
 canvas.ecran:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 /* Plein écran : l'image prend tout l'écran, agrandie au besoin, sans être
    déformée (des bandes seulement si la VM n'a pas les proportions de l'écran ;

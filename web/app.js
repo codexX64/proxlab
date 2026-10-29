@@ -1638,6 +1638,10 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
     const hote = h('div', { class: 'ecran-hote fluide' });
     let ecran = null, ws = null, choisie = lireLocal('proxlab-fluide-qualite', 'haute');
     let ajusterVm = lireLocal('proxlab-fluide-ajuster', '1') === '1', avisTaille = false;
+    // Un seul curseur sur l'image : celui de la VM, dessiné dans la vidéo. Le
+    // curseur du poste, toujours en avance sur elle, faisait voir le retard.
+    let curseurPoste = lireLocal('proxlab-fluide-curseur', '0') === '1';
+    const peindreCurseur = () => ecran?.toile.classList.toggle('sans-curseur', !curseurPoste);
     const qualite = () => QUALITES_FLUIDE.find(q => q.k === choisie) || QUALITES_FLUIDE[1];
     // Le clavier de la VM : le même réglage que l'écran VNC de cette VM.
     const cleDispo = `proxlab-disposition:${f.node}/${f.vmid}`;
@@ -1687,6 +1691,10 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
       { texte: 'Ctrl+Alt+Suppr', ic: 'clavier', inactif: !ecran?.actif, agir: () => ecran?.ctrlAltSuppr() },
       { texte: 'Coller (tapé par ProxLab)', ic: 'presse', touche: `${MOD}V`, agir: () => collerIci(null) },
       { texte: 'Image complète', ic: 'relance', inactif: !ecran?.actif, agir: () => ecran?.demanderCle() },
+      { texte: 'Curseur du poste sur l\'image', ic: curseurPoste ? 'verifie' : null, agir: () => {
+        curseurPoste = !curseurPoste; poserLocal('proxlab-fluide-curseur', curseurPoste ? '1' : '0'); peindreCurseur();
+        toast(curseurPoste ? 'Deux curseurs : celui du poste, immédiat, et celui de la VM, dans la vidéo.' : 'Un seul curseur : celui de la VM, dans la vidéo.');
+      } },
       { texte: 'Écran de la VM à la taille du flux', ic: ajusterVm ? 'verifie' : null, agir: () => {
         ajusterVm = !ajusterVm; poserLocal('proxlab-fluide-ajuster', ajusterVm ? '1' : '0');
         toast(ajusterVm ? 'À chaque ouverture, l\'écran de la VM prend la taille du flux : l\'image remplit l\'écran, sans bandes noires.' : 'L\'écran de la VM garde sa taille : bandes noires possibles si ses proportions diffèrent.');
@@ -1714,6 +1722,7 @@ function ecranFluide(f, garder, relire, { auto = false } = {}) {
       ws = new WebSocket(`${proto}//${location.host}/ws/console?passe=${encodeURIComponent(passe)}`);
       const e = new EcranFluide(hote, ws, { disposition, surTouche: toucheArret, surIntapable: ch => toast(`« ${ch} » n'existe pas sur le clavier de la VM.`, true), surColler: collerIci, mac: estMac() });
       ecran = e;
+      peindreCurseur();
       garder(e, ws);
       bouton.replaceChildren(icone('croix', 14), 'Fermer');
       ws.addEventListener('open', () => { const q = qualite(); e.commencer({ ...q, ...tailleFluide(q), ajuster: ajusterVm }); etat.textContent = ajusterVm ? 'écran de la VM à la taille du flux…' : 'lancement de Sunshine…'; });
