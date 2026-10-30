@@ -1027,7 +1027,7 @@ test('étiquettes : posées par ProxLab sur une image, une interface, un stockag
     assert.equal((await poser(admin, 'reseau', 'vmbr1', '  Ghost   (Tor) ')).json.etiquette, 'Ghost (Tor)');
     assert.equal((await poser(admin, 'stockage', 'local-lvm', 'Disques rapides')).status, 200);
     assert.equal((await poser(admin, 'stockage', 'sauvegardes', 'NAS', 'pve-b')).status, 200);
-    assert.equal((await poser(admin, 'noeud', 'pve-a', 'R730')).status, 200);
+    assert.equal((await poser(admin, 'noeud', 'pve-a', 'Serveur-A')).status, 200);
     assert.equal((await poser(admin, 'iso', 'local:iso/debian-13.1.0-amd64-netinst.iso', 'Debian')).status, 200);
     assert.equal(pve.appels.filter(a => a.methode !== 'GET').length, ecrits, 'Proxmox n’a rien reçu à écrire');
     const r = (await lecteur.get('/api/noeuds/pve-a/reseau')).json;
@@ -1035,7 +1035,7 @@ test('étiquettes : posées par ProxLab sur une image, une interface, un stockag
     assert.equal(r.find(i => i.iface === 'vmbr0').alias, '');
     assert.equal((await lecteur.get('/api/noeuds/pve-b/reseau')).json.find(i => i.iface === 'vmbr1'), undefined);
     const e = (await lecteur.get('/api/etat')).json;
-    assert.deepEqual(e.noeuds.map(n => [n.node, n.alias]), [['pve-a', 'R730'], ['pve-b', '']]);
+    assert.deepEqual(e.noeuds.map(n => [n.node, n.alias]), [['pve-a', 'Serveur-A'], ['pve-b', '']]);
     assert.deepEqual(e.stockages.map(x => [x.node, x.storage, x.alias]), [['pve-a', 'local', ''], ['pve-a', 'local-lvm', 'Disques rapides'], ['pve-b', 'local', ''], ['pve-b', 'sauvegardes', 'NAS']]);
     const o = (await admin.get('/api/machines/options?noeud=pve-a')).json;
     assert.deepEqual(o.ponts, ['vmbr0', 'vmbr1'], 'la liste d’avant reste la même');
