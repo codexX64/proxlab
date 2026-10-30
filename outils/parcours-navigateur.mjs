@@ -6,6 +6,7 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import { chevauchements, LARGEURS } from '../socle/essai/mise-en-page.mjs';
+import { passerAssistant, ouvrirReglagesService } from '../socle/essai/assistant-navigateur.mjs';
 import { JETON, UTILISATEUR } from '../test/faux-pve.js';
 
 const [base, jeton, grappe, sortie = '/tmp/captures-proxlab'] = process.argv.slice(2);
@@ -67,6 +68,7 @@ await page.getByRole('button', { name: 'Créer le compte' }).click();
 await page.getByRole('button', { name: /Créer la clé maintenant/ }).click();
 await page.getByText('J’ai rangé ces codes en lieu sûr.').click();
 await page.getByRole('button', { name: 'Terminer' }).click();
+await passerAssistant(page, { controle });
 await page.locator('.app').waitFor();
 await titre('Vue d\'ensemble');
 await page.getByText('Proxmox n\'est pas encore relié').waitFor();
