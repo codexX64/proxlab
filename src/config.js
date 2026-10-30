@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import { lireConfig } from '../socle/src/index.js';
 
-export const VERSION = '2.25.3';
+export const VERSION = '2.26.0';
 
 export const SPEC_PROXLAB = {
   port: { env: 'PORT', type: 'entier', min: 0, max: 65535, defaut: 8140 },
