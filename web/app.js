@@ -15,6 +15,35 @@ import { Terminal } from './terminal.js';
 import { Ecran, DISPOSITIONS, intapables, estMac } from './ecran.js';
 import { EcranFluide } from './fluide.js';
 
+// Les logos de ProxLab, dans la couleur du texte (mêmes tracés que le dossier
+// Logo) : la marque seule pour les tuiles et l'écran de connexion, le logo
+// complet avec le nom pour la barre.
+const LOGO_NS = 'http://www.w3.org/2000/svg';
+function dessinLogo(vb, traces, largeur, hauteur, nom) {
+  const s = document.createElementNS(LOGO_NS, 'svg');
+  s.setAttribute('width', largeur); s.setAttribute('height', hauteur); s.setAttribute('viewBox', vb);
+  if (nom) { s.setAttribute('role', 'img'); s.setAttribute('aria-label', nom); } else s.setAttribute('aria-hidden', 'true');
+  for (const [d, regle] of traces) {
+    const p = document.createElementNS(LOGO_NS, 'path');
+    p.setAttribute('d', d); p.setAttribute('fill', 'currentColor');
+    if (regle) p.setAttribute('fill-rule', regle);
+    s.append(p);
+  }
+  return s;
+}
+const LOGO_MARQUE = ['21.08 5.17 241.31 241.31', [['M69.47 19.65H163.47A68 68 0 0 1 229.59 103.52L69.47 143.45ZM105.47 55.65H163.47A32 32 0 0 1 163.47 119.65H105.47ZM52 158.11L208.36 119.12A68 68 0 0 1 146 160H88V232H52Z', 'evenodd']]];
+const LOGO_TEXTE = ['39.26 6.9 1145.26 237.84', [['M69.47 19.65H163.47A68 68 0 0 1 229.59 103.52L69.47 143.45ZM105.47 55.65H163.47A32 32 0 0 1 163.47 119.65H105.47ZM52 158.11L208.36 119.12A68 68 0 0 1 146 160H88V232H52ZM249.15 84.02H285.4V108.69L309.17 84.02H351.36V117.3H317.19L288.37 147.02V232H249.15ZM364.73 201.1V114.93L395.34 84.02H480.32L510.93 114.93V201.1L480.32 232H395.34ZM461.31 199.31 471.71 188.91V127.11L461.31 116.71H414.36L403.96 127.11V188.91L414.36 199.31ZM633.95 232 601.26 186.83 568.57 232H524.3L579.57 156.82L525.79 84.02H570.06L601.26 127.41L632.46 84.02H676.73L623.25 157.42L678.22 232ZM696.05 24H736.46V197.83H840.46V232H696.05ZM853.83 204.66V170.79L881.17 143.45H956.35V124.73L947.13 115.52H902.56L893.65 124.73V133.05H855.02V116.11L886.81 84.02H963.18L994.97 116.11V232H959.61V210.9L937.63 232H881.17ZM934.95 201.69 956.35 181.19V171.38H900.48L892.46 179.41V194.26L899.89 201.69ZM1026.17 199.91V19.84H1065.4V104.53L1087.09 84.02H1141.17L1171.77 114.93V201.1L1141.17 232H1057.97ZM1121.26 198.72 1132.55 187.13V128.89L1121.26 117.3H1092.14L1065.4 144.05V187.13L1076.69 198.72Z', 'evenodd']]];
+function logoMarque(taille = 16) {
+  const s = dessinLogo(LOGO_MARQUE[0], LOGO_MARQUE[1], taille, taille, '');
+  s.setAttribute('class', 'logo-marque');
+  return s;
+}
+function logoTexte(hauteur = 20) {
+  const s = dessinLogo(LOGO_TEXTE[0], LOGO_TEXTE[1], Math.round(hauteur * 4.8153), hauteur, 'ProxLab');
+  s.setAttribute('class', 'logo-texte');
+  return s;
+}
+
 // Le plus long texte que ProxLab tape d'une traite (src/frappe.js).
 const FRAPPE_MAX = 100000;
 // Pendant qu'une frappe de ProxLab tourne, ces touches dans l'écran l'arrêtent (un ⌘V de trop).
@@ -23,7 +52,7 @@ const TOUCHES_ARRET_FRAPPE = new Set(['Delete', 'Backspace', 'Escape']);
 appliquerTheme();
 const SERVICE = 'ProxLab';
 const api = new Api({ surDeconnexion: () => location.reload() });
-const session = await porte({ api, service: SERVICE, sousTitre: 'grappe Proxmox VE' });
+const session = await porte({ api, service: SERVICE, marque: logoMarque(20), sousTitre: 'grappe Proxmox VE' });
 const moi = session.session.compte;
 const admin = moi.role === 'admin';
 const membre = moi.role !== 'lecture';
@@ -168,7 +197,7 @@ const railMarche = h('b', { text: '—' });
 const railBarre = h('i');
 const app = h('div', { class: 'app' },
   h('nav', { class: 'rail', 'aria-label': 'Navigation' },
-    h('div', { class: 'mark' }, h('div', { class: 'g' }, icone('grappe', 15)), h('b', { text: SERVICE }), h('i', { class: 'pulse' })),
+    h('div', { class: 'mark' }, logoTexte(20), h('i', { class: 'pulse' })),
     groupe('Grappe', ['over', 'machines', 'noeuds', 'reseau', 'stockage', 'isos']),
     groupe('Activité', ['taches', 'evenements']),
     groupe('Système', ['reglages', 'securite', 'comptes']),
