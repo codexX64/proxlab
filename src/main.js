@@ -3,7 +3,7 @@
 // niveau WebSocket de la console.
 import http from 'node:http';
 import path from 'node:path';
-import { lireConfigProxlab, VERSION } from './config.js';
+import { lireConfigProxlab, VERSION, SPEC_PROXLAB, REGLAGES_PROXLAB } from './config.js';
 import { ouvrirBase, Reglages, Evenements } from './base.js';
 import { Proxmox } from './pve.js';
 import { Emetteur } from './alerte.js';
@@ -14,7 +14,7 @@ import { ouvrirTermproxy, relayer } from './console.js';
 import { ouvrirVnc, relayerEcran, tailleEcranVm } from './ecran.js';
 import { relayerFlux } from './flux/relais.js';
 import {
-  Debit, ErreurHttp, demarrerSocle, entetesSecurite, envelopper, nonceCsp, politiqueContenu,
+  Debit, ErreurHttp, appliquerReglages, demarrerSocle, lireNouveautes, superviser, entetesSecurite, envelopper, nonceCsp, politiqueContenu,
   repondreErreur, repondreJson, servirFichier, cheminVersionne, origineDe, adresseClient,
 } from '../socle/src/index.js';
 
@@ -24,10 +24,16 @@ const CONSOLE = { info: (...a) => console.log(...a), warn: (...a) => console.war
 const CONTACT_SECURITE = 'https://github.com/CodexX64/proxlab/security/advisories/new';
 const CONSOLES_MAX = 32;
 
-export async function demarrer(env = process.env, { log = CONSOLE } = {}) {
+export async function demarrer(envBrut = process.env, { log = CONSOLE } = {}) {
+  // Les réglages posés par l'assistant complètent l'environnement (qui garde la main).
+  const env = appliquerReglages({ dossier: envBrut.DATA_DIR || SPEC_PROXLAB.donnees.defaut, env: envBrut });
   const cfg = lireConfigProxlab(env);
   const db = ouvrirBase(cfg.donnees);
-  const socle = await demarrerSocle({ service: { id: 'proxlab', nom: 'ProxLab', contactSecurite: CONTACT_SECURITE }, db, dossier: cfg.donnees, env, log });
+  const socle = await demarrerSocle({
+    service: { id: 'proxlab', nom: 'ProxLab', contactSecurite: CONTACT_SECURITE }, db, dossier: cfg.donnees, env, log,
+    assistant: { reglages: REGLAGES_PROXLAB, spec: SPEC_PROXLAB, version: VERSION, controler: lireConfigProxlab },
+    version: VERSION, nouveautes: lireNouveautes(new URL('../nouveautes.json', import.meta.url)),
+  });
 
   const reglages = new Reglages(db, { coffre: socle.coffre });
   let bilan;
@@ -157,7 +163,9 @@ export async function demarrer(env = process.env, { log = CONSOLE } = {}) {
   return { serveur, socle, cfg, db, reglages, evenements, proxmox, surveillance, api, arreter };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Le processus du conteneur supervise le service et le relance quand
+// l'assistant a posé de nouveaux réglages.
+if (import.meta.url === `file://${process.argv[1]}` && !superviser()) {
   demarrer().then(({ arreter }) => {
     for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => arreter().then(() => process.exit(0)));
   }).catch(e => { console.error(e.message); process.exit(1); });

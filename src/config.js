@@ -7,23 +7,35 @@ import { lireConfig } from '../socle/src/index.js';
 
 export const VERSION = '2.25.3';
 
+export const SPEC_PROXLAB = {
+  port: { env: 'PORT', type: 'entier', min: 0, max: 65535, defaut: 8140 },
+  hote: { env: 'HOTE', type: 'chaine', defaut: '0.0.0.0' },
+  donnees: { env: 'DATA_DIR', type: 'chaine', defaut: '/app/data' },
+  // Jeton de service du Hub : lit l'état de la grappe et les événements,
+  // démarre, arrête proprement et redémarre une machine. Jamais un réglage,
+  // jamais un compte, jamais une console.
+  jetonHub: { env: 'PROXLAB_HUB_TOKEN', type: 'secret', min: 24 },
+  // Cadence de la surveillance (machines tombées, nœuds perdus, seuils).
+  intervalle: { env: 'PROXLAB_INTERVAL', type: 'entier', min: 15, max: 3600, defaut: 60 },
+  // Durée de conservation des événements, en jours.
+  retention: { env: 'PROXLAB_EVENTS_DAYS', type: 'entier', min: 1, max: 365, defaut: 30 },
+};
+
+// Ce que l'assistant de configuration demande (première installation, puis
+// seulement les réglages nouveaux d'une mise à jour). depuis : la version qui
+// a ajouté le réglage. La liaison à Proxmox, elle, se fait dans l'interface.
+export const REGLAGES_PROXLAB = [
+  { env: 'PROXLAB_INTERVAL', groupe: 'Surveillance', libelle: 'Cadence de surveillance (secondes)', depuis: '2.26.0',
+    aide: 'Toutes les combien de secondes ProxLab relit l’état de la grappe : machines tombées, nœuds perdus, seuils.' },
+  { env: 'PROXLAB_EVENTS_DAYS', groupe: 'Surveillance', libelle: 'Conservation des événements (jours)', depuis: '2.26.0',
+    aide: 'Au-delà, les événements de la grappe sont effacés.' },
+];
+
 export function lireConfigProxlab(env = process.env) {
   // SOCLE_CLE_FILE posée dit « la clé vient d'un secret » : un fichier vide ne
   // doit pas laisser le socle la tirer dans le volume, à côté de ce qu'elle scelle.
   if (env.SOCLE_CLE_FILE && fs.existsSync(env.SOCLE_CLE_FILE) && !fs.readFileSync(env.SOCLE_CLE_FILE, 'utf8').trim()) {
     throw Object.assign(new Error(`Configuration invalide :\n  - SOCLE_CLE_FILE (${env.SOCLE_CLE_FILE}) est vide : pose la clé maîtresse dans ce secret.`), { erreurs: ['SOCLE_CLE_FILE vide'] });
   }
-  return lireConfig({
-    port: { env: 'PORT', type: 'entier', min: 0, max: 65535, defaut: 8140 },
-    hote: { env: 'HOTE', type: 'chaine', defaut: '0.0.0.0' },
-    donnees: { env: 'DATA_DIR', type: 'chaine', defaut: '/app/data' },
-    // Jeton de service du Hub : lit l'état de la grappe et les événements,
-    // démarre, arrête proprement et redémarre une machine. Jamais un réglage,
-    // jamais un compte, jamais une console.
-    jetonHub: { env: 'PROXLAB_HUB_TOKEN', type: 'secret', min: 24 },
-    // Cadence de la surveillance (machines tombées, nœuds perdus, seuils).
-    intervalle: { env: 'PROXLAB_INTERVAL', type: 'entier', min: 15, max: 3600, defaut: 60 },
-    // Durée de conservation des événements, en jours.
-    retention: { env: 'PROXLAB_EVENTS_DAYS', type: 'entier', min: 1, max: 365, defaut: 30 },
-  }, env);
+  return lireConfig(SPEC_PROXLAB, env);
 }

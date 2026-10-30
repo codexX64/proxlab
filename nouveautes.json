@@ -1,0 +1,26 @@
+[
+  {
+    "version": "2.26.0",
+    "date": "2026-10-30",
+    "points": [
+      "Assistant de configuration : la première installation se règle dans l’interface, et une mise à jour ne demande plus que ses nouveaux réglages.",
+      "Réglages de ProxLab modifiables à tout moment dans Comptes → Réglages du service, sans toucher au conteneur.",
+      "Les quatre gammes d’interface (SOMA, Console, Exploitation, Lavande) au choix dans les réglages.",
+      "Cette fenêtre : ce qu’apporte chaque mise à jour, en quelques lignes, une seule fois."
+    ]
+  },
+  {
+    "version": "2.25.3",
+    "date": "2026-10-30",
+    "points": [
+      "Nouveau logo dans l’onglet, la barre et l’écran de connexion."
+    ]
+  },
+  {
+    "version": "2.25.2",
+    "date": "2026-10-29",
+    "points": [
+      "Écran fluide : mesures dans la barre (images reçues, encodage, aller-retour, décodage) et retard borné à 150 ms."
+    ]
+  }
+]

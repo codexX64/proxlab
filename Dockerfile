@@ -11,7 +11,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd -g 10001 proxlab && useradd -u 10001 -g proxlab -M -d /nonexistent -s /usr/sbin/nologin proxlab
 WORKDIR /app
-COPY package.json ./
+COPY package.json nouveautes.json ./
 COPY socle ./socle
 COPY src ./src
 COPY web ./web
